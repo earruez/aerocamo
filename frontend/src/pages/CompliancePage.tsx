@@ -3,12 +3,32 @@ import { useQuery } from '@tanstack/react-query';
 import { aircraftApi } from '@api/aircraft.api';
 import { complianceApi, type Compliance } from '@api/compliance.api';
 import { Wrench, ChevronDown } from 'lucide-react';
-import { componentChapterLabel, isComponentTaskCode } from '@/shared/componentChapterRules';
+import {
+  hasOperationalDueContext,
+  MISSING_OPERATIONAL_CONTEXT_BADGE_CLASS,
+  MISSING_OPERATIONAL_CONTEXT_LABEL,
+} from '@/shared/operationalContext';
+
+function isBaselineRecord(c: Compliance): boolean {
+  return c.applicationType === 'baseline' || (c.notes ?? '').trim().toLowerCase() === 'inicio de control';
+}
 
 function dueBadge(c: Compliance): { label: string; cls: string } {
   const today = Date.now();
+  const missingOperationalContext = !isBaselineRecord(c) && !hasOperationalDueContext({
+    nextDueHours: c.nextDueHours,
+    nextDueCycles: c.nextDueCycles,
+    nextDueDate: c.nextDueDate,
+  });
+
   if (c.deferralReference && c.deferralExpiresAt && new Date(c.deferralExpiresAt).getTime() >= today) {
     return { label: 'DIFERIDA', cls: 'badge-deferred' };
+  }
+  if (isBaselineRecord(c)) {
+    return { label: 'INICIO DE CONTROL', cls: 'badge-state-neutral' };
+  }
+  if (missingOperationalContext) {
+    return { label: MISSING_OPERATIONAL_CONTEXT_LABEL, cls: 'badge-state-neutral' };
   }
   if (
     (c.nextDueDate && new Date(c.nextDueDate).getTime() < today) ||
@@ -33,7 +53,7 @@ export default function CompliancePage() {
   const filteredRecords = useMemo(() => {
     if (complianceTab === 'ALL') return records;
     return records.filter((record) => {
-      const isComponentRecord = isComponentTaskCode(record.task?.code ?? null);
+      const isComponentRecord = Boolean(record.componentId);
       return complianceTab === 'COMPONENT' ? isComponentRecord : !isComponentRecord;
     });
   }, [records, complianceTab]);
@@ -95,9 +115,7 @@ export default function CompliancePage() {
               {tab.label}
             </button>
           ))}
-          <span className="text-xs text-slate-400 ml-1">
-            Regla de componentes: {componentChapterLabel}
-          </span>
+          <span className="text-xs text-slate-400 ml-1">Clasificación según vínculo explícito a componente</span>
         </div>
       )}
 
@@ -133,24 +151,36 @@ export default function CompliancePage() {
               {filteredRecords.map((c) => {
                 const { label, cls } = dueBadge(c);
                 const isOverdue = cls === 'badge-overdue';
+                const isBaseline = isBaselineRecord(c);
+                const missingOperationalContext = !isBaseline && !hasOperationalDueContext({
+                  nextDueHours: c.nextDueHours,
+                  nextDueCycles: c.nextDueCycles,
+                  nextDueDate: c.nextDueDate,
+                });
                 return (
                   <tr key={c.id} className={`transition-colors ${isOverdue ? 'bg-rose-50 hover:bg-rose-100/70' : 'hover:bg-slate-50'}`}>
                     <td className={`table-cell font-medium ${isOverdue ? 'text-rose-700' : 'text-slate-700'}`}>{c.task?.code ?? '—'}</td>
                     <td className="table-cell text-xs text-slate-500">{c.task?.referenceType} {c.task?.referenceNumber}</td>
-                    <td className="table-cell text-xs text-slate-500">{new Date(c.performedAt).toLocaleDateString('es-MX')}</td>
+                    <td className="table-cell text-xs text-slate-500">
+                      {isBaseline
+                        ? `Inicio de control: ${new Date(c.performedAt).toLocaleDateString('es-MX')}`
+                        : new Date(c.performedAt).toLocaleDateString('es-MX')}
+                    </td>
                     <td className="table-cell text-right tabular-nums">{Number(c.aircraftHoursAtCompliance).toFixed(1)}</td>
                     <td className={`table-cell text-right tabular-nums ${isOverdue ? 'text-rose-600 font-semibold' : ''}`}>
-                      {c.nextDueHours != null ? c.nextDueHours.toFixed(1) : '—'}
+                      {missingOperationalContext ? MISSING_OPERATIONAL_CONTEXT_LABEL : c.nextDueHours != null ? c.nextDueHours.toFixed(1) : '—'}
                     </td>
                     <td className={`table-cell text-right tabular-nums ${isOverdue ? 'text-rose-600 font-semibold' : ''}`}>
-                      {c.nextDueCycles != null ? c.nextDueCycles : '—'}
+                      {missingOperationalContext ? MISSING_OPERATIONAL_CONTEXT_LABEL : c.nextDueCycles != null ? c.nextDueCycles : '—'}
                     </td>
                     <td className={`table-cell text-xs ${isOverdue ? 'text-rose-600 font-semibold' : 'text-slate-500'}`}>
-                      {c.nextDueDate ? new Date(c.nextDueDate).toLocaleDateString('es-MX') : '—'}
+                      {missingOperationalContext ? MISSING_OPERATIONAL_CONTEXT_LABEL : c.nextDueDate ? new Date(c.nextDueDate).toLocaleDateString('es-MX') : '—'}
                     </td>
-                    <td className="table-cell text-xs text-slate-500">{c.inspectedBy?.name ?? '—'}</td>
+                    <td className="table-cell text-xs text-slate-500">{isBaseline ? 'Registro inicial' : c.inspectedBy?.name ?? '—'}</td>
                     <td className="table-cell">
-                      <span className={cls}>{label}</span>
+                      {cls === 'badge-state-neutral'
+                        ? <span className={MISSING_OPERATIONAL_CONTEXT_BADGE_CLASS}>{label}</span>
+                        : <span className={cls}>{label}</span>}
                     </td>
                   </tr>
                 );

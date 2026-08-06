@@ -1,12 +1,35 @@
 import { PrismaClient, Prisma, TaskIntervalType } from '@prisma/client';
+import { BaselineComplianceService } from './BaselineComplianceService';
+import { auditLogService } from './AuditLogService';
+import { ForbiddenError, NotFoundError, ValidationError } from '../../shared/errors/AppError';
 
 const prisma = new PrismaClient();
+
+export type PlanCategory = 'manufacturer' | 'national_dgac' | 'engine_components' | 'origin_country';
+
+export interface AssignPlanByCategoryInput {
+  category: PlanCategory;
+  templateId: string;
+}
+
+type AssignActor = {
+  id: string;
+  email: string;
+  role: string;
+};
 
 /**
  * TemplateCloneService
  * Handles cloning maintenance tasks from a template to a newly created aircraft
  */
 export class TemplateCloneService {
+  private static readonly validCategories: PlanCategory[] = [
+    'manufacturer',
+    'national_dgac',
+    'engine_components',
+    'origin_country',
+  ];
+
   /**
    * Clone all tasks from a template to a new aircraft
    *
@@ -100,6 +123,13 @@ export class TemplateCloneService {
           },
         });
 
+        await BaselineComplianceService.ensureBaselineForTask(
+          aircraftId,
+          maintenanceTask.id,
+          organizationId,
+          undefined,
+        );
+
         tasksCloned++;
       } catch (err) {
         console.error(`Failed to clone task ${templateTask.code}:`, err);
@@ -156,5 +186,162 @@ export class TemplateCloneService {
         if (!b.chapter) return -1;
         return a.chapter.localeCompare(b.chapter);
       });
+  }
+
+  static async assignBundleToAircraft(input: {
+    organizationId: string;
+    aircraftId: string;
+    assignments: AssignPlanByCategoryInput[];
+    actor?: AssignActor;
+  }): Promise<{
+    assignments: Array<{
+      category: PlanCategory;
+      templateId: string;
+      templateLabel: string;
+      assignedAt: Date;
+      tasksCloned: number;
+    }>;
+  }> {
+    if (!Array.isArray(input.assignments) || input.assignments.length === 0) {
+      throw new ValidationError('assignments must be a non-empty array');
+    }
+
+    const categories = input.assignments.map((a) => a.category);
+    const invalidCategory = categories.find((c) => !this.validCategories.includes(c));
+    if (invalidCategory) {
+      throw new ValidationError(`Invalid category '${invalidCategory}'`);
+    }
+
+    const duplicateCategory = categories.find((cat, index) => categories.indexOf(cat) !== index);
+    if (duplicateCategory) {
+      throw new ValidationError(`Category '${duplicateCategory}' is repeated`);
+    }
+
+    const aircraft = await prisma.aircraft.findUnique({ where: { id: input.aircraftId } });
+    if (!aircraft) {
+      throw new NotFoundError('Aircraft', input.aircraftId);
+    }
+    if (aircraft.organizationId !== input.organizationId) {
+      throw new ForbiddenError('Forbidden');
+    }
+
+    const templateIds = Array.from(new Set(input.assignments.map((a) => a.templateId)));
+    const templates = await prisma.maintenanceTemplate.findMany({
+      where: {
+        id: { in: templateIds },
+        organizationId: input.organizationId,
+        isActive: true,
+      },
+      select: { id: true, manufacturer: true, model: true, description: true, version: true },
+    });
+
+    if (templates.length !== templateIds.length) {
+      throw new ValidationError('One or more templates are invalid or inactive for this organization');
+    }
+
+    const templateById = new Map(templates.map((t) => [t.id, t]));
+    const clonedByTemplateId = new Map<string, number>();
+    for (const templateId of templateIds) {
+      const result = await this.cloneTemplateToAircraft(templateId, input.aircraftId, input.organizationId);
+      clonedByTemplateId.set(templateId, result.tasksCloned);
+    }
+
+    const saved = [] as Array<{
+      category: PlanCategory;
+      templateId: string;
+      templateLabel: string;
+      assignedAt: Date;
+      tasksCloned: number;
+    }>;
+
+    for (const assignment of input.assignments) {
+      const template = templateById.get(assignment.templateId)!;
+      const record = await prisma.aircraftAssignedPlan.upsert({
+        where: {
+          aircraftId_category: {
+            aircraftId: input.aircraftId,
+            category: assignment.category,
+          },
+        },
+        update: {
+          templateId: assignment.templateId,
+          assignedById: input.actor?.id ?? null,
+        },
+        create: {
+          organizationId: input.organizationId,
+          aircraftId: input.aircraftId,
+          category: assignment.category,
+          templateId: assignment.templateId,
+          assignedById: input.actor?.id ?? null,
+        },
+      });
+
+      const templateLabel = `${template.manufacturer} ${template.model} - ${template.description ?? template.version}`;
+      const tasksCloned = clonedByTemplateId.get(assignment.templateId) ?? 0;
+
+      saved.push({
+        category: assignment.category,
+        templateId: assignment.templateId,
+        templateLabel,
+        assignedAt: record.updatedAt,
+        tasksCloned,
+      });
+
+      if (input.actor) {
+        await auditLogService.log({
+          organizationId: input.organizationId,
+          entityType: 'Aircraft',
+          entityId: input.aircraftId,
+          action: 'MAINTENANCE_PLAN_CATEGORY_ASSIGNED',
+          previousValue: null,
+          newValue: {
+            category: assignment.category,
+            templateId: assignment.templateId,
+            templateLabel,
+          },
+          userId: input.actor.id,
+          userEmail: input.actor.email,
+          userRole: input.actor.role,
+          metadata: {
+            assignmentCategory: assignment.category,
+            assignedTemplateId: assignment.templateId,
+          },
+        });
+      }
+    }
+
+    return { assignments: saved };
+  }
+
+  static async getAircraftAssignedPlans(
+    aircraftId: string,
+    organizationId: string,
+  ): Promise<Array<{
+    category: PlanCategory;
+    templateId: string;
+    templateLabel: string;
+    assignedAt: Date;
+  }>> {
+    const rows = await prisma.aircraftAssignedPlan.findMany({
+      where: { aircraftId, organizationId },
+      include: {
+        template: {
+          select: {
+            manufacturer: true,
+            model: true,
+            description: true,
+            version: true,
+          },
+        },
+      },
+      orderBy: { category: 'asc' },
+    });
+
+    return rows.map((row) => ({
+      category: row.category as PlanCategory,
+      templateId: row.templateId,
+      templateLabel: `${row.template.manufacturer} ${row.template.model} - ${row.template.description ?? row.template.version}`,
+      assignedAt: row.updatedAt,
+    }));
   }
 }

@@ -23,26 +23,12 @@ import {
   type CreateWorkOrderInput,
   type DiscrepancyStatus,
 } from '@api/workOrders.api';
+import { ensureStateMachine, getOrderedStatuses, getStatusBadgeClass, getStatusLabel } from '../shared/workflowVisibleState';
+import { useWorkOrderStateMachine } from '../shared/workflowStateMachineQueries';
 import { TechnicianAssignmentModal } from '@components/workOrders/TechnicianAssignmentModal';
 import { EvidenceUpload, EvidenceViewer } from '@components/workOrders/EvidenceUpload';
 
 // ── Status config ──────────────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<WorkOrderStatus, string> = {
-  DRAFT:       'Borrador',
-  OPEN:        'Abierta',
-  IN_PROGRESS: 'En Ejecución',
-  QUALITY:     'Calidad',
-  CLOSED:      'Cerrada',
-};
-
-const STATUS_COLORS: Record<WorkOrderStatus, string> = {
-  DRAFT:       'bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-500/20',
-  OPEN:        'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20',
-  IN_PROGRESS: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20',
-  QUALITY:     'bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-600/20',
-  CLOSED:      'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20',
-};
 
 const STATUS_ICONS: Record<WorkOrderStatus, React.ElementType> = {
   DRAFT:       ClipboardList,
@@ -50,23 +36,6 @@ const STATUS_ICONS: Record<WorkOrderStatus, React.ElementType> = {
   IN_PROGRESS: Loader2,
   QUALITY:     ShieldCheck,
   CLOSED:      CheckCircle2,
-};
-
-// Which transitions are available per status (simplified; server enforces role checks)
-const NEXT_TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> = {
-  DRAFT:       ['OPEN'],
-  OPEN:        ['IN_PROGRESS', 'DRAFT'],
-  IN_PROGRESS: ['QUALITY', 'OPEN'],
-  QUALITY:     ['CLOSED', 'IN_PROGRESS'],
-  CLOSED:      [],
-};
-
-const TRANSITION_LABEL: Record<WorkOrderStatus, string> = {
-  DRAFT:       'Abrir OT',
-  OPEN:        'Iniciar Ejecución',
-  IN_PROGRESS: 'Enviar a Calidad',
-  QUALITY:     'Cerrar OT',
-  CLOSED:      '',
 };
 
 // ── Lifecycle pipeline ─────────────────────────────────────────────────────
@@ -97,11 +66,11 @@ const DISC_COLORS: Record<DiscrepancyStatus, string> = {
 
 // ── Lifecycle Stepper ─────────────────────────────────────────────────────
 
-function LifecycleStepper({ current }: { current: WorkOrderStatus }) {
-  const cidx = LIFECYCLE.indexOf(current);
+function LifecycleStepper({ current, statuses }: { current: WorkOrderStatus; statuses: WorkOrderStatus[] }) {
+  const cidx = statuses.indexOf(current);
   const steps: React.ReactNode[] = [];
 
-  LIFECYCLE.forEach((status, i) => {
+  statuses.forEach((status, i) => {
     const done   = i < cidx;
     const active = i === cidx;
     const Icon   = STATUS_ICONS[status];
@@ -124,7 +93,7 @@ function LifecycleStepper({ current }: { current: WorkOrderStatus }) {
       </div>
     );
 
-    if (i < LIFECYCLE.length - 1) {
+    if (i < statuses.length - 1) {
       steps.push(
         <div key={`c-${i}`} className={`flex-1 h-px mt-4 self-start min-w-[12px] transition-colors ${
           i < cidx ? 'bg-emerald-400' : 'bg-slate-200'
@@ -442,6 +411,19 @@ function HallazgosTab({
 
 function EditWorkOrderModal({ wo, onClose }: { wo: WorkOrder; onClose: () => void }) {
   const qc = useQueryClient();
+  const { data: workOrderStateMachine } = useWorkOrderStateMachine();
+  if (!workOrderStateMachine) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-2xl p-5">
+          <div className="flex items-center gap-2 text-slate-500 text-sm">
+            <Loader2 size={16} className="animate-spin" /> Cargando contrato de estado OT...
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const stateMachine = ensureStateMachine(workOrderStateMachine, 'EditWorkOrderModal');
   const user = useAuthStore(s => s.user);
   const isClosed = wo.status === 'CLOSED';
   // QUALITY and CLOSED are read-only in the metadata editor
@@ -486,6 +468,8 @@ function EditWorkOrderModal({ wo, onClose }: { wo: WorkOrder; onClose: () => voi
   });
 
   const WOStatusIcon = STATUS_ICONS[wo.status];
+  const statusClass = getStatusBadgeClass(stateMachine, wo.status);
+  const statusLabel = getStatusLabel(stateMachine, wo.status);
   const inputClass = (disabled: boolean) =>
     `filter-input w-full ${disabled ? 'bg-slate-50 text-slate-500 cursor-not-allowed pointer-events-none' : ''}`;
 
@@ -557,9 +541,9 @@ function EditWorkOrderModal({ wo, onClose }: { wo: WorkOrder; onClose: () => voi
               <div>
                 <label className="form-label">Estado actual</label>
                 <div className="flex items-center gap-2">
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${STATUS_COLORS[wo.status]}`}>
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${statusClass}`}>
                     <WOStatusIcon size={11} />
-                    {STATUS_LABEL[wo.status]}
+                    {statusLabel}
                   </span>
                   <p className="text-[11px] text-slate-400">Los cambios de fase se realizan desde los botones de acción en la página principal.</p>
                 </div>
@@ -1294,13 +1278,7 @@ const AUDIT_ACTION_CONFIG: Record<string, {
     badgeColor: 'bg-brand-50 text-brand-700 ring-brand-600/20',
   },
   STATUS_CHANGED: {
-    label: (e) => {
-      const prev = (e.previousValue as { status?: WorkOrderStatus } | null)?.status;
-      const next = (e.newValue     as { status?: WorkOrderStatus } | null)?.status;
-      const prevLabel = prev ? (STATUS_LABEL[prev] ?? prev) : '?';
-      const nextLabel = next ? (STATUS_LABEL[next] ?? next) : '?';
-      return `Fase cambiada: ${prevLabel} → ${nextLabel}`;
-    },
+    label: () => 'Fase cambiada',
     detail: (e) => {
       const meta = e.metadata as { transition?: string } | null;
       return meta?.transition ?? null;
@@ -1382,6 +1360,17 @@ const ROLE_BADGE: Record<string, string> = {
 };
 
 function AuditLogTimeline({ workOrderId }: { workOrderId: string }) {
+  const { data: workOrderStateMachine } = useWorkOrderStateMachine();
+  if (!workOrderStateMachine) {
+    return (
+      <section className="bg-white rounded-xl border border-slate-200 shadow-card overflow-hidden p-5">
+        <p className="text-sm text-slate-400 text-center py-4">
+          <Loader2 size={16} className="inline animate-spin mr-1" />Cargando contrato de estado OT…
+        </p>
+      </section>
+    );
+  }
+  const stateMachine = ensureStateMachine(workOrderStateMachine, 'AuditLogTimeline');
   const { data: log = [], isLoading } = useQuery({
     queryKey: ['audit-log', workOrderId],
     queryFn:  () => workOrdersApi.getAuditLog(workOrderId),
@@ -1434,6 +1423,14 @@ function AuditLogTimeline({ workOrderId }: { workOrderId: string }) {
       {!isLoading && log.length > 0 && (
         <ol className="px-5 py-4 space-y-0">
           {log.map((entry: AuditLogEntry, i) => {
+            const statusChangedLabel = (() => {
+              if (entry.action !== 'STATUS_CHANGED') return null;
+              const prev = (entry.previousValue as { status?: WorkOrderStatus } | null)?.status;
+              const next = (entry.newValue as { status?: WorkOrderStatus } | null)?.status;
+              const prevLabel = prev ? getStatusLabel(stateMachine, prev) : '?';
+              const nextLabel = next ? getStatusLabel(stateMachine, next) : '?';
+              return `Fase cambiada: ${prevLabel} → ${nextLabel}`;
+            })();
             const cfg = AUDIT_ACTION_CONFIG[entry.action] ?? {
               label:      () => entry.action,
               detail:     () => null,
@@ -1442,7 +1439,7 @@ function AuditLogTimeline({ workOrderId }: { workOrderId: string }) {
               badgeColor: 'bg-slate-100 text-slate-600 ring-slate-500/20',
             };
             const Icon   = cfg.icon;
-            const label  = cfg.label(entry);
+            const label  = statusChangedLabel ?? cfg.label(entry);
             const detail = cfg.detail(entry);
             const isLast = i === log.length - 1;
 
@@ -1857,10 +1854,18 @@ export default function WorkOrderDetailPage() {
     enabled: !!id,
   });
 
+  const { data: workOrderStateMachine } = useWorkOrderStateMachine();
+
   const transitionMutation = useMutation({
     mutationFn: (status: WorkOrderStatus) => workOrdersApi.transition(id!, status),
     onSuccess: (updated) => {
-      toast.success(`OT ${STATUS_LABEL[updated.status]}`);
+      if (!workOrderStateMachine) {
+        toast.error('Contrato de estado OT no disponible');
+        return;
+      }
+      const machine = ensureStateMachine(workOrderStateMachine, 'WorkOrderDetailPage.transitionMutation');
+      const label = getStatusLabel(machine, updated.status);
+      toast.success(`OT ${label}`);
       qc.invalidateQueries({ queryKey: ['work-order', id] });
       qc.invalidateQueries({ queryKey: ['work-orders'] });
       setShowStamp(false);
@@ -1901,7 +1906,20 @@ export default function WorkOrderDetailPage() {
     );
   }
 
-  const nextSteps = NEXT_TRANSITIONS[wo.status];
+  if (!workOrderStateMachine) {
+    return (
+      <div className="flex items-center justify-center py-24 text-slate-400">
+        <Loader2 size={22} className="animate-spin mr-2" />
+        Cargando contrato de estado OT…
+      </div>
+    );
+  }
+
+  const stateMachine = ensureStateMachine(workOrderStateMachine, 'WorkOrderDetailPage');
+
+  const nextSteps = stateMachine.transitions[wo.status] ?? [];
+  const lifecycleStatuses = getOrderedStatuses(stateMachine);
+  const currentStatusClass = getStatusBadgeClass(stateMachine, wo.status);
   const StatusIcon = STATUS_ICONS[wo.status];
   const completedTasks = wo.tasks.filter(t => t.isCompleted).length;
   const openDisc = wo.discrepancies.filter(d => d.status === 'OPEN').length;
@@ -1916,7 +1934,7 @@ export default function WorkOrderDetailPage() {
     if (currentStatus === 'IN_PROGRESS' && target === 'OPEN')         return 'Pausar — Volver a Abierta';
     if (currentStatus === 'QUALITY'     && target === 'CLOSED')       return 'Aprobar y Cerrar OT';
     if (currentStatus === 'QUALITY'     && target === 'IN_PROGRESS')  return 'Rechazar — Regresar a Ejecución';
-    return STATUS_LABEL[target];
+    return getStatusLabel(stateMachine, target);
   }
 
   return (
@@ -1945,7 +1963,7 @@ export default function WorkOrderDetailPage() {
       </div>
 
       {/* Lifecycle stepper */}
-      <LifecycleStepper current={wo.status} />
+      <LifecycleStepper current={wo.status} statuses={lifecycleStatuses} />
 
       {/* Assignment Workflow Panel */}
       {wo.status !== 'DRAFT' && (
@@ -1974,9 +1992,9 @@ export default function WorkOrderDetailPage() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-2 flex-wrap">
               <span className="font-mono font-bold text-slate-500 text-sm">{wo.number}</span>
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${STATUS_COLORS[wo.status]}`}>
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${currentStatusClass}`}>
                 <StatusIcon size={11} />
-                {STATUS_LABEL[wo.status]}
+                {getStatusLabel(stateMachine, wo.status)}
               </span>
               {wo.status === 'CLOSED' && (
                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">

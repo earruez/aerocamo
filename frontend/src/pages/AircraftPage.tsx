@@ -7,6 +7,7 @@ import { aircraftApi, type Aircraft, type CreateAircraftInput } from '@api/aircr
 import { libraryApi, type AssignedPlanCategory, type MaintenanceTemplate } from '@api/library.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { AircraftStatusReport } from '@components/reports/AircraftStatusReport';
+import { MISSING_OPERATIONAL_CONTEXT_LABEL } from '@/shared/operationalContext';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -37,6 +38,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 function NewAircraftModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
+  const demoPlaceholdersEnabled = import.meta.env.MODE === 'development' || import.meta.env.MODE === 'test';
   const PLAN_CATEGORY_LABELS: Record<AssignedPlanCategory, string> = {
     manufacturer: 'Normativa de fabricante',
     national_dgac: 'Normativa nacional (DGAC)',
@@ -72,74 +74,19 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
     [templates],
   );
 
-  const normalize = (value: string | null | undefined) => (value ?? '').trim().toUpperCase();
-
-  const scoreTemplateForCategory = (
-    category: AssignedPlanCategory,
-    template: MaintenanceTemplate,
-  ): number => {
-    const manufacturer = normalize(form.manufacturer);
-    const model = normalize(form.model);
-    const engineModel = normalize(form.engineModel ?? '');
-    const templateManufacturer = normalize(template.manufacturer);
-    const templateModel = normalize(template.model);
-    const descriptor = normalize(`${template.description ?? ''} ${template.version}`);
-    const tasks = template.tasks ?? [];
-
-    const hasDgacSignals = descriptor.includes('DGAC')
-      || descriptor.includes('RAC')
-      || tasks.some((task) => normalize(task.referenceType).includes('INTERNAL') || normalize(task.referenceNumber).includes('DGAC'));
-    const hasEngineSignals = descriptor.includes('ENGINE')
-      || descriptor.includes('MOTOR')
-      || tasks.some((task) => {
-        const taskText = normalize(`${task.title} ${task.code} ${task.applicablePartNumber ?? ''} ${task.chapter ?? ''}`);
-        return taskText.includes('ENGINE')
-          || taskText.includes('MOTOR')
-          || taskText.startsWith('72')
-          || normalize(task.applicablePartNumber).includes(engineModel);
-      });
-    const hasEasaSignals = descriptor.includes('EASA')
-      || tasks.some((task) => normalize(task.referenceNumber).includes('EASA') || normalize(task.title).includes('EASA'));
-
-    let score = 0;
-    if (templateManufacturer === manufacturer) score += 40;
-    if (templateModel === model) score += 40;
-    if (templateModel.includes(model) || model.includes(templateModel)) score += 15;
-    if (engineModel && normalize(`${template.description ?? ''} ${template.model}`).includes(engineModel)) score += 20;
-
-    if (category === 'manufacturer') {
-      if (templateManufacturer === manufacturer && templateModel === model) score += 120;
-      if (!hasDgacSignals && !hasEngineSignals && !hasEasaSignals) score += 25;
-    }
-    if (category === 'national_dgac') {
-      if (hasDgacSignals) score += 120;
-    }
-    if (category === 'engine_components') {
-      if (hasEngineSignals) score += 120;
-    }
-    if (category === 'origin_country') {
-      if (hasEasaSignals) score += 120;
-    }
-
-    return score;
-  };
-
   const templatesByCategory = useMemo(() => {
     const categories: AssignedPlanCategory[] = ['manufacturer', 'national_dgac', 'engine_components', 'origin_country'];
     const grouped = {} as Record<AssignedPlanCategory, MaintenanceTemplate[]>;
 
     for (const category of categories) {
-      grouped[category] = [...activeTemplates]
-        .map((template) => ({ template, score: scoreTemplateForCategory(category, template) }))
-        .sort((a, b) => b.score - a.score)
-        .map((entry) => entry.template);
+      grouped[category] = [...activeTemplates];
     }
 
     return grouped;
-  }, [activeTemplates, form.manufacturer, form.model, form.engineModel]);
+  }, [activeTemplates]);
 
   useEffect(() => {
-    if (activeTemplates.length === 0) return;
+    if (!demoPlaceholdersEnabled || activeTemplates.length === 0) return;
 
     const categories: AssignedPlanCategory[] = ['manufacturer', 'national_dgac', 'engine_components', 'origin_country'];
     setSelectedTemplatesByCategory((prev) => {
@@ -151,27 +98,24 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
       }
       return next;
     });
-  }, [activeTemplates, templatesByCategory]);
+  }, [activeTemplates, demoPlaceholdersEnabled, templatesByCategory]);
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const aircraft = await aircraftApi.create(form);
-
       const assignments = (Object.entries(selectedTemplatesByCategory) as Array<[AssignedPlanCategory, string]>)
         .filter(([, templateId]) => Boolean(templateId))
         .map(([category, templateId]) => ({ category, templateId }));
 
-      if (assignments.length === 0) {
-        return { aircraft, assignmentsApplied: 0, tasksCloned: 0 };
-      }
+      const aircraft = await aircraftApi.create({
+        ...form,
+        assignedPlans: assignments,
+      });
 
-      const result = await libraryApi.assignBundleToAircraft(aircraft.id, assignments);
-      const tasksCloned = result.assignments.reduce((acc, item) => acc + (item.tasksCloned ?? 0), 0);
-      return { aircraft, assignmentsApplied: result.assignments.length, tasksCloned };
+      return { aircraft, assignmentsApplied: assignments.length };
     },
-    onSuccess: ({ assignmentsApplied, tasksCloned }) => {
+    onSuccess: ({ assignmentsApplied }) => {
       if (assignmentsApplied > 0) {
-        toast.success(`Aeronave creada y ${assignmentsApplied} planes base asignados (${tasksCloned} tareas)`);
+        toast.success(`Aeronave creada y ${assignmentsApplied} planes base asignados`);
       } else {
         toast.success('Aeronave creada correctamente');
       }
@@ -444,7 +388,7 @@ function ProjectionPanel({ aircraft }: { aircraft: Aircraft }) {
     return (
       <div className="py-3 px-4 text-xs text-slate-400 flex items-center gap-2">
         <Info size={13} />
-        Sin tareas con horas o fecha de vencimiento registradas.
+        {MISSING_OPERATIONAL_CONTEXT_LABEL}
       </div>
     );
   }
@@ -518,13 +462,13 @@ function ProjectionPanel({ aircraft }: { aircraft: Aircraft }) {
                       ? t.hoursRemaining < 0
                         ? `+${Math.abs(t.hoursRemaining).toFixed(0)}h venc.`
                         : `${t.hoursRemaining.toFixed(1)} h`
-                      : <span className="text-slate-300">—</span>}
+                        : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
                   </td>
                   {/* estimated calendar date based on hours */}
                   <td className="px-3 py-2 text-right text-xs tabular-nums text-slate-500">
                     {projectedDueDate
                       ? projectedDueDate.toLocaleDateString('es-MX')
-                      : <span className="text-slate-300">—</span>}
+                      : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
                   </td>
                   {/* calendar days remaining */}
                   <td className={`px-3 py-2 text-right tabular-nums font-semibold ${
@@ -536,7 +480,7 @@ function ProjectionPanel({ aircraft }: { aircraft: Aircraft }) {
                       ? t.daysRemaining < 0
                         ? `+${Math.abs(t.daysRemaining)}d venc.`
                         : `${t.daysRemaining}d`
-                      : <span className="text-slate-300">—</span>}
+                      : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
                   </td>
                   {/* controlling criterion pill */}
                   <td className="px-3 py-2 text-right">
@@ -654,12 +598,12 @@ function AircraftRow({ aircraft }: { aircraft: Aircraft }) {
               )}
             </div>
           ) : (
-            <span className="text-slate-300 text-xs">—</span>
+            <span className="text-slate-400 text-xs">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>
           )}
         </td>
 
         <td className="table-cell">
-          {aircraft.coaExpiryDate ? new Date(aircraft.coaExpiryDate).toLocaleDateString('es-MX') : '—'}
+          {aircraft.coaExpiryDate ? new Date(aircraft.coaExpiryDate).toLocaleDateString('es-MX') : MISSING_OPERATIONAL_CONTEXT_LABEL}
         </td>
         <td className="table-cell">
           <span className={STATUS_BADGE[aircraft.status] ?? 'badge-grounded'}>
@@ -716,7 +660,13 @@ function AircraftRow({ aircraft }: { aircraft: Aircraft }) {
 
 export default function AircraftPage() {
   const [showModal, setShowModal] = useState(false);
-  const { data: aircraft = [], isLoading } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
+  const { data: aircraft = [], isLoading, isError, error } = useQuery({
+    queryKey: ['aircraft'],
+    queryFn: aircraftApi.findAll,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
+  const aircraftList = Array.isArray(aircraft) ? aircraft : [];
 
   return (
     <div className="p-8 space-y-6">
@@ -728,7 +678,11 @@ export default function AircraftPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-slate-900">Aeronaves</h1>
-            <p className="text-sm text-slate-500">{aircraft.length} aeronave{aircraft.length !== 1 ? 's' : ''} en la flota</p>
+            <p className="text-sm text-slate-500">
+              {isError
+                ? 'No se pudo cargar la flota'
+                : `${aircraftList.length} aeronave${aircraftList.length !== 1 ? 's' : ''} en la flota`}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -766,12 +720,19 @@ export default function AircraftPage() {
                 <td colSpan={11} className="table-cell text-center text-slate-400 py-12">Cargando…</td>
               </tr>
             )}
-            {!isLoading && aircraft.length === 0 && (
+            {!isLoading && !isError && aircraftList.length === 0 && (
               <tr>
                 <td colSpan={11} className="table-cell text-center text-slate-400 py-12">No hay aeronaves registradas</td>
               </tr>
             )}
-            {aircraft.map((a) => (
+            {isError && (
+              <tr>
+                <td colSpan={11} className="table-cell text-center text-rose-600 py-12">
+                  {error instanceof Error ? error.message : 'No se pudo cargar la lista de aeronaves.'}
+                </td>
+              </tr>
+            )}
+            {!isError && aircraftList.map((a) => (
               <AircraftRow key={a.id} aircraft={a} />
             ))}
           </tbody>

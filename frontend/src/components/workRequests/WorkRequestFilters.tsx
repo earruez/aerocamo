@@ -1,3 +1,5 @@
+import { useQuery } from '@tanstack/react-query';
+import { aircraftApi } from '../../api/aircraft.api';
 import { useWorkRequestStore } from '../../store/workRequestStore';
 import { WorkRequestVisibleStatus } from '../../shared/workRequestTypes';
 
@@ -9,12 +11,10 @@ export function WorkRequestFilters() {
   const setFilterStatus = useWorkRequestStore((s) => s.setFilterStatus);
   const setSearchText = useWorkRequestStore((s) => s.setSearchText);
   const hasActiveFilters = Boolean(filterAircraftId || filterStatus || searchText.trim());
-
-  // TODO: Reemplazar por fetch real de aeronaves
-  const aircraftOptions = [
-    { id: 'acft-001', registration: 'CC-ABC', model: 'Cessna 172', manufacturer: 'Cessna' },
-    { id: 'acft-002', registration: 'CC-DEF', model: 'Piper PA-28', manufacturer: 'Piper' },
-  ];
+  const { data: aircraftOptions = [], isLoading: loadingAircraft } = useQuery({
+    queryKey: ['aircraft'],
+    queryFn: aircraftApi.findAll,
+  });
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
@@ -25,7 +25,7 @@ export function WorkRequestFilters() {
           value={filterAircraftId || ''}
           onChange={(e) => setFilterAircraftId(e.target.value || null)}
         >
-          <option value="">Todas</option>
+          <option value="">{loadingAircraft ? 'Cargando aeronaves...' : 'Todas'}</option>
           {aircraftOptions.map((a) => (
             <option key={a.id} value={a.id}>
               {a.registration} - {a.manufacturer} {a.model}
@@ -43,7 +43,7 @@ export function WorkRequestFilters() {
           <option value="">Todos</option>
           <option value="borrador">Borrador</option>
           <option value="en_proceso">En proceso</option>
-          <option value="cerrada">Cerrada</option>
+          <option value="cancelada">Cancelada</option>
         </select>
       </div>
       <div className="lg:col-span-5">

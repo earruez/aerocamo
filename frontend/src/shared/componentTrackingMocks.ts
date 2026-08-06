@@ -3,6 +3,7 @@ import type { ComponentMovement, ComponentApplication } from './componentTrackin
 export const mockComponentMovements: ComponentMovement[] = [
   {
     id: 'mov-001',
+    organizationId: 'org-001',
     aircraftId: 'acft-001',
     position: 'ENGINE 1',
     movementType: 'replacement',
@@ -19,6 +20,7 @@ export const mockComponentMovements: ComponentMovement[] = [
     aircraftHoursAtMovement: 2154.2,
     aircraftCyclesAtMovement: 1302,
     notes: 'Cambio por consumo de limite de horas.',
+    performedById: 'user-001',
     createdAt: '2026-04-12T16:00:00.000Z',
     performedByUserName: 'TMA Principal',
   },
@@ -27,6 +29,8 @@ export const mockComponentMovements: ComponentMovement[] = [
 export const mockComponentApplications: ComponentApplication[] = [
   {
     id: 'app-001',
+    organizationId: 'org-001',
+    definitionId: 'def-001',
     componentInstanceId: 'cmp-inst-201',
     taskId: 'task-001',
     aircraftId: 'acft-001',
@@ -39,6 +43,9 @@ export const mockComponentApplications: ComponentApplication[] = [
     nextDueHours: 2354.2,
     nextDueCycles: null,
     nextDueDate: null,
+    applicationType: 'application',
+    type: 'application',
+    isInitial: false,
     notes: 'Aplicacion posterior a cambio de componente.',
     createdAt: '2026-04-12T16:00:00.000Z',
   },

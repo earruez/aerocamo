@@ -46,6 +46,22 @@ enum AircraftStatus {
   @@map("aircraft_status")
 }
 
+enum AircraftEnginePosition {
+  N1
+  N2
+
+  @@map("aircraft_engine_position")
+}
+
+  enum AircraftUsageSource {
+    manual
+    flight_log
+    ot_close
+    import
+    baseline
+
+    @@map("aircraft_usage_source")
+  }
 enum ComponentStatus {
   INSTALLED         // Currently fitted to an aircraft
   SERVICEABLE       // In store, ready for installation
@@ -89,6 +105,14 @@ enum ComplianceStatus {
   CANCELLED
 
   @@map("compliance_status")
+}
+
+enum ComplianceApplicationType {
+  baseline
+  application
+  replacement_start
+
+  @@map("compliance_application_type")
 }
 
 /// Work order lifecycle — transitions enforced by WorkOrderService
@@ -142,6 +166,33 @@ enum WorkRequestItemCategory {
   @@map("work_request_item_category")
 }
 
+enum WorkRequestItemSourceKind {
+  maintenance_plan
+  component_inspection
+  discrepancy
+  compliance_due
+  manual
+
+  @@map("work_request_item_source_kind")
+}
+
+enum WorkRequestItemExecutionType {
+  maintenance_application
+  component_replacement
+  discrepancy_action
+
+  @@map("work_request_item_execution_type")
+}
+
+enum AssignedPlanCategory {
+  manufacturer
+  national_dgac
+  engine_components
+  origin_country
+
+  @@map("assigned_plan_category")
+}
+
 enum DiscrepancyStatus {
   OPEN          // Hallazgo abierto, pendiente de acción
   DEFERRED      // Diferido con referencia MEL/CDL
@@ -156,6 +207,39 @@ enum ComponentMovementType {
   REMOVED       // Componente removido de aeronave
 
   @@map("component_movement_type")
+}
+
+enum ComponentIntervalType {
+  hours
+  cycles
+  calendar
+  mixed
+
+  @@map("component_interval_type")
+}
+
+enum ComponentExecutionType {
+  maintenance
+  component_replacement
+
+  @@map("component_execution_type")
+}
+
+enum ComponentInstanceStatus {
+  installed
+  removed
+  spare
+  scrapped
+
+  @@map("component_instance_status")
+}
+
+enum ComponentMovementKind {
+  install
+  remove
+  replacement
+
+  @@map("component_movement_kind")
 }
 
 enum UserRole {
@@ -195,6 +279,14 @@ model Organization {
   workRequests       WorkRequest[]
   discrepancies      Discrepancy[]
   maintenanceTemplates MaintenanceTemplate[]
+  aircraftUsageLogs  AircraftUsageLog[]
+  aircraftEngines    AircraftEngine[]
+  aircraftEngineUsageLogs AircraftEngineUsageLog[]
+  componentDefinitions ComponentDefinition[]
+  componentInstances   ComponentInstance[]
+  componentApplications ComponentApplication[]
+  componentMovements   ComponentMovement[]
+  aircraftAssignedPlans AircraftAssignedPlan[]
 
   @@map("organizations")
 }
@@ -241,6 +333,8 @@ model User {
   discrepanciesFound       Discrepancy[]  @relation("DiscrepancyFoundBy")
   discrepanciesResolved    Discrepancy[]  @relation("DiscrepancyResolvedBy")
   componentMovements       ComponentHistory[] @relation("ComponentMovedBy")
+  componentTrackingMovements ComponentMovement[] @relation("ComponentTrackingMovedBy")
+  assignedPlans            AircraftAssignedPlan[]
 
   @@unique([email, organizationId])
   @@index([organizationId])
@@ -298,6 +392,12 @@ model Aircraft {
   workOrders         WorkOrder[]
   workRequests       WorkRequest[]
   componentHistory   ComponentHistory[]
+  usageLogs          AircraftUsageLog[]
+  engines            AircraftEngine[]
+  componentInstances ComponentInstance[]
+  componentApplications ComponentApplication[]
+  componentMovements ComponentMovement[]
+  assignedPlans      AircraftAssignedPlan[]
 
   // Indexes for common lookups
   @@unique([registration, organizationId])
@@ -307,6 +407,81 @@ model Aircraft {
   @@map("aircraft")
 }
 
+model AircraftEngine {
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @db.Uuid
+  aircraftId     String                @db.Uuid
+  position       AircraftEnginePosition
+  manufacturer   String                @db.VarChar(150)
+  model          String                @db.VarChar(150)
+  serialNumber   String                @db.VarChar(100)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft       Aircraft              @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  usageLogs      AircraftEngineUsageLog[]
+
+  @@unique([aircraftId, position])
+  @@index([organizationId, aircraftId])
+  @@index([organizationId, serialNumber])
+  @@map("aircraft_engines")
+}
+
+model AircraftEngineUsageLog {
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @db.Uuid
+  engineId       String                @db.Uuid
+  hours          Decimal               @db.Decimal(10, 2)
+  cycles         Int
+  date           DateTime              @db.Date
+  createdAt      DateTime              @default(now())
+
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  engine         AircraftEngine        @relation(fields: [engineId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, engineId, date])
+  @@map("aircraft_engine_usage_logs")
+}
+
+  model AircraftUsageLog {
+    id             String              @id @default(uuid()) @db.Uuid
+    organizationId String              @db.Uuid
+    aircraftId     String              @db.Uuid
+    date           DateTime            @db.Date
+    totalHours     Decimal             @db.Decimal(10, 2)
+    totalCycles    Int
+    source         AircraftUsageSource
+    notes          String?
+    createdAt      DateTime            @default(now())
+
+    organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+    aircraft       Aircraft            @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+
+    @@index([organizationId, aircraftId, date])
+    @@map("aircraft_usage_logs")
+  }
+
+model AircraftAssignedPlan {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @db.Uuid
+  aircraftId     String               @db.Uuid
+  category       AssignedPlanCategory
+  templateId     String               @db.Uuid
+  assignedById   String?              @db.Uuid
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft       Aircraft             @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  template       MaintenanceTemplate  @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  assignedBy     User?                @relation(fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([aircraftId, category])
+  @@index([organizationId, aircraftId])
+  @@index([templateId])
+  @@map("aircraft_assigned_plans")
+}
 // ─────────────────────────────────────────────────────────────────────────────
 //  COMPONENT  (EQ — Equipamiento con trazabilidad de número de serie)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -382,6 +557,7 @@ model Component {
   compliances     Compliance[]
   history         ComponentHistory[]
   workRequestItems WorkRequestItem[]
+  componentInstances ComponentInstance[]
 
   @@unique([serialNumber, organizationId])
   @@index([organizationId])
@@ -466,6 +642,7 @@ model MaintenanceTask {
   compliances     Compliance[]
   workOrderTasks  WorkOrderTask[]
   workRequestItems WorkRequestItem[]
+  componentApplications ComponentApplication[]
 
   @@unique([code, organizationId])
   @@index([organizationId])
@@ -566,6 +743,11 @@ model Compliance {
   /// Internal work order number linking to the maintenance package
   workOrderNumber String?          @db.VarChar(50)
 
+  /// Classification of this record in lifecycle semantics
+  applicationType ComplianceApplicationType @default(application)
+  /// True when this is the initial baseline/control-start record
+  isInitial      Boolean           @default(false)
+
   status         ComplianceStatus  @default(COMPLETED)
 
   /// If deferred: MEL/NEF item reference and expiry
@@ -592,6 +774,7 @@ model Compliance {
   @@index([nextDueHours, organizationId])
   @@index([nextDueDate, organizationId])
   @@index([organizationId, status])
+  @@index([organizationId, applicationType])
   @@index([componentId])
   @@map("compliances")
 }
@@ -757,6 +940,8 @@ model WorkRequest {
   sentBy         User?             @relation("WRSentBy", fields: [sentById], references: [id])
 
   items          WorkRequestItem[]
+  componentApplications ComponentApplication[]
+  componentMovements ComponentMovement[]
 
   @@unique([number, organizationId])
   @@index([organizationId, status])
@@ -773,6 +958,12 @@ model WorkRequestItem {
   componentId   String?         @db.Uuid
   discrepancyId String?         @db.Uuid
 
+  sourceKind    WorkRequestItemSourceKind @default(maintenance_plan)
+  sourceId      String          @db.VarChar(100)
+  executionType WorkRequestItemExecutionType?
+  requiresComponentTracking Boolean @default(false)
+  componentDefinitionId String? @db.Uuid
+
   category      WorkRequestItemCategory @default(MAINTENANCE_PLAN)
   itemCode      String?         @db.VarChar(100)
   itemTitle     String          @db.VarChar(255)
@@ -788,10 +979,146 @@ model WorkRequestItem {
   discrepancy   Discrepancy?    @relation(fields: [discrepancyId], references: [id])
 
   @@index([workRequestId, category])
+  @@index([sourceKind, sourceId])
+  @@index([executionType])
+  @@index([componentDefinitionId])
   @@index([taskId])
   @@index([componentId])
   @@index([discrepancyId])
   @@map("work_request_items")
+}
+
+model ComponentDefinition {
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @db.Uuid
+  ataChapter     String                @db.VarChar(20)
+  ataCode        String                @db.VarChar(50)
+  name           String                @db.VarChar(255)
+  description    String
+  executionType  ComponentExecutionType
+  intervalType   ComponentIntervalType
+  intervalHours  Decimal?              @db.Decimal(10, 2)
+  intervalCycles Int?
+  intervalDays   Int?
+  requiresComponentTracking Boolean    @default(false)
+  sourceGroup    String                @db.VarChar(100)
+  reference      String?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  instances      ComponentInstance[]
+  applications   ComponentApplication[]
+
+  @@index([organizationId])
+  @@index([organizationId, ataCode])
+  @@map("component_definitions")
+}
+
+model ComponentInstance {
+  id             String                  @id @default(uuid()) @db.Uuid
+  organizationId String                  @db.Uuid
+  definitionId   String                  @db.Uuid
+  aircraftId     String?                 @db.Uuid
+  legacyComponentId String?              @db.Uuid
+  partNumber     String                  @db.VarChar(100)
+  serialNumber   String                  @db.VarChar(100)
+  position       String                  @db.VarChar(150)
+  status         ComponentInstanceStatus @default(spare)
+  installedAt    DateTime?
+  removedAt      DateTime?
+  installedAtHours Decimal?              @db.Decimal(10, 2)
+  removedAtHours Decimal?                @db.Decimal(10, 2)
+  installedAtCycles Int?
+  removedAtCycles Int?
+  installWorkOrderNumber String?         @db.VarChar(50)
+  removalWorkOrderNumber String?         @db.VarChar(50)
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  definition     ComponentDefinition     @relation(fields: [definitionId], references: [id], onDelete: Restrict)
+  aircraft       Aircraft?               @relation(fields: [aircraftId], references: [id], onDelete: SetNull)
+  legacyComponent Component?             @relation(fields: [legacyComponentId], references: [id], onDelete: SetNull)
+  applications   ComponentApplication[]
+  removedMovements ComponentMovement[]   @relation("ComponentMovementRemoved")
+  installedMovements ComponentMovement[] @relation("ComponentMovementInstalled")
+
+  @@unique([serialNumber, organizationId])
+  @@index([organizationId])
+  @@index([aircraftId])
+  @@index([definitionId])
+  @@index([legacyComponentId])
+  @@map("component_instances")
+}
+
+model ComponentApplication {
+  id             String                    @id @default(uuid()) @db.Uuid
+  organizationId String                    @db.Uuid
+  definitionId   String                    @db.Uuid
+  componentInstanceId String?              @db.Uuid
+  aircraftId     String                    @db.Uuid
+  taskId         String?                   @db.Uuid
+  workRequestId  String?                   @db.Uuid
+  officeOrderId  String?                   @db.VarChar(100)
+  workOrderNumber String?                  @db.VarChar(50)
+  appliedAt      DateTime
+  aircraftHoursAtApplication Decimal        @db.Decimal(10, 2)
+  aircraftCyclesAtApplication Int
+  nextDueHours   Decimal?                  @db.Decimal(10, 2)
+  nextDueCycles  Int?
+  nextDueDate    DateTime?                 @db.Date
+  applicationType ComplianceApplicationType @default(application)
+  isInitial      Boolean                   @default(false)
+  notes          String?
+  createdAt      DateTime                  @default(now())
+
+  organization   Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  definition     ComponentDefinition       @relation(fields: [definitionId], references: [id], onDelete: Restrict)
+  componentInstance ComponentInstance?     @relation(fields: [componentInstanceId], references: [id], onDelete: SetNull)
+  aircraft       Aircraft                  @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  task           MaintenanceTask?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  workRequest    WorkRequest?              @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([aircraftId])
+  @@index([definitionId])
+  @@index([componentInstanceId])
+  @@index([workRequestId])
+  @@map("component_applications")
+}
+
+model ComponentMovement {
+  id             String                    @id @default(uuid()) @db.Uuid
+  organizationId String                    @db.Uuid
+  aircraftId     String                    @db.Uuid
+  position       String                    @db.VarChar(150)
+  movementType   ComponentMovementKind
+  removedComponentInstanceId String?       @db.Uuid
+  installedComponentInstanceId String?     @db.Uuid
+  workRequestId  String?                   @db.Uuid
+  officeOrderId  String?                   @db.VarChar(100)
+  workOrderNumber String?                  @db.VarChar(50)
+  performedAt    DateTime
+  aircraftHoursAtMovement Decimal           @db.Decimal(10, 2)
+  aircraftCyclesAtMovement Int
+  notes          String?
+  performedById  String                    @db.Uuid
+  createdAt      DateTime                  @default(now())
+
+  organization   Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft       Aircraft                  @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  removedComponentInstance ComponentInstance? @relation("ComponentMovementRemoved", fields: [removedComponentInstanceId], references: [id], onDelete: SetNull)
+  installedComponentInstance ComponentInstance? @relation("ComponentMovementInstalled", fields: [installedComponentInstanceId], references: [id], onDelete: SetNull)
+  workRequest    WorkRequest?              @relation(fields: [workRequestId], references: [id], onDelete: SetNull)
+  performedBy    User                      @relation("ComponentTrackingMovedBy", fields: [performedById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([aircraftId])
+  @@index([workRequestId])
+  @@index([removedComponentInstanceId])
+  @@index([installedComponentInstanceId])
+  @@map("component_movements")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -968,6 +1295,7 @@ model MaintenanceTemplate {
   // Relations
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   tasks          MaintenanceTemplateTask[]
+  assignedPlans  AircraftAssignedPlan[]
 
   @@unique([manufacturer, model, organizationId])
   @@index([organizationId])

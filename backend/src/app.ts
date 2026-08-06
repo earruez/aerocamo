@@ -9,6 +9,7 @@ import { authRoutes } from './infrastructure/http/routes/auth.routes';
 import { aircraftRoutes } from './infrastructure/http/routes/aircraft.routes';
 import { complianceRoutes } from './infrastructure/http/routes/compliance.routes';
 import { componentRoutes } from './infrastructure/http/routes/component.routes';
+import { componentTrackingRoutes } from './infrastructure/http/routes/componentTracking.routes';
 import { taskRoutes } from './infrastructure/http/routes/tasks.routes';
 import { workOrderRoutes } from './infrastructure/http/routes/workOrders.routes';
 import { componentHistoryRouter, aircraftHistoryRouter, auditRouter } from './infrastructure/http/routes/componentHistory.routes';
@@ -39,12 +40,28 @@ export function createApp(): Application {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  app.get('/', (_req: Request, res: Response) => {
+    if (env.NODE_ENV === 'development') {
+      res.redirect(env.CORS_ORIGIN);
+      return;
+    }
+
+    res.status(200).json({
+      status: 'ok',
+      message: 'Griselle API is running',
+      frontendUrl: env.CORS_ORIGIN,
+      healthUrl: '/health',
+      apiBaseUrl: '/api/v1',
+    });
+  });
+
   const API = '/api/v1';
   app.use(`${API}/auth`,             authRoutes);
   app.use(`${API}/aircraft`,         aircraftRoutes);
   app.use(`${API}/aircraft`,         aircraftHistoryRouter);
   app.use(`${API}/compliances`,      complianceRoutes);
   app.use(`${API}/components`,       componentRoutes);
+  app.use(`${API}/components`,       componentTrackingRoutes);
   app.use(`${API}/components`,       componentHistoryRouter);
   app.use(`${API}/tasks`,            taskRoutes);
   app.use(`${API}/work-orders`,      workOrderRoutes);

@@ -1,7 +1,11 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { authMiddleware, requireRoles } from '../middlewares/authMiddleware';
-import { TemplateCloneService } from '../../../domain/services/TemplateCloneService';
+import {
+  TemplateCloneService,
+  type AssignPlanByCategoryInput,
+  type PlanCategory,
+} from '../../../domain/services/TemplateCloneService';
 
 const prisma = new PrismaClient();
 
@@ -37,13 +41,6 @@ interface CreateTemplateTaskInput {
 }
 
 interface UpdateTemplateTaskInput extends Partial<CreateTemplateTaskInput> {}
-
-type PlanCategory = 'manufacturer' | 'national_dgac' | 'engine_components' | 'origin_country';
-
-interface AssignPlanByCategoryInput {
-  category: PlanCategory;
-  templateId: string;
-}
 
 interface AssignPlansBundleInput {
   aircraftId: string;
@@ -443,101 +440,37 @@ templateLibraryRouter.post(
   requireRoles('ADMIN', 'SUPERVISOR'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const orgId = req.organizationId;
       const { aircraftId, assignments } = req.body as AssignPlansBundleInput;
-
       if (!aircraftId) {
         return res.status(400).json({ message: 'aircraftId is required' });
       }
 
-      if (!Array.isArray(assignments) || assignments.length === 0) {
-        return res.status(400).json({ message: 'assignments must be a non-empty array' });
-      }
-
-      const validCategories: PlanCategory[] = ['manufacturer', 'national_dgac', 'engine_components', 'origin_country'];
-      const categories = assignments.map((a) => a.category);
-      const invalidCategory = categories.find((c) => !validCategories.includes(c));
-      if (invalidCategory) {
-        return res.status(400).json({ message: `Invalid category '${invalidCategory}'` });
-      }
-
-      const duplicateCategory = categories.find((cat, index) => categories.indexOf(cat) !== index);
-      if (duplicateCategory) {
-        return res.status(400).json({ message: `Category '${duplicateCategory}' is repeated` });
-      }
-
-      const aircraft = await prisma.aircraft.findUnique({ where: { id: aircraftId } });
-      if (!aircraft) {
-        return res.status(404).json({ message: 'Aircraft not found' });
-      }
-      if (aircraft.organizationId !== orgId) {
-        return res.status(403).json({ message: 'Forbidden' });
-      }
-
-      const templateIds = Array.from(new Set(assignments.map((a) => a.templateId)));
-      const templates = await prisma.maintenanceTemplate.findMany({
-        where: { id: { in: templateIds }, organizationId: orgId, isActive: true },
-        select: { id: true, manufacturer: true, model: true, description: true, version: true },
+      const result = await TemplateCloneService.assignBundleToAircraft({
+        organizationId: req.organizationId,
+        aircraftId,
+        assignments,
+        actor: {
+          id: req.currentUser.id,
+          email: req.currentUser.email,
+          role: req.currentUser.role,
+        },
       });
-      if (templates.length !== templateIds.length) {
-        return res.status(400).json({ message: 'One or more templates are invalid or inactive for this organization' });
-      }
-
-      const clonedByTemplateId = new Map<string, number>();
-      for (const templateId of templateIds) {
-        const result = await TemplateCloneService.cloneTemplateToAircraft(templateId, aircraftId, orgId);
-        clonedByTemplateId.set(templateId, result.tasksCloned);
-      }
-
-      const templateById = new Map(templates.map((t) => [t.id, t]));
-
-      const assignmentResults = [] as Array<{
-        category: PlanCategory;
-        templateId: string;
-        templateLabel: string;
-        tasksCloned: number;
-      }>;
-
-      for (const assignment of assignments) {
-        const template = templateById.get(assignment.templateId)!;
-        const templateLabel = `${template.manufacturer} ${template.model} - ${template.description ?? template.version}`;
-        const tasksCloned = clonedByTemplateId.get(assignment.templateId) ?? 0;
-
-        assignmentResults.push({
-          category: assignment.category,
-          templateId: assignment.templateId,
-          templateLabel,
-          tasksCloned,
-        });
-
-        await prisma.auditLog.create({
-          data: {
-            organizationId: orgId,
-            entityType: 'Aircraft',
-            entityId: aircraftId,
-            action: 'MAINTENANCE_PLAN_CATEGORY_ASSIGNED',
-            previousValue: Prisma.JsonNull,
-            newValue: {
-              category: assignment.category,
-              templateId: assignment.templateId,
-              templateLabel,
-            },
-            userId: req.currentUser.id,
-            userEmail: req.currentUser.email,
-            userRole: req.currentUser.role,
-            metadata: {
-              assignmentCategory: assignment.category,
-              assignedTemplateId: assignment.templateId,
-            },
-          },
-        });
-      }
 
       res.json({
-        message: `Assigned ${assignmentResults.length} maintenance plan categories`,
-        assignments: assignmentResults,
+        message: `Assigned ${result.assignments.length} maintenance plan categories`,
+        assignments: result.assignments,
       });
     } catch (err) {
+      const message = (err as Error).message;
+      if (message.includes('aircraft') || message.includes('Aircraft')) {
+        return res.status(404).json({ message });
+      }
+      if (message.includes('Forbidden') || message.includes('Unauthorized')) {
+        return res.status(403).json({ message });
+      }
+      if (message.includes('Invalid') || message.includes('repeated') || message.includes('assignments') || message.includes('inactive')) {
+        return res.status(400).json({ message });
+      }
       next(err);
     }
   },
@@ -550,40 +483,22 @@ templateLibraryRouter.get(
   authMiddleware,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const orgId = req.organizationId;
       const { aircraftId } = req.params;
 
       const aircraft = await prisma.aircraft.findUnique({ where: { id: aircraftId } });
       if (!aircraft) {
         return res.status(404).json({ message: 'Aircraft not found' });
       }
-      if (aircraft.organizationId !== orgId) {
+      if (aircraft.organizationId !== req.organizationId) {
         return res.status(403).json({ message: 'Forbidden' });
       }
 
-      const logs = await prisma.auditLog.findMany({
-        where: {
-          organizationId: orgId,
-          entityType: 'Aircraft',
-          entityId: aircraftId,
-          action: 'MAINTENANCE_PLAN_CATEGORY_ASSIGNED',
-        },
-        orderBy: { createdAt: 'desc' },
-      });
+      const assignments = await TemplateCloneService.getAircraftAssignedPlans(
+        aircraftId,
+        req.organizationId,
+      );
 
-      const byCategory = new Map<PlanCategory, { category: PlanCategory; templateId: string; templateLabel: string; assignedAt: Date }>();
-      for (const log of logs) {
-        const payload = log.newValue as { category?: PlanCategory; templateId?: string; templateLabel?: string } | null;
-        if (!payload?.category || !payload?.templateId || byCategory.has(payload.category)) continue;
-        byCategory.set(payload.category, {
-          category: payload.category,
-          templateId: payload.templateId,
-          templateLabel: payload.templateLabel ?? payload.templateId,
-          assignedAt: log.createdAt,
-        });
-      }
-
-      res.json({ assignments: Array.from(byCategory.values()) });
+      res.json({ assignments });
     } catch (err) {
       next(err);
     }

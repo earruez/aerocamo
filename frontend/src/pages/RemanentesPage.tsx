@@ -1,0 +1,283 @@
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { aircraftApi } from '@api/aircraft.api';
+import { dueApi, type DueMethod, type DueRow, type DueSourceType, type DueStatus } from '@api/due.api';
+import { MISSING_OPERATIONAL_CONTEXT_LABEL } from '@/shared/operationalContext';
+
+const sourceTabs: Array<{ key: string; label: string; sourceType?: DueSourceType }> = [
+  { key: 'all', label: 'Todos' },
+  { key: 'AD', label: 'AD', sourceType: 'AD' },
+  { key: 'SB', label: 'SB/TB', sourceType: 'SB' },
+  { key: 'INSPECTION', label: 'Inspecciones', sourceType: 'INSPECTION' },
+  { key: 'COMPONENT', label: 'Componentes', sourceType: 'COMPONENT' },
+  { key: 'ENGINE_COMPONENT', label: 'Comp. motor', sourceType: 'ENGINE_COMPONENT' },
+];
+
+const dimensionOptions: Array<{ key: 'ALL' | DueMethod; label: string; value: 'ALL' | DueMethod }> = [
+  { key: 'ALL', label: 'Todos', value: 'ALL' },
+  { key: 'H', label: 'Horarios (H)', value: 'H' },
+  { key: 'M', label: 'Calendarios (M)', value: 'M' },
+  { key: 'C', label: 'Ciclos (C)', value: 'C' },
+  { key: 'N1', label: 'N1', value: 'N1' },
+  { key: 'N2', label: 'N2', value: 'N2' },
+];
+
+const statusClass: Record<DueStatus, string> = {
+  OVERDUE: 'badge-state-critical',
+  DUE_SOON: 'badge-state-warning',
+  OK: 'badge-state-success',
+  NO_CONTEXT: 'badge-state-neutral',
+  NOT_APPLICABLE: 'badge-state-neutral',
+  COMPLIED: 'badge-state-success',
+};
+
+const STATUS_PRIORITY: Record<DueStatus, number> = {
+  OVERDUE: 1,
+  DUE_SOON: 2,
+  OK: 3,
+  NO_CONTEXT: 4,
+  COMPLIED: 5,
+  NOT_APPLICABLE: 6,
+};
+
+function fmtNumber(v: number | null, suffix = '', fallback = MISSING_OPERATIONAL_CONTEXT_LABEL): string {
+  if (v == null) return fallback;
+  return `${v}${suffix}`;
+}
+
+function fmtDate(v: string | null): string {
+  if (!v) return MISSING_OPERATIONAL_CONTEXT_LABEL;
+  return new Date(v).toLocaleDateString('es-MX');
+}
+
+function fmtRemainingValue(row: DueRow): string {
+  if (row.remainingValue == null) return MISSING_OPERATIONAL_CONTEXT_LABEL;
+  const unit = row.remainingUnit ? ` ${row.remainingUnit}` : '';
+  if (row.remainingValue < 0) return `${Math.abs(row.remainingValue)}${unit} vencido`;
+  return `${row.remainingValue}${unit}`;
+}
+
+function getOperationalDimension(row: DueRow): DueMethod | null {
+  return row.activeDimension ?? row.primaryDueDimension ?? null;
+}
+
+function statusLabel(status: DueStatus): string {
+  if (status === 'NO_CONTEXT') return 'Sin contexto';
+  if (status === 'NOT_APPLICABLE') return 'No aplica';
+  if (status === 'DUE_SOON') return 'Próx. vencer';
+  if (status === 'OVERDUE') return 'Vencido';
+  if (status === 'COMPLIED') return 'Cumplido';
+  return 'OK';
+}
+
+export default function RemanentesPage() {
+  type KpiCard = { label: string; value: number; status: DueStatus };
+
+  const [sourceTab, setSourceTab] = useState(sourceTabs[0]);
+  const [aircraftId, setAircraftId] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<DueStatus | null>(null);
+  const [dimensionFilter, setDimensionFilter] = useState<'ALL' | DueMethod>('ALL');
+
+  const { data: aircraft = [] } = useQuery({
+    queryKey: ['aircraft'],
+    queryFn: aircraftApi.findAll,
+  });
+
+  const selectedAircraftId = aircraftId || aircraft[0]?.id || '';
+
+  const { data: summary } = useQuery({
+    queryKey: ['due-summary', selectedAircraftId],
+    enabled: Boolean(selectedAircraftId),
+    queryFn: () => dueApi.getSummary(selectedAircraftId),
+  });
+
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['due-rows', selectedAircraftId],
+    enabled: Boolean(selectedAircraftId),
+    queryFn: () => dueApi.getRows(selectedAircraftId),
+  });
+
+  const kpiCards = useMemo(() => {
+    if (!summary) return [] as KpiCard[];
+    return [
+      { label: 'Vencidos', value: summary.overdueCount, status: 'OVERDUE' as DueStatus },
+      { label: 'Próx. vencer', value: summary.dueSoonCount, status: 'DUE_SOON' as DueStatus },
+      { label: 'OK', value: summary.okCount, status: 'OK' as DueStatus },
+      { label: 'Sin contexto', value: summary.noContextCount, status: 'NO_CONTEXT' as DueStatus },
+    ] as KpiCard[];
+  }, [summary]);
+
+  const sortedRows = useMemo(() => {
+    return [...rows].sort((a, b) => {
+      const byStatus = STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status];
+      if (byStatus !== 0) return byStatus;
+
+      const aRemaining = a.remainingValue == null ? Number.POSITIVE_INFINITY : a.remainingValue;
+      const bRemaining = b.remainingValue == null ? Number.POSITIVE_INFINITY : b.remainingValue;
+      if (aRemaining !== bRemaining) return aRemaining - bRemaining;
+
+      return a.description.localeCompare(b.description);
+    });
+  }, [rows]);
+
+  const visibleRows = useMemo(() => {
+    return sortedRows.filter((row) => {
+      if (sourceTab.sourceType && row.sourceType !== sourceTab.sourceType) return false;
+      if (statusFilter && row.status !== statusFilter) return false;
+      if (dimensionFilter !== 'ALL') {
+        const operationalDimension = getOperationalDimension(row);
+        if (!operationalDimension || operationalDimension !== dimensionFilter) return false;
+      }
+      return true;
+    });
+  }, [sortedRows, sourceTab.sourceType, statusFilter, dimensionFilter]);
+
+  const handleCreateST = (row: DueRow) => {
+    console.info('[Remanentes] Crear ST stub', row.id);
+  };
+
+  const handleViewOT = (row: DueRow) => {
+    if (!row.referenceOt) return;
+    console.info('[Remanentes] Ver OT stub', row.referenceOt);
+  };
+
+  const handleHistory = (row: DueRow) => {
+    console.info('[Remanentes] Historial stub', row.id);
+  };
+
+  const totalRowsCount = summary?.totalRows ?? visibleRows.length;
+
+  return (
+    <div className="p-6 lg:p-8 space-y-6 max-w-[96rem] mx-auto">
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 lg:p-6 shadow-sm space-y-3">
+        <h1 className="text-2xl font-bold text-slate-900">Remanentes Operacionales</h1>
+        <p className="text-sm text-slate-600">Vista equivalencia Access impulsada por Due Engine backend (sin cálculos frontend).</p>
+        <div className="max-w-sm">
+          <label className="form-label">Aeronave</label>
+          <select className="input w-full" value={selectedAircraftId} onChange={(e) => setAircraftId(e.target.value)}>
+            {aircraft.map((a) => (
+              <option key={a.id} value={a.id}>{a.registration} · {a.manufacturer} {a.model}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 flex-1">
+          {kpiCards.map((kpi) => {
+            const active = statusFilter === kpi.status;
+            return (
+              <button
+                key={kpi.label}
+                type="button"
+                onClick={() => setStatusFilter(active ? null : kpi.status)}
+                className={`text-left bg-white border rounded-xl px-4 py-3 shadow-sm transition-colors ${active ? 'border-brand-500 ring-1 ring-brand-300' : 'border-slate-200 hover:border-slate-300'}`}
+              >
+                <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">{kpi.label}</p>
+                <p className="text-2xl font-bold text-slate-900 tabular-nums mt-1">{kpi.value}</p>
+              </button>
+            );
+          })}
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm min-w-[140px]">
+          <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Total</p>
+          <p className="text-2xl font-bold text-slate-900 tabular-nums mt-1">{totalRowsCount}</p>
+        </div>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm">
+        <div className="px-4 py-3 border-b border-slate-100 flex flex-wrap gap-2">
+          {sourceTabs.map((t) => (
+            <button
+              key={t.key}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${sourceTab.key === t.key ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              onClick={() => setSourceTab(t)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="px-4 py-3 border-b border-slate-100 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-slate-600">Dimensión operacional</span>
+          {dimensionOptions.map((option) => {
+            const active = dimensionFilter === option.value;
+            return (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setDimensionFilter(option.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${active ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="table-header">Tipo</th>
+                <th className="table-header">Descripción</th>
+                <th className="table-header">P/N</th>
+                <th className="table-header">S/N</th>
+                <th className="table-header">DIM</th>
+                <th className="table-header">Método</th>
+                <th className="table-header">Intervalo</th>
+                <th className="table-header">Último cumplimiento</th>
+                <th className="table-header">Próximo</th>
+                <th className="table-header">Remanente</th>
+                <th className="table-header">Estado</th>
+                <th className="table-header">Obs./Ref.</th>
+                <th className="table-header">OT/ST</th>
+                <th className="table-header">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {isLoading ? (
+                <tr><td className="table-cell" colSpan={14}>Cargando...</td></tr>
+              ) : visibleRows.length === 0 ? (
+                <tr><td className="table-cell" colSpan={14}>{MISSING_OPERATIONAL_CONTEXT_LABEL}</td></tr>
+              ) : visibleRows.map((row: DueRow) => (
+                <tr key={row.id} className="hover:bg-slate-50">
+                  <td className="table-cell">{row.sourceType}</td>
+                  <td className="table-cell">{row.description}</td>
+                  <td className="table-cell font-mono">{row.partNumber ?? '—'}</td>
+                  <td className="table-cell font-mono">{row.serialNumber ?? '—'}</td>
+                  <td className="table-cell font-semibold">{getOperationalDimension(row) ?? MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
+                  <td className="table-cell">{row.method}</td>
+                  <td className="table-cell">{fmtNumber(row.intervalValue, row.intervalUnit ? ` ${row.intervalUnit}` : '', '—')}</td>
+                  <td className="table-cell">{row.lastComplianceDate ? `${fmtDate(row.lastComplianceDate)} · ${fmtNumber(row.lastComplianceValue)}` : MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
+                  <td className="table-cell">{row.nextDueDate ? fmtDate(row.nextDueDate) : row.nextDueValue != null ? fmtNumber(row.nextDueValue) : MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
+                  <td className="table-cell">{fmtRemainingValue(row)}</td>
+                  <td className="table-cell">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusClass[row.status]}`}>
+                      {statusLabel(row.status)}
+                    </span>
+                  </td>
+                  <td className="table-cell">{(row.observations ?? row.sourceDocumentReference ?? MISSING_OPERATIONAL_CONTEXT_LABEL).replace('Inicio de control registrado; falta cumplimiento real para ciclo operativo completo.', 'Inicio de control (sin cumplimiento real)')}</td>
+                  <td className="table-cell">{row.referenceOt ?? '-'} / {row.referenceSt ?? '-'}</td>
+                  <td className="table-cell">
+                    <div className="flex items-center gap-1.5">
+                      <button type="button" className="btn-secondary btn-xs" onClick={() => handleCreateST(row)}>
+                        Crear ST
+                      </button>
+                      <button type="button" className="btn-secondary btn-xs" onClick={() => handleViewOT(row)} disabled={!row.referenceOt}>
+                        Ver OT
+                      </button>
+                      <button type="button" className="btn-secondary btn-xs" onClick={() => handleHistory(row)}>
+                        Historial
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}

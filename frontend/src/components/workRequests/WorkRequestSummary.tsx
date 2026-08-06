@@ -1,29 +1,47 @@
 import { useWorkRequestStore } from '../../store/workRequestStore';
 import {
-  getVisibleSTStatus,
   WorkRequestVisibleStatus,
 } from '../../shared/workRequestTypes';
+import { getVisibleState } from '../../shared/workflowVisibleState';
+import { useWorkRequestStateMachine } from '../../shared/workflowStateMachineQueries';
 
-const SUMMARY_ORDER: WorkRequestVisibleStatus[] = ['borrador', 'en_proceso', 'cerrada'];
+const SUMMARY_ORDER: WorkRequestVisibleStatus[] = ['borrador', 'en_proceso', 'cancelada'];
 
 const SUMMARY_LABELS: Record<WorkRequestVisibleStatus, string> = {
   borrador: 'Borradores',
   en_proceso: 'En proceso',
-  cerrada: 'Cerradas',
+  cancelada: 'Canceladas',
 };
 
 export function WorkRequestSummary() {
   const workRequests = useWorkRequestStore((s) => s.workRequests);
   const filterStatus = useWorkRequestStore((s) => s.filterStatus);
   const setFilterStatus = useWorkRequestStore((s) => s.setFilterStatus);
+  const { data: stateMachine } = useWorkRequestStateMachine();
+
+  if (!stateMachine) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
+        Cargando estado de flujo...
+      </div>
+    );
+  }
+
+  const toVisible = (status: (typeof workRequests)[number]['status']): WorkRequestVisibleStatus => {
+    const visible = getVisibleState(stateMachine, status);
+    if (visible === 'draft') return 'borrador';
+    if (visible === 'cancelled') return 'cancelada';
+    return 'en_proceso';
+  };
+
   const counts = workRequests.reduce<Record<WorkRequestVisibleStatus, number>>((acc, wr) => {
-    const visible = getVisibleSTStatus(wr.status);
+    const visible = toVisible(wr.status);
     acc[visible] = (acc[visible] || 0) + 1;
     return acc;
   }, {
     borrador: 0,
     en_proceso: 0,
-    cerrada: 0,
+    cancelada: 0,
   });
 
   return (

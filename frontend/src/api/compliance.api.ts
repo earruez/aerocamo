@@ -5,6 +5,8 @@ export interface Compliance {
   aircraftId: string;
   taskId: string;
   componentId: string | null;
+  applicationType: 'baseline' | 'application' | 'replacement_start';
+  isInitial: boolean;
   performedAt: string;
   aircraftHoursAtCompliance: number;
   aircraftCyclesAtCompliance: number;
@@ -13,6 +15,7 @@ export interface Compliance {
   nextDueDate: string | null;
   status: 'COMPLETED' | 'DEFERRED' | 'OVERDUE' | 'CANCELLED';
   workOrderNumber: string | null;
+  notes: string | null;
   deferralReference: string | null;
   deferralExpiresAt: string | null;
   task?: {
@@ -39,6 +42,7 @@ export interface RecordComplianceInput {
   nextDueCycles?: number | null;
   nextDueDate?: string | null;
   workOrderNumber?: string | null;
+  applicationType?: 'application' | 'replacement_start';
   notes?: string | null;
 }
 

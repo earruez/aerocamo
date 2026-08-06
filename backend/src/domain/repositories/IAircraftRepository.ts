@@ -4,6 +4,7 @@ import { PaginatedResult, PaginationOptions } from './shared';
 export type PlanItemStatus = 'OVERDUE' | 'DUE_SOON' | 'OK' | 'NEVER_PERFORMED';
 export type DueByType = 'HOURS' | 'CALENDAR';
 export type MaintenanceExecutionType = 'maintenance' | 'component_replacement';
+export type ApplicationType = 'baseline' | 'application' | 'replacement_start';
 
 export interface MaintenancePlanItem {
   taskId: string;
@@ -21,6 +22,11 @@ export interface MaintenancePlanItem {
   referenceNumber: string | null;
   isMandatory: boolean;
   estimatedManHours: number | null;
+  hasRealCompliance: boolean;
+  controlStartAt: Date | null;
+  controlStartHours: number | null;
+  controlStartCycles: number | null;
+  effectiveApplicationType: ApplicationType;
   lastPerformedAt: Date | null;
   lastWorkOrder: string | null;
   lastHoursAtCompliance: number | null;

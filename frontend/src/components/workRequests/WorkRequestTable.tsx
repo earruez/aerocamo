@@ -1,8 +1,12 @@
 import { useWorkRequestStore } from '../../store/workRequestStore';
 import { WorkRequestBadge } from './WorkRequestBadges';
-import { canSendToTechnicalOffice, getVisibleSTStatus } from '../../shared/workRequestTypes';
 import { saveAs } from 'file-saver';
 import { FolderOpen, SearchX } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { workRequestsApi } from '../../api/workRequests.api';
+import { adaptApiWorkRequest, upsertWorkRequestCache } from '../../shared/workRequestApiAdapter';
+import { canTransitionTo, getVisibleState } from '../../shared/workflowVisibleState';
+import { useWorkRequestStateMachine } from '../../shared/workflowStateMachineQueries';
 
 const SOURCE_LABELS: Record<string, string> = {
   maintenance_plan: 'Plan',
@@ -26,15 +30,40 @@ export function WorkRequestTable() {
   const filterStatus = useWorkRequestStore((s) => s.filterStatus);
   const searchText = useWorkRequestStore((s) => s.searchText).toLowerCase();
   const selectWorkRequest = useWorkRequestStore((s) => s.selectWorkRequest);
-  const sendWorkRequest = useWorkRequestStore((s) => s.sendWorkRequest);
+  const setWorkRequests = useWorkRequestStore((s) => s.setWorkRequests);
   const setFilterAircraftId = useWorkRequestStore((s) => s.setFilterAircraftId);
   const setFilterStatus = useWorkRequestStore((s) => s.setFilterStatus);
   const setSearchText = useWorkRequestStore((s) => s.setSearchText);
+  const { data: stateMachine } = useWorkRequestStateMachine();
 
-  const handleSend = (workRequestId: string) => {
+  if (!stateMachine) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+        Cargando estado de flujo...
+      </div>
+    );
+  }
+
+  const toVisible = (status: (typeof workRequests)[number]['status']) => {
+    const visible = getVisibleState(stateMachine, status);
+    if (visible === 'draft') return 'borrador';
+    if (visible === 'cancelled') return 'cancelada';
+    return 'en_proceso';
+  };
+
+  const handleSend = async (workRequestId: string) => {
     const wr = workRequests.find((item) => item.id === workRequestId);
-    if (!wr || !canSendToTechnicalOffice(wr.status)) return;
-    sendWorkRequest(workRequestId);
+    if (!wr) return;
+    const canSend = canTransitionTo(stateMachine, wr.status, 'SENT');
+    if (!canSend) return;
+    try {
+      const sent = await workRequestsApi.send(workRequestId);
+      const adapted = adaptApiWorkRequest(sent);
+      setWorkRequests(upsertWorkRequestCache(useWorkRequestStore.getState().workRequests, adapted));
+      toast.success('ST enviada correctamente');
+    } catch {
+      toast.error('No se pudo enviar la ST');
+    }
   };
 
   const handleDownloadPdf = (workRequestId: string) => {
@@ -47,7 +76,7 @@ export function WorkRequestTable() {
       `N° ST: ${wr.folio}`,
       `Aeronave: ${wr.aircraftId}`,
       `Prioridad: ${wr.priority}`,
-      `Estado visible: ${getVisibleSTStatus(wr.status)}`,
+      `Estado visible: ${toVisible(wr.status)}`,
       '',
       'Items:',
       ...wr.items.map((i) => `- ${i.title} (${i.ataCode})`),
@@ -59,7 +88,7 @@ export function WorkRequestTable() {
 
   const filtered = workRequests.filter((wr) => {
     if (filterAircraftId && wr.aircraftId !== filterAircraftId) return false;
-    if (filterStatus && getVisibleSTStatus(wr.status) !== filterStatus) return false;
+    if (filterStatus && toVisible(wr.status) !== filterStatus) return false;
     if (searchText) {
       const text = [
         wr.folio,
@@ -110,24 +139,24 @@ export function WorkRequestTable() {
                   <button
                     className="btn-xs btn-outline inline-flex items-center justify-center text-center"
                     onClick={() => selectWorkRequest(wr.id, 'general')}
-                    disabled={getVisibleSTStatus(wr.status) !== 'borrador'}
-                    title={getVisibleSTStatus(wr.status) !== 'borrador' ? 'Solo disponible en borrador' : 'Abrir borrador'}
+                    disabled={toVisible(wr.status) !== 'borrador'}
+                    title={toVisible(wr.status) !== 'borrador' ? 'Solo disponible en borrador' : 'Abrir borrador'}
                   >
                     Abrir borrador
                   </button>
                   <button
                     className="btn-xs btn-outline inline-flex items-center justify-center text-center"
                     onClick={() => selectWorkRequest(wr.id, 'general')}
-                    disabled={getVisibleSTStatus(wr.status) !== 'borrador'}
-                    title={getVisibleSTStatus(wr.status) !== 'borrador' ? 'Solo editable en Borrador' : 'Editar ST'}
+                    disabled={toVisible(wr.status) !== 'borrador'}
+                    title={toVisible(wr.status) !== 'borrador' ? 'Solo editable en Borrador' : 'Editar ST'}
                   >
                     Editar
                   </button>
                   <button
                     className="btn-xs btn-outline inline-flex items-center justify-center text-center"
                     onClick={() => handleSend(wr.id)}
-                    disabled={getVisibleSTStatus(wr.status) !== 'borrador'}
-                    title={getVisibleSTStatus(wr.status) !== 'borrador' ? 'Solo se puede enviar en Borrador' : 'Enviar ST'}
+                    disabled={toVisible(wr.status) !== 'borrador'}
+                    title={toVisible(wr.status) !== 'borrador' ? 'Solo se puede enviar en Borrador' : 'Enviar ST'}
                   >
                     Enviar
                   </button>

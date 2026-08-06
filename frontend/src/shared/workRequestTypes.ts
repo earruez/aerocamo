@@ -1,16 +1,7 @@
 // Tipos y enums para Solicitud de Trabajo (ST) y sus items
+import type { WorkRequestStatus as ApiWorkRequestStatus } from '../api/workRequests.api';
 
-export enum WorkRequestStatus {
-  DRAFT = 'draft',
-  SENT = 'sent',
-  IN_REVIEW = 'in_review',
-  OBSERVED = 'observed',
-  APPROVED = 'approved',
-  SIGNED_OT_RECEIVED = 'signed_ot_received',
-  REGULARIZED = 'regularized',
-  CLOSED = 'closed',
-  REJECTED = 'rejected',
-}
+export type WorkRequestStatus = ApiWorkRequestStatus;
 
 export type WorkRequestExecutionType =
   | 'maintenance_application'
@@ -27,7 +18,7 @@ export enum WorkRequestItemStatus {
   REJECTED = 'rejected',
 }
 
-export type WorkRequestVisibleStatus = 'borrador' | 'en_proceso' | 'cerrada';
+export type WorkRequestVisibleStatus = 'borrador' | 'en_proceso' | 'cancelada';
 
 export type WorkRequestOrigin =
   | 'maintenance_plan'
@@ -120,13 +111,13 @@ export interface WorkRequestValidationResult {
 export enum STVisibleStatus {
   BORRADOR = 'borrador',
   EN_PROCESO = 'en_proceso',
-  CERRADA = 'cerrada',
+  CANCELADA = 'cancelada',
 }
 
 export const WORK_REQUEST_VISIBLE_STATUS_LABELS: Record<WorkRequestVisibleStatus, string> = {
   borrador: 'Borrador',
   en_proceso: 'En proceso',
-  cerrada: 'Cerrada',
+  cancelada: 'Cancelada',
 };
 
 export const ST_VISIBLE_BADGE_CONFIG: Record<WorkRequestVisibleStatus, { label: string; className: string }> = {
@@ -138,9 +129,9 @@ export const ST_VISIBLE_BADGE_CONFIG: Record<WorkRequestVisibleStatus, { label: 
     label: 'En proceso',
     className: 'bg-orange-100 text-orange-800',
   },
-  cerrada: {
-    label: 'Cerrada',
-    className: 'bg-green-100 text-green-800',
+  cancelada: {
+    label: 'Cancelada',
+    className: 'bg-rose-100 text-rose-800',
   },
 };
 
@@ -152,31 +143,6 @@ export const WORK_REQUEST_ITEM_STATUS_LABELS: Record<WorkRequestItemStatus, stri
   executed: 'En proceso',
   closed: 'Cerrado',
   rejected: 'En proceso',
-};
-
-export const getVisibleSTStatus = (internalStatus: WorkRequestStatus): WorkRequestVisibleStatus => {
-  if (internalStatus === WorkRequestStatus.DRAFT) return STVisibleStatus.BORRADOR;
-  if (internalStatus === WorkRequestStatus.SENT) return STVisibleStatus.EN_PROCESO;
-  if (
-    internalStatus === WorkRequestStatus.IN_REVIEW
-    || internalStatus === WorkRequestStatus.OBSERVED
-    || internalStatus === WorkRequestStatus.APPROVED
-    || internalStatus === WorkRequestStatus.REJECTED
-  ) {
-    return STVisibleStatus.EN_PROCESO;
-  }
-  if (
-    internalStatus === WorkRequestStatus.SIGNED_OT_RECEIVED
-    || internalStatus === WorkRequestStatus.REGULARIZED
-    || internalStatus === WorkRequestStatus.CLOSED
-  ) {
-    return STVisibleStatus.CERRADA;
-  }
-  return STVisibleStatus.EN_PROCESO;
-};
-
-export const getVisibleSTStatusLabel = (internalStatus: WorkRequestStatus): string => {
-  return ST_VISIBLE_BADGE_CONFIG[getVisibleSTStatus(internalStatus)].label;
 };
 
 export interface OfficeOrder {
@@ -204,12 +170,8 @@ export interface ComplianceRecord {
   createdAt: string;
 }
 
-// Helpers para transición de estados
-export const canEditWorkRequest = (status: WorkRequestStatus) => status === WorkRequestStatus.DRAFT;
-export const canSendToTechnicalOffice = (status: WorkRequestStatus) => status === WorkRequestStatus.DRAFT;
-
 export const isActiveWorkRequestStatus = (status: WorkRequestStatus): boolean => (
-  status !== WorkRequestStatus.CLOSED && status !== WorkRequestStatus.REJECTED
+  status !== 'CANCELLED'
 );
 
 export const findActiveWorkRequestByMaintenanceTaskId = (input: {
@@ -253,10 +215,7 @@ export const canRegularizeCompliance = (input: {
   status: WorkRequestStatus;
   returnedSignedOtUrl?: string;
   otReference?: string;
-}): boolean => (
-  input.status === WorkRequestStatus.SIGNED_OT_RECEIVED
-  && Boolean(input.returnedSignedOtUrl || input.otReference)
-);
+}): boolean => false;
 
 export const validateWorkRequestItemRequiredFields = (item: {
   ataCode: string;

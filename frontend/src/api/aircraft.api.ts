@@ -26,6 +26,10 @@ export interface CreateAircraftInput {
   totalCycles?: number;
   engineCount?: number;
   engineModel?: string | null;
+  assignedPlans?: Array<{
+    category: 'manufacturer' | 'national_dgac' | 'engine_components' | 'origin_country';
+    templateId: string;
+  }>;
 }
 
 export interface AircraftAuditEntry {
@@ -42,10 +46,73 @@ export interface AircraftAuditEntry {
   createdAt: string;
 }
 
+export type AircraftUsageSource = 'manual' | 'flight_log' | 'ot_close' | 'import' | 'baseline';
+
+export interface AircraftUsageLog {
+  id: string;
+  aircraftId: string;
+  date: string;
+  totalHours: number;
+  totalCycles: number;
+  source: AircraftUsageSource;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface AircraftUsageHistory {
+  aircraft: {
+    totalHours: number;
+    totalCycles: number;
+    lastUpdatedAt: string;
+  };
+  history: AircraftUsageLog[];
+}
+
+export type AircraftEnginePosition = 'N1' | 'N2';
+
+export interface AircraftEngine {
+  id: string;
+  aircraftId: string;
+  position: AircraftEnginePosition;
+  manufacturer: string;
+  model: string;
+  serialNumber: string;
+  latestUsage: {
+    hours: number;
+    cycles: number;
+    date: string;
+  } | null;
+}
+
+export interface CreateAircraftUsageLogInput {
+  date: string;
+  totalHours: number;
+  totalCycles: number;
+  source: AircraftUsageSource;
+  notes?: string | null;
+}
+
+function normalizeListResponse<T>(payload: unknown): T[] {
+  if (Array.isArray(payload)) return payload as T[];
+
+  if (payload && typeof payload === 'object') {
+    const record = payload as Record<string, unknown>;
+    const first = record.data;
+    if (Array.isArray(first)) return first as T[];
+
+    if (first && typeof first === 'object') {
+      const nested = (first as Record<string, unknown>).data;
+      if (Array.isArray(nested)) return nested as T[];
+    }
+  }
+
+  return [];
+}
+
 export const aircraftApi = {
   findAll: async (): Promise<Aircraft[]> => {
     const { data } = await apiClient.get('/aircraft', { params: { page: 1, limit: 100 } });
-    return (data.data ?? data) as Aircraft[];
+    return normalizeListResponse<Aircraft>(data);
   },
   findById: async (id: string): Promise<Aircraft> => {
     const { data } = await apiClient.get<{ status: string; data: Aircraft }>(`/aircraft/${id}`);
@@ -58,6 +125,25 @@ export const aircraftApi = {
   getAuditLog: async (id: string): Promise<AircraftAuditEntry[]> => {
     const { data } = await apiClient.get<{ status: string; data: AircraftAuditEntry[] }>(
       `/audit-logs/aircraft/${id}`,
+    );
+    return data.data ?? [];
+  },
+  getUsageHistory: async (id: string): Promise<AircraftUsageHistory> => {
+    const { data } = await apiClient.get<{ status: string; data: AircraftUsageHistory }>(
+      `/aircraft/${id}/usage-history`,
+    );
+    return data.data;
+  },
+  createUsageLog: async (id: string, input: CreateAircraftUsageLogInput): Promise<AircraftUsageLog> => {
+    const { data } = await apiClient.post<{ status: string; data: AircraftUsageLog }>(
+      `/aircraft/${id}/usage-history`,
+      input,
+    );
+    return data.data;
+  },
+  listEngines: async (id: string): Promise<AircraftEngine[]> => {
+    const { data } = await apiClient.get<{ status: string; data: AircraftEngine[] }>(
+      `/aircraft/${id}/engines`,
     );
     return data.data ?? [];
   },

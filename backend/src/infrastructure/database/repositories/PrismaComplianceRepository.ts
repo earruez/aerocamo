@@ -6,6 +6,7 @@ import {
 import { PaginatedResult, PaginationOptions } from '../../../domain/repositories/shared';
 import { prisma } from '../prisma.client';
 import { Prisma } from '@prisma/client';
+import { BASELINE_NOTE } from '../../../domain/services/BaselineComplianceService';
 
 export class PrismaComplianceRepository implements IComplianceRepository {
   async findById(id: string, organizationId: string): Promise<Compliance | null> {
@@ -28,7 +29,9 @@ export class PrismaComplianceRepository implements IComplianceRepository {
         FROM compliances
         WHERE "aircraftId" = ${aircraftId}::uuid
           AND "organizationId" = ${organizationId}::uuid
-        ORDER BY "taskId", "performedAt" DESC
+        ORDER BY "taskId",
+          CASE WHEN "applicationType" = 'baseline' OR COALESCE("notes", '') = ${BASELINE_NOTE} THEN 1 ELSE 0 END ASC,
+          "performedAt" DESC
       `,
     );
     return rows.map(this.toEntity);
@@ -85,6 +88,8 @@ export class PrismaComplianceRepository implements IComplianceRepository {
       nextDueCycles: r.nextDueCycles as number | null,
       nextDueDate: r.nextDueDate as Date | null,
       workOrderNumber: r.workOrderNumber as string | null,
+      applicationType: r.applicationType as Compliance['applicationType'],
+      isInitial: r.isInitial as boolean,
       status: r.status as Compliance['status'],
       deferralReference: r.deferralReference as string | null,
       deferralExpiresAt: r.deferralExpiresAt as Date | null,

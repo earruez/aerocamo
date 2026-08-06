@@ -9,8 +9,10 @@ const router = Router();
 router.use(authMiddleware, tenantMiddleware);
 
 router.get('/responsibles', WorkRequestController.listResponsibles);
+router.get('/state-machine', WorkRequestController.stateMachine);
 router.get('/aircraft/:aircraftId', WorkRequestController.listByAircraft);
 router.get('/aircraft/:aircraftId/catalog', WorkRequestController.listCatalog);
+router.get('/aircraft/:aircraftId/execution-eligibility', WorkRequestController.executionEligibility);
 router.get('/aircraft/:aircraftId/airworthiness-history', WorkRequestController.airworthinessHistory);
 
 router.post('/', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.createDraft);
@@ -20,6 +22,7 @@ router.post('/:id/items', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestContro
 router.delete('/:id/items/:itemId', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.removeItem);
 
 router.get('/:id/pdf', WorkRequestController.generatePdf);
+router.post('/:id/send', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.send);
 router.post('/:id/send-email', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.sendEmail);
 router.post(
 	'/:id/close-and-comply',

@@ -3,11 +3,31 @@ import { apiClient } from './client';
 export type WorkRequestStatus = 'DRAFT' | 'SENT' | 'CANCELLED';
 export type WorkRequestItemCategory = 'MAINTENANCE_PLAN' | 'NORMATIVE' | 'COMPONENT_INSPECTION' | 'DISCREPANCY' | 'OTHER';
 
+export interface WorkflowStateMeta {
+  visible: 'draft' | 'in_progress' | 'closed' | 'cancelled';
+  visibleLabel: string;
+  label: string;
+  uiTone?: 'neutral' | 'info' | 'warning' | 'success' | 'danger';
+  order?: number;
+}
+
+export interface WorkflowStateMachine<TStatus extends string> {
+  entity: 'work_request' | 'work_order';
+  statuses: readonly TStatus[];
+  transitions: Record<TStatus, readonly TStatus[]>;
+  stateMeta: Record<TStatus, WorkflowStateMeta>;
+}
+
 export interface WorkRequestTask {
   id: string;
   taskId: string | null;
   componentId?: string | null;
   discrepancyId?: string | null;
+  sourceKind?: 'maintenance_plan' | 'component_inspection' | 'discrepancy' | 'compliance_due' | 'manual';
+  sourceId?: string;
+  executionType?: 'maintenance_application' | 'component_replacement' | 'discrepancy_action' | null;
+  requiresComponentTracking?: boolean;
+  componentDefinitionId?: string | null;
   source: string;
   category: WorkRequestItemCategory;
   itemCode: string | null;
@@ -62,6 +82,28 @@ export interface AirworthinessHistoryRow {
   workRequestNumber: string | null;
 }
 
+export type WorkRequestSourceKind =
+  | 'maintenance_plan'
+  | 'component_inspection'
+  | 'discrepancy'
+  | 'compliance_due'
+  | 'manual';
+
+export type WorkRequestExecutionType =
+  | 'maintenance_application'
+  | 'component_replacement'
+  | 'discrepancy_action';
+
+export interface WorkRequestExecutionEligibility {
+  eligible: boolean;
+  reason: 'ELIGIBLE' | 'NO_VALID_ST_ITEM' | 'NO_SIGNED_WORK_ORDER' | 'INVALID_REQUIRED_COMPONENT';
+  message: string;
+  workRequestId: string | null;
+  workRequestNumber: string | null;
+  workOrderNumber: string | null;
+  matchedItemId: string | null;
+}
+
 export const workRequestsApi = {
   async listByAircraft(aircraftId: string): Promise<WorkRequest[]> {
     const { data } = await apiClient.get<{ status: string; data: WorkRequest[] }>(`/work-requests/aircraft/${aircraftId}`);
@@ -87,6 +129,11 @@ export const workRequestsApi = {
     taskId?: string;
     componentId?: string;
     discrepancyId?: string;
+    sourceKind?: WorkRequestSourceKind;
+    sourceId?: string;
+    executionType?: WorkRequestExecutionType | null;
+    requiresComponentTracking?: boolean;
+    componentDefinitionId?: string | null;
     category?: WorkRequestItemCategory;
     code?: string | null;
     title?: string;
@@ -109,6 +156,22 @@ export const workRequestsApi = {
     return data.data;
   },
 
+  async getExecutionEligibility(
+    aircraftId: string,
+    input: {
+      sourceKind: WorkRequestSourceKind;
+      sourceId: string;
+      executionType: WorkRequestExecutionType;
+      requiredComponentSourceId?: string;
+    },
+  ): Promise<WorkRequestExecutionEligibility> {
+    const { data } = await apiClient.get<{ status: string; data: WorkRequestExecutionEligibility }>(
+      `/work-requests/aircraft/${aircraftId}/execution-eligibility`,
+      { params: input },
+    );
+    return data.data;
+  },
+
   async listResponsibles(): Promise<WorkRequestResponsible[]> {
     const { data } = await apiClient.get<{ status: string; data: WorkRequestResponsible[] }>('/work-requests/responsibles');
     return data.data;
@@ -116,6 +179,16 @@ export const workRequestsApi = {
 
   getPdfUrl(id: string): string {
     return `/api/v1/work-requests/${id}/pdf`;
+  },
+
+  async getStateMachine(): Promise<WorkflowStateMachine<WorkRequestStatus>> {
+    const { data } = await apiClient.get<{ status: string; data: WorkflowStateMachine<WorkRequestStatus> }>('/work-requests/state-machine');
+    return data.data;
+  },
+
+  async send(id: string): Promise<WorkRequest> {
+    const { data } = await apiClient.post<{ status: string; data: WorkRequest }>(`/work-requests/${id}/send`);
+    return data.data;
   },
 
   async sendEmail(id: string, email?: string): Promise<void> {

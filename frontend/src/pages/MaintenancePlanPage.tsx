@@ -10,8 +10,10 @@ import { tasksApi } from '@api/tasks.api';
 import type { TaskDefinition, CreateTaskInput } from '@api/tasks.api';
 import { complianceApi } from '@api/compliance.api';
 import type { RecordComplianceInput } from '@api/compliance.api';
+import { workRequestsApi } from '@api/workRequests.api';
 import { useWorkRequestStore } from '../store/workRequestStore';
-import { isActiveWorkRequestStatus, WorkRequestStatus } from '@/shared/workRequestTypes';
+import { isActiveWorkRequestStatus } from '@/shared/workRequestTypes';
+import { adaptApiWorkRequest } from '@/shared/workRequestApiAdapter';
 import {
   ClipboardCheck, AlertTriangle, Clock, CheckCircle2,
   ChevronRight, Search, BookOpen, Calendar, Gauge, RefreshCw,
@@ -25,15 +27,15 @@ type NormativeTab = 'ALL' | 'FABRICANTE' | 'DGAC' | 'MOTOR' | 'EASA';
 const MAINTENANCE_TYPE_META: Record<MaintenanceType, { label: string; badge: string }> = {
   HORARIO: {
     label: 'Horario',
-    badge: 'bg-blue-50 text-blue-700 ring-blue-600/20',
+    badge: 'bg-slate-100 text-slate-700 ring-slate-300/70',
   },
   CALENDARIO: {
     label: 'Calendario',
-    badge: 'bg-orange-50 text-orange-700 ring-orange-600/20',
+    badge: 'bg-slate-100 text-slate-700 ring-slate-300/70',
   },
   MIXTO: {
     label: 'Mixto',
-    badge: 'bg-purple-50 text-purple-700 ring-purple-600/20',
+    badge: 'bg-slate-100 text-slate-700 ring-slate-300/70',
   },
 };
 
@@ -114,20 +116,20 @@ const VISUAL_META: Record<PriorityVisual, { label: string; badge: string; dot: s
 
 const AIRCRAFT_ALERT_META: Record<Exclude<AircraftAlertState, 'normal'>, {
   title: string;
-  bg: string;
+  rail: string;
   border: string;
   text: string;
 }> = {
   critical: {
     title: 'Esta aeronave ya debería ingresar a mantenimiento',
-    bg: 'bg-rose-50',
-    border: 'border-rose-200',
+    rail: 'border-l-rose-500',
+    border: 'border-slate-200',
     text: 'text-rose-800',
   },
   attention: {
     title: 'Esta aeronave requiere planificación de ingreso',
-    bg: 'bg-amber-50',
-    border: 'border-amber-200',
+    rail: 'border-l-amber-500',
+    border: 'border-slate-200',
     text: 'text-amber-800',
   },
 };
@@ -139,23 +141,23 @@ const RISK_LEVEL_META: Record<RiskLevel, {
 }> = {
   bajo: {
     label: 'Bajo',
-    card: 'bg-emerald-50 border-emerald-200',
-    badge: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    card: 'bg-white border-slate-200',
+    badge: 'badge-state-success',
   },
   medio: {
     label: 'Medio',
-    card: 'bg-amber-50 border-amber-200',
-    badge: 'bg-amber-100 text-amber-800 border-amber-300',
+    card: 'bg-white border-slate-200',
+    badge: 'badge-state-warning',
   },
   alto: {
     label: 'Alto',
-    card: 'bg-orange-50 border-orange-200',
-    badge: 'bg-orange-100 text-orange-800 border-orange-300',
+    card: 'bg-white border-slate-200',
+    badge: 'badge-state-warning',
   },
   critico: {
     label: 'Crítico',
-    card: 'bg-rose-50 border-rose-200',
-    badge: 'bg-rose-100 text-rose-800 border-rose-300',
+    card: 'bg-white border-slate-200',
+    badge: 'badge-state-critical',
   },
 };
 
@@ -330,17 +332,17 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 
 // ─── Modal 1: Record Compliance ───────────────────────────────────────────────
 function RecordComplianceModal({
-  item, aircraftId, onClose, onSubmit, isPending,
+  item, aircraftId, eligibleWorkOrderNumber, onClose, onSubmit, isPending,
 }: {
   item: MaintenancePlanItem;
   aircraftId: string;
+  eligibleWorkOrderNumber: string;
   onClose: () => void;
   onSubmit: (input: RecordComplianceInput) => void;
   isPending: boolean;
 }) {
   const today = new Date().toISOString().split('T')[0];
   const [performedAt, setPerformedAt] = useState(today);
-  const [workOrderNumber, setWorkOrderNumber] = useState('');
   const [notes, setNotes] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -350,7 +352,7 @@ function RecordComplianceModal({
       aircraftId,
       taskId: item.taskId,
       performedAt,
-      workOrderNumber: workOrderNumber.trim() || null,
+      workOrderNumber: eligibleWorkOrderNumber,
       notes: notes.trim() || null,
     });
   };
@@ -383,9 +385,8 @@ function RecordComplianceModal({
             <label className="block text-xs font-semibold text-slate-600 mb-1">N° Orden de trabajo</label>
             <input
               type="text"
-              value={workOrderNumber}
-              onChange={e => setWorkOrderNumber(e.target.value)}
-              placeholder="WO-2024-001"
+              value={eligibleWorkOrderNumber}
+              readOnly
               className="input"
             />
           </div>
@@ -855,7 +856,9 @@ interface TaskRowProps {
   workflow: { state: 'none' | 'open' | 'valid'; stId?: string; stRef?: string };
   selected: boolean;
   selectable: boolean;
+  applicabilityPending: boolean;
   onToggleSelect: (item: MaintenancePlanItem, checked: boolean) => void;
+  onSetApplicability: (item: MaintenancePlanItem, applies: boolean) => void;
   onRecord: (item: MaintenancePlanItem) => void;
   onEdit:   (item: MaintenancePlanItem) => void;
   onRemove: (item: MaintenancePlanItem) => void;
@@ -869,7 +872,9 @@ function TaskRow({
   workflow,
   selected,
   selectable,
+  applicabilityPending,
   onToggleSelect,
+  onSetApplicability,
   onRecord,
   onEdit,
   onRemove,
@@ -911,13 +916,7 @@ function TaskRow({
         ? 'border-l-4 border-l-blue-400'
         : 'border-l-4 border-l-transparent';
 
-  const rowBg = hasST
-    ? 'bg-blue-50/35'
-    : priority.visual === 'critical'
-      ? 'bg-rose-50/60'
-      : priority.visual === 'attention'
-        ? 'bg-amber-50/40'
-        : '';
+  const rowBg = '';
 
   return (
     <tr className={`border-b border-slate-100 last:border-0 hover:bg-slate-50/70 transition-colors ${rowAccent} ${rowBg} ${selected ? 'ring-1 ring-brand-200' : ''}`}>
@@ -962,7 +961,9 @@ function TaskRow({
       <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">
         {item.lastPerformedAt
           ? `${new Date(item.lastPerformedAt).toLocaleDateString('es-MX')}${item.lastHoursAtCompliance != null ? ` · ${item.lastHoursAtCompliance.toFixed(0)}h` : ''}`
-          : '—'}
+          : item.controlStartAt
+            ? `Inicio de control: ${new Date(item.controlStartAt).toLocaleDateString('es-MX')}${item.controlStartHours != null ? ` · ${item.controlStartHours.toFixed(0)}h` : ''}`
+            : 'Sin dato histórico'}
       </td>
       <td className="px-4 py-3.5 whitespace-nowrap">
         <div className="flex items-center gap-1.5">
@@ -1005,7 +1006,18 @@ function TaskRow({
         )}
       </td>
       <td className="px-4 py-3.5 whitespace-nowrap">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
+          <select
+            className="filter-input h-7 min-w-[108px] py-0 px-2 text-xs"
+            value="applies"
+            disabled={applicabilityPending}
+            onChange={(e) => {
+              if (e.target.value === 'not_applies') onSetApplicability(item, false);
+            }}
+          >
+            <option value="applies">Aplica</option>
+            <option value="not_applies">No aplica</option>
+          </select>
           <button
             title={workflow.state === 'valid' ? 'Registrar cumplimiento' : 'Requiere ST válida con OT recibida/firmada'}
             onClick={() => workflow.state === 'valid' && onRecord(item)}
@@ -1029,7 +1041,7 @@ function TaskRow({
 // ─── Main page ────────────────────────────────────────────────────────────────
 type ModalState =
   | null
-  | { type: 'record-compliance'; item: MaintenancePlanItem }
+  | { type: 'record-compliance'; item: MaintenancePlanItem; workOrderNumber: string }
   | { type: 'assign-task' }
   | { type: 'create-task' }
   | { type: 'edit-task'; task: TaskDefinition }
@@ -1038,6 +1050,13 @@ type ModalState =
 type PendingSTSelection = {
   items: MaintenancePlanItem[];
   candidates: Array<{ id: string; folio: string; statusLabel: string; itemsCount: number }>;
+};
+
+type ApplicabilityUndoAction = {
+  aircraftId: string;
+  taskId: string;
+  taskCode: string;
+  appliesAfterChange: boolean;
 };
 
 export default function MaintenancePlanPage() {
@@ -1052,6 +1071,8 @@ export default function MaintenancePlanPage() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [inlineStByTaskId, setInlineStByTaskId] = useState<Record<string, { id: string; folio: string }>>({});
   const [pendingSTSelection, setPendingSTSelection] = useState<PendingSTSelection | null>(null);
+  const [lastApplicabilityAction, setLastApplicabilityAction] = useState<ApplicabilityUndoAction | null>(null);
+  const [applicabilityBusyTaskId, setApplicabilityBusyTaskId] = useState<string | null>(null);
 
   // Sync URL → filter when navigating here from Dashboard
   useEffect(() => {
@@ -1062,8 +1083,7 @@ export default function MaintenancePlanPage() {
   const selectWorkRequest = useWorkRequestStore((s) => s.selectWorkRequest);
   const getDraftWorkRequestByAircraft = useWorkRequestStore((s) => s.getDraftWorkRequestByAircraft);
   const workRequests = useWorkRequestStore((s) => s.workRequests);
-  const createWorkRequest = useWorkRequestStore((s) => s.createWorkRequest);
-  const addItemToWorkRequest = useWorkRequestStore((s) => s.addItemToWorkRequest);
+  const setWorkRequests = useWorkRequestStore((s) => s.setWorkRequests);
   const itemAlreadyInOpenWorkRequest = useWorkRequestStore((s) => s.itemAlreadyInOpenWorkRequest);
 
   const qc = useQueryClient();
@@ -1087,6 +1107,33 @@ export default function MaintenancePlanPage() {
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
   });
+
+  const workRequestsForAircraftQuery = useQuery({
+    queryKey: ['work-requests-aircraft', selectedId],
+    queryFn: () => workRequestsApi.listByAircraft(selectedId!),
+    enabled: Boolean(selectedId),
+    staleTime: 0,
+  });
+
+  useEffect(() => {
+    if (!selectedId) return;
+    if (!workRequestsForAircraftQuery.isSuccess) return;
+
+    const mapped = workRequestsForAircraftQuery.data.map(adaptApiWorkRequest);
+    const current = useWorkRequestStore.getState().workRequests;
+    const currentForAircraft = current
+      .filter((wr) => wr.aircraftId === selectedId)
+      .map((wr) => ({ id: wr.id, status: wr.status, updatedAt: wr.updatedAt, itemsCount: wr.items.length }));
+    const nextForAircraft = mapped
+      .map((wr) => ({ id: wr.id, status: wr.status, updatedAt: wr.updatedAt, itemsCount: wr.items.length }));
+
+    if (JSON.stringify(currentForAircraft) === JSON.stringify(nextForAircraft)) return;
+
+    setWorkRequests([
+      ...current.filter((wr) => wr.aircraftId !== selectedId),
+      ...mapped,
+    ]);
+  }, [selectedId, setWorkRequests, workRequestsForAircraftQuery.isSuccess, workRequestsForAircraftQuery.data]);
 
   // All org tasks — preloaded so "edit" can look up the full definition
   const { data: allTasks = [] } = useQuery({ queryKey: ['tasks'], queryFn: tasksApi.listAll });
@@ -1145,7 +1192,90 @@ export default function MaintenancePlanPage() {
   useEffect(() => {
     setInlineStByTaskId({});
     setSelectedTaskIds([]);
+    setLastApplicabilityAction(null);
   }, [selectedId]);
+
+  const setTaskApplicability = async (
+    item: MaintenancePlanItem,
+    applies: boolean,
+    options?: { trackUndo?: boolean; aircraftIdOverride?: string },
+  ) => {
+    const aircraftId = options?.aircraftIdOverride ?? selectedId;
+    if (!aircraftId) {
+      toast.error('Selecciona una aeronave');
+      return;
+    }
+
+    setApplicabilityBusyTaskId(item.taskId);
+    try {
+      if (applies) {
+        await tasksApi.assignToAircraft(aircraftId, item.taskId);
+      } else {
+        await tasksApi.removeFromAircraft(aircraftId, item.taskId);
+      }
+
+      qc.invalidateQueries({ queryKey: ['maintenance-plan', aircraftId] });
+
+      if (options?.trackUndo !== false) {
+        setLastApplicabilityAction({
+          aircraftId,
+          taskId: item.taskId,
+          taskCode: item.taskCode,
+          appliesAfterChange: applies,
+        });
+        toast.success(applies ? 'Marcada como aplica' : 'Marcada como no aplica');
+        toast('Presiona Ctrl+Z o Cmd+Z para deshacer', { icon: '↩️' });
+      }
+    } catch {
+      toast.error(applies ? 'No se pudo marcar como aplica' : 'No se pudo marcar como no aplica');
+    } finally {
+      setApplicabilityBusyTaskId(null);
+    }
+  };
+
+  const undoLastApplicabilityChange = async () => {
+    if (!lastApplicabilityAction || applicabilityBusyTaskId) return;
+
+    const reverseApplies = !lastApplicabilityAction.appliesAfterChange;
+    setApplicabilityBusyTaskId(lastApplicabilityAction.taskId);
+
+    try {
+      if (reverseApplies) {
+        await tasksApi.assignToAircraft(lastApplicabilityAction.aircraftId, lastApplicabilityAction.taskId);
+      } else {
+        await tasksApi.removeFromAircraft(lastApplicabilityAction.aircraftId, lastApplicabilityAction.taskId);
+      }
+
+      qc.invalidateQueries({ queryKey: ['maintenance-plan', lastApplicabilityAction.aircraftId] });
+      toast.success(`Deshecho: ${lastApplicabilityAction.taskCode}`);
+      setLastApplicabilityAction(null);
+    } catch {
+      toast.error('No se pudo deshacer el último cambio');
+    } finally {
+      setApplicabilityBusyTaskId(null);
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isUndo = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z';
+      if (!isUndo) return;
+
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        const typingField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+        if (typingField) return;
+      }
+
+      if (!lastApplicabilityAction) return;
+      event.preventDefault();
+      void undoLastApplicabilityChange();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [lastApplicabilityAction, applicabilityBusyTaskId]);
 
   const resolveInlineSt = (item: MaintenancePlanItem) => inlineStByTaskId[item.taskId];
 
@@ -1153,23 +1283,15 @@ export default function MaintenancePlanPage() {
     const map = new Map<string, { state: 'none' | 'open' | 'valid'; stId?: string; stRef?: string }>();
     if (!selectedId) return map;
 
-    const validStatuses = new Set<WorkRequestStatus>([
-      WorkRequestStatus.SIGNED_OT_RECEIVED,
-      WorkRequestStatus.REGULARIZED,
-      WorkRequestStatus.CLOSED,
+    const validStatuses = new Set([
+      'SENT',
     ]);
 
-    const openStatuses = new Set<WorkRequestStatus>([
-      WorkRequestStatus.DRAFT,
-      WorkRequestStatus.SENT,
-      WorkRequestStatus.IN_REVIEW,
-      WorkRequestStatus.OBSERVED,
-      WorkRequestStatus.APPROVED,
-    ]);
+    const openStatuses = new Set(['DRAFT']);
 
     for (const wr of workRequests) {
       if (wr.aircraftId !== selectedId) continue;
-      const hasOtEvidence = Boolean(wr.otReference && (wr.otReceivedAt || wr.returnedSignedOtUrl || wr.status === WorkRequestStatus.SIGNED_OT_RECEIVED));
+      const hasOtEvidence = true;
       const state: 'open' | 'valid' | null = validStatuses.has(wr.status) && hasOtEvidence
         ? 'valid'
         : openStatuses.has(wr.status)
@@ -1407,7 +1529,25 @@ export default function MaintenancePlanPage() {
   };
 
   // Handlers for TaskRow callbacks
-  const handleRecord = (item: MaintenancePlanItem) => setModal({ type: 'record-compliance', item });
+  const handleRecord = async (item: MaintenancePlanItem) => {
+    if (!selectedId) {
+      toast.error('Selecciona una aeronave');
+      return;
+    }
+    const executionType = item.executionType === 'component_replacement'
+      ? 'component_replacement'
+      : 'maintenance_application';
+    const eligibility = await workRequestsApi.getExecutionEligibility(selectedId, {
+      sourceKind: 'maintenance_plan',
+      sourceId: item.taskId,
+      executionType,
+    });
+    if (!eligibility.eligible || !eligibility.workOrderNumber) {
+      toast.error(eligibility.message);
+      return;
+    }
+    setModal({ type: 'record-compliance', item, workOrderNumber: eligibility.workOrderNumber });
+  };
   const handleEdit   = (item: MaintenancePlanItem) => {
     const task = allTasks.find(t => t.id === item.taskId);
     if (task) setModal({ type: 'edit-task', task });
@@ -1423,7 +1563,7 @@ export default function MaintenancePlanPage() {
     }));
   };
 
-  const addTaskItemToWorkRequest = (item: MaintenancePlanItem, workRequestId: string, options?: { silent?: boolean }) => {
+  const addTaskItemToWorkRequest = async (item: MaintenancePlanItem, workRequestId: string, options?: { silent?: boolean }) => {
     if (!selectedAircraft) return;
 
     const wr = workRequests.find((x) => x.id === workRequestId);
@@ -1434,20 +1574,17 @@ export default function MaintenancePlanPage() {
       return { added: false, linked: true };
     }
 
-    const inserted = addItemToWorkRequest(workRequestId, {
-      sourceKind: 'maintenance_plan',
-      sourceId: item.taskId,
-      ataCode: item.taskCode,
-      title: item.taskTitle,
-      description: item.taskTitle,
-      aircraftHoursAtRequest: selectedAircraft.totalFlightHours,
-      aircraftCyclesAtRequest: selectedAircraft.totalCycles,
-      priority: item.status === 'OVERDUE' ? 'alta' : 'media',
-      referenceCode: item.taskCode,
-      regulatoryBasis: item.referenceNumber ?? item.referenceType,
-    });
-
-    if (!inserted) {
+    try {
+      const updated = await workRequestsApi.addItem(workRequestId, {
+        taskId: item.taskId,
+        category: 'MAINTENANCE_PLAN',
+      });
+      const adapted = adaptApiWorkRequest(updated);
+      setWorkRequests([
+        adapted,
+        ...useWorkRequestStore.getState().workRequests.filter((wrCurrent) => wrCurrent.id !== adapted.id),
+      ]);
+    } catch {
       if (!options?.silent) toast.error('No se pudo agregar el item al borrador ST');
       return { added: false, linked: false };
     }
@@ -1457,7 +1594,7 @@ export default function MaintenancePlanPage() {
     return { added: true, linked: true };
   };
 
-  const addItemsToWorkRequest = (
+  const addItemsToWorkRequest = async (
     items: MaintenancePlanItem[],
     workRequestId: string,
     options?: { mode?: 'single' | 'multi' },
@@ -1467,7 +1604,7 @@ export default function MaintenancePlanPage() {
     let linked = 0;
 
     for (const item of unique) {
-      const result = addTaskItemToWorkRequest(item, workRequestId, { silent: true });
+      const result = await addTaskItemToWorkRequest(item, workRequestId, { silent: true });
       if (result?.linked) linked += 1;
       if (result?.added) added += 1;
     }
@@ -1493,12 +1630,12 @@ export default function MaintenancePlanPage() {
     openWorkRequestsForAircraft.map((wr) => ({
       id: wr.id,
       folio: wr.folio,
-      statusLabel: wr.status === 'draft' ? 'Borrador' : 'En proceso',
+      statusLabel: wr.status === 'DRAFT' ? 'Borrador' : 'En proceso',
       itemsCount: wr.items.length,
     }))
   );
 
-  const sendItemsToST = (items: MaintenancePlanItem[], options?: { mode?: 'single' | 'multi' }) => {
+  const sendItemsToST = async (items: MaintenancePlanItem[], options?: { mode?: 'single' | 'multi' }) => {
     if (!selectedAircraft) {
       toast.error('Selecciona una aeronave para agregar ítems a ST');
       return;
@@ -1516,8 +1653,18 @@ export default function MaintenancePlanPage() {
       return;
     }
 
-    const target = draftForAircraft ?? createWorkRequest(selectedAircraft.id);
-    addItemsToWorkRequest(validItems, target.id, { mode: options?.mode ?? 'multi' });
+    try {
+      const target = draftForAircraft ?? adaptApiWorkRequest(await workRequestsApi.createDraft(selectedAircraft.id));
+      if (!draftForAircraft) {
+        setWorkRequests([
+          target,
+          ...useWorkRequestStore.getState().workRequests.filter((wr) => wr.id !== target.id),
+        ]);
+      }
+      await addItemsToWorkRequest(validItems, target.id, { mode: options?.mode ?? 'multi' });
+    } catch {
+      toast.error('No se pudo crear o actualizar la ST');
+    }
   };
 
   const handleGenerateSTFromPlan = (item: MaintenancePlanItem) => {
@@ -1544,7 +1691,7 @@ export default function MaintenancePlanPage() {
       return;
     }
 
-    sendItemsToST([item], { mode: 'single' });
+    void sendItemsToST([item], { mode: 'single' });
   };
 
   const handleToggleTaskSelection = (item: MaintenancePlanItem, checked: boolean) => {
@@ -1563,7 +1710,7 @@ export default function MaintenancePlanPage() {
       toast('Selecciona al menos una tarea', { icon: 'ℹ️' });
       return;
     }
-    sendItemsToST(selectedItems, { mode: 'multi' });
+    void sendItemsToST(selectedItems, { mode: 'multi' });
   };
 
   const handleViewSTFromPlan = (item: MaintenancePlanItem, stId?: string) => {
@@ -1681,12 +1828,12 @@ export default function MaintenancePlanPage() {
         <>
           {(aircraftAlert.state !== 'normal' || aircraftAlert.hasAccumulatedDraft) && (
             <div
-              className={`rounded-2xl border px-5 py-4 shadow-sm ${
+              className={`rounded-2xl border border-l-4 px-5 py-4 shadow-sm bg-white ${
                 aircraftAlert.state === 'critical'
-                  ? `${AIRCRAFT_ALERT_META.critical.bg} ${AIRCRAFT_ALERT_META.critical.border}`
+                  ? `${AIRCRAFT_ALERT_META.critical.rail} ${AIRCRAFT_ALERT_META.critical.border}`
                   : aircraftAlert.state === 'attention'
-                    ? `${AIRCRAFT_ALERT_META.attention.bg} ${AIRCRAFT_ALERT_META.attention.border}`
-                    : 'bg-slate-50 border-slate-200'
+                    ? `${AIRCRAFT_ALERT_META.attention.rail} ${AIRCRAFT_ALERT_META.attention.border}`
+                    : 'border-l-slate-300 border-slate-200'
               }`}
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1837,6 +1984,14 @@ export default function MaintenancePlanPage() {
                     Limpiar
                   </button>
                 )}
+                <button
+                  onClick={() => { void undoLastApplicabilityChange(); }}
+                  disabled={!lastApplicabilityAction || Boolean(applicabilityBusyTaskId)}
+                  className="btn-secondary btn-xs"
+                  title={lastApplicabilityAction ? `Deshacer último cambio en ${lastApplicabilityAction.taskCode}` : 'No hay cambios para deshacer'}
+                >
+                  Deshacer último cambio
+                </button>
                 <span className="ml-auto text-xs text-slate-400">
                   {filteredPlan.length} tarea{filteredPlan.length !== 1 ? 's' : ''}
                 </span>
@@ -1912,7 +2067,7 @@ export default function MaintenancePlanPage() {
                     <th className="table-header">Tipo</th>
                     <th className="table-header">Intervalo</th>
                     <th className="table-header">Próx. vencimiento</th>
-                    <th className="table-header">Último cumplimiento</th>
+                    <th className="table-header">Histórico</th>
                     <th className="table-header">Estado</th>
                     <th className="table-header">Solicitud</th>
                     <th className="table-header">Acción</th>
@@ -1927,7 +2082,25 @@ export default function MaintenancePlanPage() {
                       workflow={resolveTaskWorkflow(item)}
                       selected={selectedTaskIds.includes(item.taskId)}
                       selectable={!isItemInRequest(item)}
+                      applicabilityPending={applicabilityBusyTaskId === item.taskId || removeMutation.isPending || assignMutation.isPending}
                       onToggleSelect={handleToggleTaskSelection}
+                      onSetApplicability={(taskItem, applies) => {
+                        if (!selectedId) {
+                          toast.error('Selecciona una aeronave');
+                          return;
+                        }
+
+                        if (!applies) {
+                          if (isItemInRequest(taskItem)) {
+                            toast.error('No puedes marcar como no aplica una tarea con ST activa');
+                            return;
+                          }
+                          void setTaskApplicability(taskItem, false, { trackUndo: true });
+                          return;
+                        }
+
+                        void setTaskApplicability(taskItem, true, { trackUndo: true });
+                      }}
                       onRecord={handleRecord}
                       onEdit={handleEdit}
                       onRemove={handleRemove}
@@ -1948,6 +2121,7 @@ export default function MaintenancePlanPage() {
       <RecordComplianceModal
         item={modal.item}
         aircraftId={selectedId!}
+        eligibleWorkOrderNumber={modal.workOrderNumber}
         onClose={() => setModal(null)}
         onSubmit={input => recordMutation.mutate(input)}
         isPending={recordMutation.isPending}
@@ -1987,7 +2161,7 @@ export default function MaintenancePlanPage() {
         candidates={pendingSTSelection.candidates}
         onClose={() => setPendingSTSelection(null)}
         onSelect={(workRequestId) => {
-          addItemsToWorkRequest(
+          void addItemsToWorkRequest(
             pendingSTSelection.items,
             workRequestId,
             { mode: pendingSTSelection.items.length === 1 ? 'single' : 'multi' },
@@ -1996,13 +2170,24 @@ export default function MaintenancePlanPage() {
         }}
         onCreateNew={() => {
           if (!selectedAircraft) return;
-          const fresh = createWorkRequest(selectedAircraft.id);
-          addItemsToWorkRequest(
-            pendingSTSelection.items,
-            fresh.id,
-            { mode: pendingSTSelection.items.length === 1 ? 'single' : 'multi' },
-          );
-          setPendingSTSelection(null);
+          void (async () => {
+            try {
+              const fresh = adaptApiWorkRequest(await workRequestsApi.createDraft(selectedAircraft.id));
+              setWorkRequests([
+                fresh,
+                ...useWorkRequestStore.getState().workRequests.filter((wr) => wr.id !== fresh.id),
+              ]);
+              await addItemsToWorkRequest(
+                pendingSTSelection.items,
+                fresh.id,
+                { mode: pendingSTSelection.items.length === 1 ? 'single' : 'multi' },
+              );
+            } catch {
+              toast.error('No se pudo crear la ST');
+            } finally {
+              setPendingSTSelection(null);
+            }
+          })();
         }}
       />
     )}

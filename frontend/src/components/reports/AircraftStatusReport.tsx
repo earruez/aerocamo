@@ -4,6 +4,7 @@ import { FileDown, Paperclip, X } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
+import { MISSING_OPERATIONAL_CONTEXT_LABEL } from '@/shared/operationalContext';
 
 interface AircraftStatusReportProps {
   aircraftId: string;
@@ -14,7 +15,7 @@ interface AircraftStatusReportProps {
 }
 
 function formatDate(value: string | null): string {
-  if (!value) return '-';
+  if (!value) return MISSING_OPERATIONAL_CONTEXT_LABEL;
   return new Date(value).toLocaleDateString('es-CL');
 }
 
@@ -31,7 +32,7 @@ function nextDueLabel(item: MaintenancePlanItem): string {
   const parts: string[] = [];
   if (item.nextDueHours != null) parts.push(`${item.nextDueHours.toFixed(1)} FH`);
   if (item.nextDueDate) parts.push(new Date(item.nextDueDate).toLocaleDateString('es-CL'));
-  if (parts.length === 0) return '-';
+  if (parts.length === 0) return MISSING_OPERATIONAL_CONTEXT_LABEL;
   return parts.join(' | ');
 }
 
@@ -39,13 +40,19 @@ function remainingLabel(item: MaintenancePlanItem): string {
   const parts: string[] = [];
   if (item.hoursRemaining != null) parts.push(`${item.hoursRemaining.toFixed(1)} h`);
   if (item.daysRemaining != null) parts.push(`${item.daysRemaining} d`);
-  if (parts.length === 0) return '-';
+  if (parts.length === 0) return MISSING_OPERATIONAL_CONTEXT_LABEL;
   return parts.join(' / ');
 }
 
 function lastComplianceLabel(item: MaintenancePlanItem): string {
+  if (!item.lastPerformedAt && item.controlStartAt) {
+    const startDate = formatDate(item.controlStartAt);
+    const startHours = item.controlStartHours != null ? `${item.controlStartHours.toFixed(1)} FH` : MISSING_OPERATIONAL_CONTEXT_LABEL;
+    return `Inicio de control: ${startDate} / ${startHours}`;
+  }
+
   const date = formatDate(item.lastPerformedAt);
-  const hours = item.lastHoursAtCompliance != null ? `${item.lastHoursAtCompliance.toFixed(1)} FH` : '-';
+  const hours = item.lastHoursAtCompliance != null ? `${item.lastHoursAtCompliance.toFixed(1)} FH` : MISSING_OPERATIONAL_CONTEXT_LABEL;
   return `${date} / ${hours}`;
 }
 

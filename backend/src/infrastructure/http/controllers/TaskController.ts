@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../database/prisma.client';
 import { NotFoundError, ConflictError } from '../../../shared/errors/AppError';
+import { BaselineComplianceService } from '../../../domain/services/BaselineComplianceService';
 
 const INTERVAL_TYPES = ['FLIGHT_HOURS','CYCLES','CALENDAR_DAYS','FLIGHT_HOURS_OR_CALENDAR','CYCLES_OR_CALENDAR','ON_CONDITION'] as const;
 const REFERENCE_TYPES = ['AMM','AD','SB','CMR','CDCCL','MPD','ETOPS','INTERNAL'] as const;
@@ -94,6 +95,14 @@ export class TaskController {
         create: { aircraftId, taskId },
         update: { isActive: true },
       });
+
+      await BaselineComplianceService.ensureBaselineForTask(
+        aircraftId,
+        taskId,
+        req.organizationId,
+        req.currentUser.id,
+      );
+
       res.status(201).json({ status: 'success', data: link });
     } catch (err) { next(err); }
   };

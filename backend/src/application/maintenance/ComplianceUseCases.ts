@@ -6,6 +6,7 @@ import { MaintenanceTask } from '../../domain/entities/MaintenanceTask';
 import { ComplianceDueDateService } from '../../domain/services/ComplianceDueDateService';
 import { NotFoundError, ValidationError } from '../../shared/errors/AppError';
 import { PaginatedResult, PaginationOptions } from '../../domain/repositories/shared';
+import { workRequestExecutionEligibilityService } from '../../domain/services/WorkRequestExecutionEligibilityService';
 
 export interface RecordComplianceInput {
   organizationId: string;
@@ -20,6 +21,7 @@ export interface RecordComplianceInput {
   inspectedById?: string | null;
   performedAt: Date;
   workOrderNumber?: string | null;
+  applicationType?: 'application' | 'replacement_start';
   notes?: string | null;
   deferralReference?: string | null;
   deferralExpiresAt?: Date | null;
@@ -59,6 +61,35 @@ export class RecordComplianceUseCase {
     const task = await this.getTask(input.taskId, input.organizationId);
     if (!task) throw new NotFoundError('MaintenanceTask', input.taskId);
 
+    const requiresExecutionGating = input.applicationType === 'application' || input.applicationType === 'replacement_start';
+    if (requiresExecutionGating) {
+      if (!input.workOrderNumber?.trim()) {
+        throw new ValidationError('Debe indicar una OT recibida/firmada para registrar esta ejecucion.');
+      }
+
+      const executionType = input.applicationType === 'replacement_start'
+        ? 'component_replacement'
+        : 'maintenance_application';
+
+      const eligibility = await workRequestExecutionEligibilityService.evaluate({
+        organizationId: input.organizationId,
+        aircraftId: input.aircraftId,
+        sourceKind: 'maintenance_plan',
+        sourceId: input.taskId,
+        executionType,
+      });
+
+      if (!eligibility.eligible) {
+        throw new ValidationError(eligibility.message);
+      }
+
+      if (eligibility.workOrderNumber !== input.workOrderNumber.trim()) {
+        throw new ValidationError(
+          `La OT indicada no corresponde a la OT firmada elegible. Debe usar ${eligibility.workOrderNumber}.`,
+        );
+      }
+    }
+
     const hoursAtCompliance = input.aircraftHoursAtCompliance ?? aircraft.totalFlightHours;
 
     // 4. Calculate next-due — this is the integrity-critical calculation
@@ -86,6 +117,8 @@ export class RecordComplianceUseCase {
       nextDueHours,
       nextDueCycles,
       nextDueDate,
+      applicationType: input.applicationType ?? 'application',
+      isInitial: false,
     };
 
     return this.complianceRepo.create(complianceInput);

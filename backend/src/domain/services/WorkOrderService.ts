@@ -6,38 +6,16 @@ import { WorkOrderStatus, UserRole } from '@prisma/client';
 import { prisma } from '../../infrastructure/database/prisma.client';
 import { auditLogService } from './AuditLogService';
 import {
+  WORK_ORDER_STATE_MACHINE,
+  assertValidTransition,
+  assertWorkOrderTransitionRole,
+} from '../workflows/stateMachines';
+import {
   NotFoundError,
   ForbiddenError,
   ValidationError,
   ConflictError,
 } from '../../shared/errors/AppError';
-
-// ── State machine definition ──────────────────────────────────────────────────
-
-/**
- * Valid forward transitions and which roles can execute them.
- * Format: { from: { to: Role[] } }
- */
-const TRANSITIONS: Record<WorkOrderStatus, Partial<Record<WorkOrderStatus, UserRole[]>>> = {
-  DRAFT: {
-    OPEN: ['ADMIN', 'SUPERVISOR'],
-  },
-  OPEN: {
-    IN_PROGRESS: ['ADMIN', 'SUPERVISOR', 'TECHNICIAN'],
-    DRAFT:       ['ADMIN', 'SUPERVISOR'],           // revert to draft
-  },
-  IN_PROGRESS: {
-    QUALITY: ['ADMIN', 'SUPERVISOR', 'TECHNICIAN'],
-    OPEN:    ['ADMIN', 'SUPERVISOR'],               // step back
-  },
-  QUALITY: {
-    CLOSED:      ['ADMIN', 'INSPECTOR'],            // only inspector can close
-    IN_PROGRESS: ['ADMIN', 'SUPERVISOR', 'INSPECTOR'], // send back for rework
-  },
-  CLOSED: {
-    // Terminal state — no transitions out
-  },
-};
 
 // ── Create input ──────────────────────────────────────────────────────────────
 
@@ -206,20 +184,8 @@ export class WorkOrderService {
   ) {
     const wo = await this.findOrFail(id, organizationId);
 
-    // Check valid transition
-    const allowedRoles = TRANSITIONS[wo.status]?.[newStatus];
-    if (!allowedRoles) {
-      throw new ValidationError(
-        `Transition from '${wo.status}' to '${newStatus}' is not allowed`,
-      );
-    }
-
-    // Check role permission
-    if (!allowedRoles.includes(currentUser.role)) {
-      throw new ForbiddenError(
-        `Role '${currentUser.role}' cannot move a Work Order from ${wo.status} to ${newStatus}`,
-      );
-    }
+    assertValidTransition(WORK_ORDER_STATE_MACHINE, wo.status, newStatus, 'Work Order');
+    assertWorkOrderTransitionRole(wo.status, newStatus, currentUser.role);
 
     // Business rules per source→target transition
     if (wo.status === 'DRAFT' && newStatus === 'OPEN') {

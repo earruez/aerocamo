@@ -1,5 +1,7 @@
 import { useWorkRequestStore } from '../store/workRequestStore';
 import type { WorkRequestOrigin } from './workRequestTypes';
+import { workRequestsApi } from '../api/workRequests.api';
+import { adaptApiWorkRequest, upsertWorkRequestCache } from './workRequestApiAdapter';
 
 /**
  * Crea una nueva ST en estado draft y agrega un item automáticamente según el origen.
@@ -26,27 +28,54 @@ export async function createSTFromSource(
   const store = useWorkRequestStore.getState();
   const sourceKind: WorkRequestOrigin = sourceType === 'component' ? 'component_inspection' : sourceType;
 
-  const existingOpen = store.itemAlreadyInOpenWorkRequest(sourceKind, sourceData.sourceId);
+  const currentOpen = store.itemAlreadyInOpenWorkRequest(sourceKind, sourceData.sourceId);
+  if (currentOpen) return currentOpen.id;
+
+  const list = await workRequestsApi.listByAircraft(sourceData.aircraftId);
+  const mapped = list.map(adaptApiWorkRequest);
+  store.setWorkRequests([
+    ...store.workRequests.filter((wr) => wr.aircraftId !== sourceData.aircraftId),
+    ...mapped,
+  ]);
+
+  const existingOpen = mapped.find((wr) => (
+    wr.status !== 'CANCELLED'
+    && wr.items.some((it) => it.sourceKind === sourceKind && it.sourceId === sourceData.sourceId)
+  ));
   if (existingOpen) return existingOpen.id;
 
-  const draft = store.getDraftWorkRequestByAircraft(sourceData.aircraftId)
-    ?? store.createWorkRequest(sourceData.aircraftId);
+  const draftFromApi = list.find((wr) => wr.status === 'DRAFT') ?? await workRequestsApi.createDraft(sourceData.aircraftId);
 
-  store.addItemToWorkRequest(draft.id, {
-    sourceKind,
-    sourceId: sourceData.sourceId,
-    ataCode: sourceData.ataCode || 'N/A',
-    title: sourceData.title,
-    description: sourceData.description,
-    priority: sourceData.priority ?? 'media',
-    aircraftHoursAtRequest: sourceData.aircraftHoursAtRequest,
-    aircraftCyclesAtRequest: sourceData.aircraftCyclesAtRequest,
-    referenceCode: sourceData.ataCode || 'N/A',
-    regulatoryBasis: 'Generada desde origen',
-    requiresComponentTracking: sourceData.requiresComponentTracking,
-    executionType: sourceData.executionType,
-    componentDefinitionId: sourceData.componentDefinitionId,
-  });
+  const payload = sourceType === 'maintenance_plan'
+    ? {
+        taskId: sourceData.sourceId,
+        category: 'MAINTENANCE_PLAN' as const,
+      }
+    : sourceType === 'component'
+      ? {
+          componentId: sourceData.sourceId,
+          category: 'COMPONENT_INSPECTION' as const,
+        }
+      : sourceType === 'discrepancy'
+        ? {
+            discrepancyId: sourceData.sourceId,
+            category: 'DISCREPANCY' as const,
+          }
+        : {
+            sourceKind: sourceKind,
+            sourceId: sourceData.sourceId,
+            executionType: sourceData.executionType ?? null,
+            requiresComponentTracking: sourceData.requiresComponentTracking ?? false,
+            componentDefinitionId: sourceData.componentDefinitionId ?? null,
+            category: 'OTHER' as const,
+            code: sourceData.ataCode || 'N/A',
+            title: sourceData.title,
+            description: sourceData.description,
+          };
 
-  return draft.id;
+  const updated = await workRequestsApi.addItem(draftFromApi.id, payload);
+  const adapted = adaptApiWorkRequest(updated);
+  store.setWorkRequests(upsertWorkRequestCache(useWorkRequestStore.getState().workRequests, adapted));
+
+  return adapted.id;
 }
