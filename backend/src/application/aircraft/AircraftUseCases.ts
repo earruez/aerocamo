@@ -57,3 +57,13 @@ export class GetMaintenancePlanUseCase {
     return this.repo.getMaintenancePlan(aircraftId, organizationId);
   }
 }
+
+export class DeleteAircraftUseCase {
+  constructor(private readonly repo: IAircraftRepository) {}
+
+  async execute(id: string, organizationId: string): Promise<void> {
+    const aircraft = await this.repo.findById(id, organizationId);
+    if (!aircraft) throw new NotFoundError('Aircraft', id);
+    await this.repo.delete(id, organizationId);
+  }
+}

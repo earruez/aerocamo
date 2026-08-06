@@ -17,6 +17,8 @@ export interface Component {
   lifeLimitHours: number | null;
   lifeLimitCycles: number | null;
   installationDate: string | null;
+  installationAircraftHours: number | null;
+  installationAircraftCycles: number | null;
   aircraftId: string | null;
 }
 
@@ -49,6 +51,8 @@ export interface UpdateComponentInput {
 
 export interface ComponentComplianceRecord {
   id: string;
+  applicationType: 'baseline' | 'application' | 'replacement_start';
+  isInitial: boolean;
   performedAt: string;
   aircraftHoursAtCompliance: number;
   aircraftCyclesAtCompliance: number;
@@ -69,6 +73,17 @@ export interface ComponentComplianceRecord {
     id: string;
     name: string;
   };
+}
+
+export interface RegisterInitialComponentInput {
+  aircraftId: string;
+  taskId: string;
+  partNumber: string;
+  serialNumber: string;
+  description: string;
+  manufacturer: string;
+  position?: string | null;
+  notes?: string | null;
 }
 
 export const componentApi = {
@@ -94,6 +109,14 @@ export const componentApi = {
 
   getComplianceHistory: async (componentId: string): Promise<ComponentComplianceRecord[]> => {
     const { data } = await apiClient.get<{ status: string; data: ComponentComplianceRecord[] }>(`/components/${componentId}/compliances`);
+    return data.data;
+  },
+
+  registerInitialComponent: async (input: RegisterInitialComponentInput): Promise<{ component: Component; compliance: ComponentComplianceRecord }> => {
+    const { data } = await apiClient.post<{ status: string; data: { component: Component; compliance: ComponentComplianceRecord } }>(
+      '/components/initial-registration',
+      input,
+    );
     return data.data;
   },
 };

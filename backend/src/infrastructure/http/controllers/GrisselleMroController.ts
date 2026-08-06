@@ -92,12 +92,17 @@ export class GrisselleMroController {
 
       const withRisk = plan.map((item) => {
         const risk = classifyByRemaining(item.hoursRemaining, item.daysRemaining, item.cyclesRemaining);
+        const ultimoCumplimiento = item.lastPerformedAt
+          ? item.lastPerformedAt.toISOString().slice(0, 10)
+          : item.controlStartAt
+            ? `Inicio de control: ${item.controlStartAt.toISOString().slice(0, 10)}`
+            : 'Sin registro';
         return {
           tareaId: item.taskId,
           ata: item.taskCode,
           descripcion: item.taskTitle,
           intervalo: formatInterval(item),
-          ultimoCumplimiento: item.lastPerformedAt ? item.lastPerformedAt.toISOString().slice(0, 10) : 'Sin registro',
+          ultimoCumplimiento,
           meta: formatGoal(item),
           remanente: formatRemaining(item),
           estado: item.status,

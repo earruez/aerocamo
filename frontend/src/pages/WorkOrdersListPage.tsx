@@ -16,24 +16,10 @@ import {
   type WorkOrderStatus,
   type CreateWorkOrderInput,
 } from '@api/workOrders.api';
+import { ensureStateMachine, getOrderedStatuses, getStatusBadgeClass, getStatusLabel } from '../shared/workflowVisibleState';
+import { useWorkOrderStateMachine } from '../shared/workflowStateMachineQueries';
 
 // ── Status config ──────────────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<WorkOrderStatus, string> = {
-  DRAFT:       'Borrador',
-  OPEN:        'Abierta',
-  IN_PROGRESS: 'En Ejecución',
-  QUALITY:     'Calidad',
-  CLOSED:      'Cerrada',
-};
-
-const STATUS_COLORS: Record<WorkOrderStatus, string> = {
-  DRAFT:       'bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-500/20',
-  OPEN:        'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20',
-  IN_PROGRESS: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20',
-  QUALITY:     'bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-600/20',
-  CLOSED:      'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20',
-};
 
 const STATUS_ICONS: Record<WorkOrderStatus, React.ElementType> = {
   DRAFT:       ClipboardList,
@@ -42,8 +28,6 @@ const STATUS_ICONS: Record<WorkOrderStatus, React.ElementType> = {
   QUALITY:     ShieldCheck,
   CLOSED:      CheckCircle2,
 };
-
-const ALL_STATUSES: WorkOrderStatus[] = ['DRAFT', 'OPEN', 'IN_PROGRESS', 'QUALITY', 'CLOSED'];
 
 // ── Create Modal ───────────────────────────────────────────────────────────
 
@@ -290,6 +274,22 @@ export default function WorkOrdersListPage() {
       }),
   });
 
+  const { data: workOrderStateMachine } = useWorkOrderStateMachine();
+
+  if (!workOrderStateMachine) {
+    return (
+      <div className="p-8 space-y-6">
+        <div className="flex items-center gap-2 text-slate-400 text-sm">
+          <Loader2 size={16} className="animate-spin" /> Cargando contrato de estado OT...
+        </div>
+      </div>
+    );
+  }
+
+  const machine = ensureStateMachine(workOrderStateMachine, 'WorkOrdersListPage');
+
+  const allStatuses = getOrderedStatuses(machine);
+
   // Client-side text search
   const filtered = search
     ? workOrders.filter(wo => {
@@ -303,7 +303,7 @@ export default function WorkOrdersListPage() {
     : workOrders;
 
   // Summary counts
-  const counts = ALL_STATUSES.reduce((acc, s) => {
+  const counts = allStatuses.reduce((acc, s) => {
     acc[s] = workOrders.filter(w => w.status === s).length;
     return acc;
   }, {} as Record<WorkOrderStatus, number>);
@@ -469,9 +469,10 @@ export default function WorkOrdersListPage() {
 
       {/* Status summary cards */}
       <div className="grid grid-cols-5 gap-3">
-        {ALL_STATUSES.map(s => {
+        {allStatuses.map(s => {
           const Icon = STATUS_ICONS[s];
           const count = counts[s];
+          const badgeClass = getStatusBadgeClass(machine, s);
           return (
             <button
               key={s}
@@ -480,12 +481,12 @@ export default function WorkOrdersListPage() {
                 filterStatus === s ? 'ring-2 ring-brand-500 border-transparent' : 'hover:border-slate-300'
               } bg-white`}
             >
-              <div className={`p-2 rounded-lg text-xs ${STATUS_COLORS[s]}`}>
+              <div className={`p-2 rounded-lg text-xs ${badgeClass}`}>
                 <Icon size={16} />
               </div>
               <div>
                 <p className="text-2xl font-bold tabular-nums text-slate-900">{count}</p>
-                <p className="text-[11px] text-slate-500 font-medium leading-tight">{STATUS_LABEL[s]}</p>
+                <p className="text-[11px] text-slate-500 font-medium leading-tight">{getStatusLabel(machine, s)}</p>
               </div>
             </button>
           );
@@ -511,7 +512,7 @@ export default function WorkOrdersListPage() {
             className="filter-input pr-8 appearance-none cursor-pointer"
           >
             <option value="">Todos los estados</option>
-            {ALL_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+            {allStatuses.map(s => <option key={s} value={s}>{getStatusLabel(machine, s)}</option>)}
           </select>
           <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
         </div>
@@ -565,14 +566,15 @@ export default function WorkOrdersListPage() {
               const Icon = STATUS_ICONS[wo.status];
               const completed = wo.tasks.filter(t => t.isCompleted).length;
               const total     = wo.tasks.length;
+              const badgeClass = getStatusBadgeClass(machine, wo.status);
               return (
                 <tr key={wo.id} className="hover:bg-slate-50 transition-colors">
                   <td className="table-cell font-mono font-bold text-slate-800 whitespace-nowrap">{wo.number}</td>
                   <td className="table-cell font-medium text-slate-700 max-w-xs truncate">{wo.title}</td>
                   <td className="table-cell">
-                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_COLORS[wo.status]}`}>
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${badgeClass}`}>
                       <Icon size={10} />
-                      {STATUS_LABEL[wo.status]}
+                      {getStatusLabel(machine, wo.status)}
                     </span>
                   </td>
                   <td className="table-cell text-xs text-slate-500">

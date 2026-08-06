@@ -1,6 +1,8 @@
 import { PrismaClient, WorkOrderAssignmentStatus } from '@prisma/client';
+import { WorkOrderService } from './WorkOrderService';
 
 const prisma = new PrismaClient();
+const workOrderService = new WorkOrderService();
 
 /**
  * WorkOrderAssignmentService
@@ -70,7 +72,6 @@ export class WorkOrderAssignmentService {
         assignedTechnicianId: technicianId,
         assignmentStatus: 'ASSIGNED',
         assignedAt: new Date(),
-        status: 'OPEN', // Cambiar de DRAFT a OPEN cuando se asigna
       },
       include: {
         aircraft: { select: { registration: true, model: true } },
@@ -78,6 +79,19 @@ export class WorkOrderAssignmentService {
         tasks: { include: { task: true } },
       },
     });
+
+    if (workOrder.status === 'DRAFT') {
+      return workOrderService.transition(
+        workOrderId,
+        'OPEN',
+        organizationId,
+        {
+          id: assignedBy.id,
+          email: assignedBy.email,
+          role: assignedBy.role,
+        },
+      );
+    }
 
     return updatedWO;
   }
@@ -112,6 +126,11 @@ export class WorkOrderAssignmentService {
       );
     }
 
+    const technician = await prisma.user.findUnique({ where: { id: technicianId } });
+    if (!technician) {
+      throw new Error('Technician not found');
+    }
+
     const updatedWO = await prisma.workOrder.update({
       where: { id: workOrderId },
       data: {
@@ -119,6 +138,19 @@ export class WorkOrderAssignmentService {
         actualStartDate: new Date(),
       },
     });
+
+    if (workOrder.status === 'OPEN') {
+      return workOrderService.transition(
+        workOrderId,
+        'IN_PROGRESS',
+        organizationId,
+        {
+          id: technicianId,
+          email: technician.email,
+          role: 'TECHNICIAN',
+        },
+      );
+    }
 
     return updatedWO;
   }

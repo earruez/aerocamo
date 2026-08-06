@@ -22,6 +22,7 @@ const NAV_SECTIONS = [
       { to: '/library', label: 'Biblioteca de Mantenimiento', icon: BookOpen },
       { to: '/work-requests', label: 'Solicitud de Trabajo', icon: FileText },
       { to: '/aircraft-alterations', label: 'Alteraciones por Aeronave', icon: Repeat },
+      { to: '/remanentes', label: 'Remanentes', icon: BarChart2 },
     ],
   },
   {
@@ -54,6 +55,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/work-orders':      'Órdenes de Trabajo',
   '/conformities':     'Conformidades',
   '/reports':          'Reportes',
+  '/remanentes':       'Remanentes Operacionales',
   '/notificaciones':   'Centro de Notificaciones',
   '/settings':         'Configuración',
 };

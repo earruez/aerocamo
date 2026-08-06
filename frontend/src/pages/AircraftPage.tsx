@@ -1,12 +1,13 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { Plane, X, Loader2, AlertTriangle, ChevronDown, ChevronRight, Clock, TrendingDown, Info, FileText, User } from 'lucide-react';
 import { aircraftApi, type Aircraft, type CreateAircraftInput } from '@api/aircraft.api';
-import { libraryApi } from '@api/library.api';
+import { libraryApi, type AssignedPlanCategory, type MaintenanceTemplate } from '@api/library.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { AircraftStatusReport } from '@components/reports/AircraftStatusReport';
+import { MISSING_OPERATIONAL_CONTEXT_LABEL } from '@/shared/operationalContext';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -37,7 +38,21 @@ const STATUS_LABEL: Record<string, string> = {
 
 function NewAircraftModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
-  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const demoPlaceholdersEnabled = import.meta.env.MODE === 'development' || import.meta.env.MODE === 'test';
+  const PLAN_CATEGORY_LABELS: Record<AssignedPlanCategory, string> = {
+    manufacturer: 'Normativa de fabricante',
+    national_dgac: 'Normativa nacional (DGAC)',
+    engine_components: 'Componentes e inspecciones de motor',
+    origin_country: 'Normativa país de origen (EASA)',
+  };
+
+  const [selectedTemplatesByCategory, setSelectedTemplatesByCategory] = useState<Record<AssignedPlanCategory, string>>({
+    manufacturer: '',
+    national_dgac: '',
+    engine_components: '',
+    origin_country: '',
+  });
+
   const [form, setForm] = useState<CreateAircraftInput>({
     registration: '',
     manufacturer: '',
@@ -54,19 +69,53 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
     staleTime: 5 * 60 * 1000,
   });
 
+  const activeTemplates = useMemo(
+    () => templates.filter((t) => t.isActive),
+    [templates],
+  );
+
+  const templatesByCategory = useMemo(() => {
+    const categories: AssignedPlanCategory[] = ['manufacturer', 'national_dgac', 'engine_components', 'origin_country'];
+    const grouped = {} as Record<AssignedPlanCategory, MaintenanceTemplate[]>;
+
+    for (const category of categories) {
+      grouped[category] = [...activeTemplates];
+    }
+
+    return grouped;
+  }, [activeTemplates]);
+
+  useEffect(() => {
+    if (!demoPlaceholdersEnabled || activeTemplates.length === 0) return;
+
+    const categories: AssignedPlanCategory[] = ['manufacturer', 'national_dgac', 'engine_components', 'origin_country'];
+    setSelectedTemplatesByCategory((prev) => {
+      const next = { ...prev };
+      for (const category of categories) {
+        if (next[category]) continue;
+        const candidate = templatesByCategory[category]?.[0];
+        if (candidate) next[category] = candidate.id;
+      }
+      return next;
+    });
+  }, [activeTemplates, demoPlaceholdersEnabled, templatesByCategory]);
+
   const mutation = useMutation({
     mutationFn: async () => {
-      const aircraft = await aircraftApi.create(form);
-      if (!selectedTemplateId) {
-        return { aircraft, tasksCloned: 0, templateApplied: false };
-      }
+      const assignments = (Object.entries(selectedTemplatesByCategory) as Array<[AssignedPlanCategory, string]>)
+        .filter(([, templateId]) => Boolean(templateId))
+        .map(([category, templateId]) => ({ category, templateId }));
 
-      const clone = await libraryApi.cloneToAircraft(selectedTemplateId, aircraft.id);
-      return { aircraft, tasksCloned: clone.tasksCloned, templateApplied: true };
+      const aircraft = await aircraftApi.create({
+        ...form,
+        assignedPlans: assignments,
+      });
+
+      return { aircraft, assignmentsApplied: assignments.length };
     },
-    onSuccess: ({ templateApplied, tasksCloned }) => {
-      if (templateApplied) {
-        toast.success(`Aeronave creada y plan asignado (${tasksCloned} tareas)`);
+    onSuccess: ({ assignmentsApplied }) => {
+      if (assignmentsApplied > 0) {
+        toast.success(`Aeronave creada y ${assignmentsApplied} planes base asignados`);
       } else {
         toast.success('Aeronave creada correctamente');
       }
@@ -198,22 +247,25 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
-          <div>
-            <label className="form-label">Plan de Mantenimiento (Biblioteca)</label>
-            <select
-              value={selectedTemplateId}
-              onChange={e => setSelectedTemplateId(e.target.value)}
-              className="filter-input w-full"
-            >
-              <option value="">Sin asignar por ahora</option>
-              {templates
-                .filter(t => t.isActive)
-                .map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.manufacturer} {t.model} - {t.description ?? t.version}
-                  </option>
-                ))}
-            </select>
+          <div className="space-y-3">
+            <p className="form-label">Planes base por categoría</p>
+            {(['manufacturer', 'national_dgac', 'engine_components', 'origin_country'] as AssignedPlanCategory[]).map((category) => (
+              <div key={category}>
+                <label className="form-label">{PLAN_CATEGORY_LABELS[category]}</label>
+                <select
+                  value={selectedTemplatesByCategory[category]}
+                  onChange={(e) => setSelectedTemplatesByCategory((prev) => ({ ...prev, [category]: e.target.value }))}
+                  className="filter-input w-full"
+                >
+                  <option value="">Sin asignar por ahora</option>
+                  {(templatesByCategory[category] ?? []).map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.manufacturer} {template.model} - {template.description ?? template.version}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
@@ -336,7 +388,7 @@ function ProjectionPanel({ aircraft }: { aircraft: Aircraft }) {
     return (
       <div className="py-3 px-4 text-xs text-slate-400 flex items-center gap-2">
         <Info size={13} />
-        Sin tareas con horas o fecha de vencimiento registradas.
+        {MISSING_OPERATIONAL_CONTEXT_LABEL}
       </div>
     );
   }
@@ -410,13 +462,13 @@ function ProjectionPanel({ aircraft }: { aircraft: Aircraft }) {
                       ? t.hoursRemaining < 0
                         ? `+${Math.abs(t.hoursRemaining).toFixed(0)}h venc.`
                         : `${t.hoursRemaining.toFixed(1)} h`
-                      : <span className="text-slate-300">—</span>}
+                        : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
                   </td>
                   {/* estimated calendar date based on hours */}
                   <td className="px-3 py-2 text-right text-xs tabular-nums text-slate-500">
                     {projectedDueDate
                       ? projectedDueDate.toLocaleDateString('es-MX')
-                      : <span className="text-slate-300">—</span>}
+                      : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
                   </td>
                   {/* calendar days remaining */}
                   <td className={`px-3 py-2 text-right tabular-nums font-semibold ${
@@ -428,7 +480,7 @@ function ProjectionPanel({ aircraft }: { aircraft: Aircraft }) {
                       ? t.daysRemaining < 0
                         ? `+${Math.abs(t.daysRemaining)}d venc.`
                         : `${t.daysRemaining}d`
-                      : <span className="text-slate-300">—</span>}
+                      : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
                   </td>
                   {/* controlling criterion pill */}
                   <td className="px-3 py-2 text-right">
@@ -546,12 +598,12 @@ function AircraftRow({ aircraft }: { aircraft: Aircraft }) {
               )}
             </div>
           ) : (
-            <span className="text-slate-300 text-xs">—</span>
+            <span className="text-slate-400 text-xs">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>
           )}
         </td>
 
         <td className="table-cell">
-          {aircraft.coaExpiryDate ? new Date(aircraft.coaExpiryDate).toLocaleDateString('es-MX') : '—'}
+          {aircraft.coaExpiryDate ? new Date(aircraft.coaExpiryDate).toLocaleDateString('es-MX') : MISSING_OPERATIONAL_CONTEXT_LABEL}
         </td>
         <td className="table-cell">
           <span className={STATUS_BADGE[aircraft.status] ?? 'badge-grounded'}>
@@ -608,7 +660,13 @@ function AircraftRow({ aircraft }: { aircraft: Aircraft }) {
 
 export default function AircraftPage() {
   const [showModal, setShowModal] = useState(false);
-  const { data: aircraft = [], isLoading } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
+  const { data: aircraft = [], isLoading, isError, error } = useQuery({
+    queryKey: ['aircraft'],
+    queryFn: aircraftApi.findAll,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
+  const aircraftList = Array.isArray(aircraft) ? aircraft : [];
 
   return (
     <div className="p-8 space-y-6">
@@ -620,7 +678,11 @@ export default function AircraftPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-slate-900">Aeronaves</h1>
-            <p className="text-sm text-slate-500">{aircraft.length} aeronave{aircraft.length !== 1 ? 's' : ''} en la flota</p>
+            <p className="text-sm text-slate-500">
+              {isError
+                ? 'No se pudo cargar la flota'
+                : `${aircraftList.length} aeronave${aircraftList.length !== 1 ? 's' : ''} en la flota`}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -658,12 +720,19 @@ export default function AircraftPage() {
                 <td colSpan={11} className="table-cell text-center text-slate-400 py-12">Cargando…</td>
               </tr>
             )}
-            {!isLoading && aircraft.length === 0 && (
+            {!isLoading && !isError && aircraftList.length === 0 && (
               <tr>
                 <td colSpan={11} className="table-cell text-center text-slate-400 py-12">No hay aeronaves registradas</td>
               </tr>
             )}
-            {aircraft.map((a) => (
+            {isError && (
+              <tr>
+                <td colSpan={11} className="table-cell text-center text-rose-600 py-12">
+                  {error instanceof Error ? error.message : 'No se pudo cargar la lista de aeronaves.'}
+                </td>
+              </tr>
+            )}
+            {!isError && aircraftList.map((a) => (
               <AircraftRow key={a.id} aircraft={a} />
             ))}
           </tbody>

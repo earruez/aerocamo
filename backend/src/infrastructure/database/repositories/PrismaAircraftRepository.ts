@@ -2,9 +2,12 @@ import { Aircraft, CreateAircraftInput, UpdateAircraftInput, AircraftStatus } fr
 import { IAircraftRepository, MaintenancePlanItem, PlanItemStatus, DueByType } from '../../../domain/repositories/IAircraftRepository';
 import { PaginatedResult, PaginationOptions } from '../../../domain/repositories/shared';
 import { prisma } from '../prisma.client';
+import { ComplianceDueDateService } from '../../../domain/services/ComplianceDueDateService';
+import { BASELINE_NOTE } from '../../../domain/services/BaselineComplianceService';
 
 const AVG_FLIGHT_HOURS_PER_DAY = 2;
 const MS_PER_DAY = 864e5;
+const dueService = new ComplianceDueDateService();
 
 export class PrismaAircraftRepository implements IAircraftRepository {
   async findById(id: string, organizationId: string): Promise<Aircraft | null> {
@@ -61,26 +64,70 @@ export class PrismaAircraftRepository implements IAircraftRepository {
     const links = await prisma.aircraftTask.findMany({
       where: { aircraftId, isActive: true },
       include: {
-        task: true,
+        task: {
+          include: {
+            componentLinks: {
+              where: { isActive: true },
+              select: { componentId: true },
+              take: 1,
+            },
+          },
+        },
         aircraft: { select: { totalFlightHours: true, totalCycles: true } },
       },
     });
 
-    // Get latest compliance per task in one query
-    const taskIds = links.map(l => l.taskId);
-    const latestCompliances = taskIds.length > 0
-      ? await prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(`
-          SELECT DISTINCT ON ("taskId") *
-          FROM compliances
-          WHERE "aircraftId" = '${aircraftId}'
-            AND "organizationId" = '${organizationId}'
-            AND "taskId" = ANY(ARRAY[${taskIds.map(id => `'${id}'`).join(',')}]::uuid[])
-          ORDER BY "taskId", "performedAt" DESC
-        `)
+    // Get latest compliance per task preferring a real compliance over baseline.
+    const taskIds = links.map((l) => l.taskId);
+    const complianceRows = taskIds.length > 0
+      ? await prisma.compliance.findMany({
+          where: {
+            aircraftId,
+            organizationId,
+            taskId: { in: taskIds },
+          },
+          select: {
+            taskId: true,
+            notes: true,
+            performedAt: true,
+            aircraftHoursAtCompliance: true,
+            aircraftCyclesAtCompliance: true,
+            nextDueHours: true,
+            nextDueCycles: true,
+            nextDueDate: true,
+            workOrderNumber: true,
+          },
+          orderBy: [
+            { taskId: 'asc' },
+            { performedAt: 'desc' },
+          ],
+        })
       : [];
 
+    const isBaselineCompliance = (row: { notes: string | null }): boolean => (
+      (row.notes ?? '').trim().toLowerCase() === BASELINE_NOTE.toLowerCase()
+    );
+
     const compByTask = new Map<string, Record<string, unknown>>();
-    for (const c of latestCompliances) compByTask.set(c.taskId as string, c);
+    for (const row of complianceRows) {
+      const current = compByTask.get(row.taskId) as { notes?: string | null } | undefined;
+      if (!current) {
+        compByTask.set(row.taskId, row as unknown as Record<string, unknown>);
+        continue;
+      }
+
+      const currentIsBaseline = isBaselineCompliance({
+        notes: current.notes ?? null,
+      });
+      const candidateIsBaseline = isBaselineCompliance({
+        notes: row.notes,
+      });
+
+      // Replace baseline candidate if we find a real compliance for the same task.
+      if (currentIsBaseline && !candidateIsBaseline) {
+        compByTask.set(row.taskId, row as unknown as Record<string, unknown>);
+      }
+    }
 
     const sentWrItems = await prisma.workRequestItem.findMany({
       where: {
@@ -107,8 +154,63 @@ export class PrismaAircraftRepository implements IAircraftRepository {
     }
 
     return links.map(({ task }) => {
-      const comp = compByTask.get(task.id);
+      const requiresComponentTracking =
+        task.componentLinks.length > 0
+        || Boolean(task.applicablePartNumber);
+      const executionType: MaintenancePlanItem['executionType'] = requiresComponentTracking
+        ? 'component_replacement'
+        : 'maintenance';
+      const intervalCalendarMonths =
+        ((task as unknown as Record<string, unknown>).intervalCalendarMonths as number | null | undefined) ?? null;
+
+      let comp = compByTask.get(task.id);
+
+      if (!comp && aircraft) {
+        const syntheticDue = dueService.calculate(
+          {
+            id: task.id,
+            organizationId,
+            code: task.code,
+            title: task.title,
+            description: task.description,
+            intervalType: task.intervalType,
+            intervalHours: task.intervalHours != null ? Number(task.intervalHours) : null,
+            intervalCycles: task.intervalCycles,
+            intervalCalendarDays: task.intervalCalendarDays,
+            intervalCalendarMonths: intervalCalendarMonths,
+            toleranceHours: task.toleranceHours != null ? Number(task.toleranceHours) : null,
+            toleranceCycles: task.toleranceCycles,
+            toleranceCalendarDays: task.toleranceCalendarDays,
+            referenceNumber: task.referenceNumber,
+            referenceType: task.referenceType,
+            isMandatory: task.isMandatory,
+            estimatedManHours: task.estimatedManHours != null ? Number(task.estimatedManHours) : null,
+            requiresInspection: task.requiresInspection,
+            applicableModel: task.applicableModel,
+            applicablePartNumber: task.applicablePartNumber,
+            isActive: task.isActive,
+            createdAt: task.createdAt,
+            updatedAt: task.updatedAt,
+          },
+          Number(aircraft.totalFlightHours),
+          aircraft.totalCycles,
+          aircraft.createdAt,
+        );
+
+        comp = {
+          performedAt: aircraft.createdAt.toISOString(),
+          aircraftHoursAtCompliance: Number(aircraft.totalFlightHours),
+          nextDueHours: syntheticDue.nextDueHours,
+          nextDueCycles: syntheticDue.nextDueCycles,
+          nextDueDate: syntheticDue.nextDueDate,
+          workOrderNumber: null,
+          notes: BASELINE_NOTE,
+        };
+      }
+
       const complianceNotes = (comp?.notes as string | null) ?? null;
+      const isBaseline = (comp?.applicationType as string | null) === 'baseline'
+        || (complianceNotes ?? '').trim().toLowerCase() === BASELINE_NOTE.toLowerCase();
       const evidenceMatch = complianceNotes?.match(/Evidencia\s([^|]+)/i);
       const referenceText = `${task.referenceType} ${task.referenceNumber ?? ''}`.toUpperCase();
       const legalSource: 'FABRICANTE' | 'DGAC' | 'EASA' =
@@ -117,8 +219,6 @@ export class PrismaAircraftRepository implements IAircraftRepository {
           : referenceText.includes('EASA') || task.referenceType === 'AD'
             ? 'EASA'
             : 'FABRICANTE';
-      const intervalCalendarMonths =
-        ((task as unknown as Record<string, unknown>).intervalCalendarMonths as number | null | undefined) ?? null;
       const calendarMonths = intervalCalendarMonths ?? 0;
       const nextDueHours  = comp?.nextDueHours  != null ? Number(comp.nextDueHours)  : null;
       const nextDueCycles = comp?.nextDueCycles != null ? Number(comp.nextDueCycles) : null;
@@ -183,6 +283,9 @@ export class PrismaAircraftRepository implements IAircraftRepository {
         taskId:              task.id,
         taskCode:            task.code,
         taskTitle:           task.title,
+        executionType,
+        requiresComponentTracking,
+        componentDefinitionId: requiresComponentTracking ? task.id : null,
         intervalType:        task.intervalType,
         intervalHours:       task.intervalHours != null ? Number(task.intervalHours) : null,
         intervalCycles:      task.intervalCycles,
@@ -192,9 +295,14 @@ export class PrismaAircraftRepository implements IAircraftRepository {
         referenceNumber:     task.referenceNumber,
         isMandatory:         task.isMandatory,
         estimatedManHours:   task.estimatedManHours != null ? Number(task.estimatedManHours) : null,
-        lastPerformedAt:     comp?.performedAt != null ? new Date(comp.performedAt as string) : null,
+        hasRealCompliance:   Boolean(comp) && !isBaseline,
+        controlStartAt:      comp?.performedAt != null && isBaseline ? new Date(comp.performedAt as string) : null,
+        controlStartHours:   comp?.aircraftHoursAtCompliance != null && isBaseline ? Number(comp.aircraftHoursAtCompliance) : null,
+        controlStartCycles:  comp?.aircraftCyclesAtCompliance != null && isBaseline ? Number(comp.aircraftCyclesAtCompliance) : null,
+        effectiveApplicationType: (isBaseline ? 'baseline' : 'application') as MaintenancePlanItem['effectiveApplicationType'],
+        lastPerformedAt:     comp?.performedAt != null && !isBaseline ? new Date(comp.performedAt as string) : null,
         lastWorkOrder:       (comp?.workOrderNumber as string | null) ?? null,
-        lastHoursAtCompliance: comp?.aircraftHoursAtCompliance != null ? Number(comp.aircraftHoursAtCompliance) : null,
+        lastHoursAtCompliance: comp?.aircraftHoursAtCompliance != null && !isBaseline ? Number(comp.aircraftHoursAtCompliance) : null,
         nextDueHours,
         nextDueCycles,
         nextDueDate,

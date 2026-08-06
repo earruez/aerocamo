@@ -18,6 +18,7 @@ import WorkRequestsPage from '@pages/WorkRequestsPage';
 import AircraftAlterationsPage from '@pages/AircraftAlterationsPage';
 import ConformitiesPage from '@pages/ConformitiesPage';
 import AircraftProfilePage from '@pages/AircraftProfilePage';
+import RemanentesPage from '@pages/RemanentesPage';
 import AppLayout from '@components/layout/AppLayout';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -61,6 +62,7 @@ export default function App() {
           <Route path="/work-orders/:id" element={<WorkOrderDetailPage />} />
           <Route path="/conformities" element={<ConformitiesPage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/remanentes" element={<RemanentesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/notificaciones" element={<NotificationsPage />} />
         </Route>

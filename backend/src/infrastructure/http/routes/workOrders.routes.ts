@@ -21,6 +21,7 @@ router.use(authMiddleware);
 router.use(tenantMiddleware);
 
 // ── Work Order CRUD ────────────────────────────────────────────────────────
+router.get('/state-machine', wo.stateMachine);
 router.get('/',             wo.list);
 router.post('/',            wo.create);
 router.get('/:id',          wo.getById);

@@ -30,3 +30,10 @@ postgres_data/
 
 # Coverage
 coverage/
+
+# Access source databases and exported operational data — real fleet/user data, never commit
+*.accdb
+backend/data/
+backend/data-tecnicopters/
+backend/access-import-diagnostic.json
+backend/OPEN

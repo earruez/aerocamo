@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import type { WorkflowStateMachine } from './workRequests.api';
 
 // ── Enums ──────────────────────────────────────────────────────────────────
 
@@ -158,6 +159,11 @@ export interface UpdateDiscrepancyInput {
 // ── API client ──────────────────────────────────────────────────────────────
 
 export const workOrdersApi = {
+  getStateMachine: async (): Promise<WorkflowStateMachine<WorkOrderStatus>> => {
+    const { data } = await apiClient.get<{ status: string; data: WorkflowStateMachine<WorkOrderStatus> }>('/work-orders/state-machine');
+    return data.data;
+  },
+
   list: async (params?: { status?: WorkOrderStatus; aircraftId?: string }): Promise<WorkOrder[]> => {
     const q = new URLSearchParams();
     if (params?.status)     q.set('status', params.status);

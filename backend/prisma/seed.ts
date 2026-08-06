@@ -64,7 +64,7 @@ async function main() {
     }),
     prisma.maintenanceTask.upsert({
       where: { code_organizationId: { code: 'AD-2024-15-01', organizationId: org.id } },
-      create: { organizationId: org.id, code: 'AD-2024-15-01', title: 'AD: Inspección de paletas de turbina CFM56', description: 'Inspección repetitiva de bordes de ataque por grietas.', intervalType: 'CYCLES', intervalCycles: 500, toleranceCycles: 25, referenceNumber: '2024-15-01', referenceType: 'AD', isMandatory: true, estimatedManHours: 4, requiresInspection: true },
+      create: { organizationId: org.id, code: 'AD-2024-15-01', title: 'AD: Reemplazo de paletas de turbina CFM56', description: 'Reemplazo repetitivo de set de paletas por directiva de aeronavegabilidad.', intervalType: 'CYCLES', intervalCycles: 500, toleranceCycles: 25, referenceNumber: '2024-15-01', referenceType: 'AD', isMandatory: true, estimatedManHours: 4, requiresInspection: true, applicablePartNumber: 'CFM56-BLADE-SET' },
       update: {},
     }),
     prisma.maintenanceTask.upsert({

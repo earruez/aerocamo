@@ -4,26 +4,34 @@
 //  Counters (TSN / Ciclos / CdN) · Semáforo de Vencimientos · Historial reciente
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, Plane, Clock, AlertTriangle, CheckCircle2,
   FileText, Paperclip, ClipboardList, Activity,
-  Calendar, Gauge, RotateCcw, Zap, ExternalLink,
+  Calendar, Gauge, RotateCcw, Zap, ExternalLink, Plus,
 } from 'lucide-react';
-import { aircraftApi, type Aircraft } from '@api/aircraft.api';
+import {
+  aircraftApi,
+  type Aircraft,
+  type AircraftEngine,
+  type AircraftUsageHistory,
+  type AircraftUsageSource,
+} from '@api/aircraft.api';
+import { libraryApi, type AssignedPlanCategory, type AircraftAssignedPlan } from '@api/library.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { AircraftStatusReport } from '@components/reports/AircraftStatusReport';
-import { useState } from 'react';
 import { useWorkRequestStore } from '../store/workRequestStore';
 import { createSTFromSource } from '../shared/createSTFromSource';
 import {
   findActiveWorkRequestByMaintenanceTaskId,
-  getVisibleSTStatus,
-  WORK_REQUEST_VISIBLE_STATUS_LABELS,
   type WorkRequest,
 } from '../shared/workRequestTypes';
+import { ensureStateMachine, getVisibleState, getVisibleStateLabel } from '../shared/workflowVisibleState';
+import { useWorkRequestStateMachine } from '../shared/workflowStateMachineQueries';
+import type { WorkflowStateMachine } from '../api/workRequests.api';
+import { MISSING_OPERATIONAL_CONTEXT_LABEL } from '../shared/operationalContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DAILY_HOURS = 2;
@@ -45,6 +53,21 @@ const STATUS_CLASSES: Record<string, string> = {
   IN_MAINTENANCE: 'bg-amber-100 text-amber-800 border-amber-200',
   GROUNDED:       'bg-orange-100 text-orange-800 border-orange-200',
   DECOMMISSIONED: 'bg-slate-100 text-slate-600 border-slate-200',
+};
+
+const USAGE_SOURCE_LABEL: Record<AircraftUsageSource, string> = {
+  manual: 'Manual',
+  flight_log: 'Bitacora de vuelo',
+  ot_close: 'Cierre OT',
+  import: 'Importacion',
+  baseline: 'Linea base',
+};
+
+const ASSIGNED_PLAN_CATEGORY_LABELS: Record<AssignedPlanCategory, string> = {
+  manufacturer: 'Normativa de fabricante',
+  national_dgac: 'Normativa nacional (DGAC)',
+  engine_components: 'Componentes e inspecciones de motor',
+  origin_country: 'Normativa país de origen',
 };
 
 // ─── Semaphore helpers ────────────────────────────────────────────────────────
@@ -167,7 +190,7 @@ function TierBadge({ tier }: { tier: AlertTier }) {
 }
 
 type TaskSTInfo = {
-  label: 'Sin ST' | 'Borrador' | 'En proceso' | 'Cerrada';
+  label: 'Sin ST' | 'Borrador' | 'En proceso' | 'Cancelada';
   workRequestId: string | null;
   hasST: boolean;
   isOpen: boolean;
@@ -177,6 +200,7 @@ function resolveTaskSTInfo(
   item: MaintenancePlanItem,
   workRequests: WorkRequest[],
   aircraftId: string,
+  workRequestStateMachine: WorkflowStateMachine<'DRAFT' | 'SENT' | 'CANCELLED'>,
 ): TaskSTInfo {
   const active = findActiveWorkRequestByMaintenanceTaskId({
     workRequests,
@@ -201,13 +225,20 @@ function resolveTaskSTInfo(
     return { label: 'Sin ST', workRequestId: null, hasST: false, isOpen: false };
   }
 
-  const visible = getVisibleSTStatus(wr.status);
-  const label = WORK_REQUEST_VISIBLE_STATUS_LABELS[visible] as TaskSTInfo['label'];
+  const visible = getVisibleState(workRequestStateMachine, wr.status);
+  const visibleLabel = getVisibleStateLabel(workRequestStateMachine, wr.status);
+  const label: TaskSTInfo['label'] = visible === 'draft'
+    ? 'Borrador'
+    : visible === 'cancelled'
+      ? 'Cancelada'
+      : visibleLabel === 'Unknown'
+        ? 'En proceso'
+        : 'En proceso';
   return {
     label,
     workRequestId: wr.id,
     hasST: true,
-    isOpen: visible !== 'cerrada',
+    isOpen: visible !== 'cancelled',
   };
 }
 
@@ -216,6 +247,7 @@ function SemaphoreTable({
   plan,
   aircraftId,
   workRequests,
+  workRequestStateMachine,
   viewDensity,
   onOpenST,
   onGenerateST,
@@ -223,6 +255,7 @@ function SemaphoreTable({
   plan: MaintenancePlanItem[];
   aircraftId: string;
   workRequests: WorkRequest[];
+  workRequestStateMachine: WorkflowStateMachine<'DRAFT' | 'SENT' | 'CANCELLED'>;
   viewDensity: 'comfortable' | 'compact';
   onOpenST: (workRequestId: string | null, taskCode: string) => void;
   onGenerateST: (task: MaintenancePlanItem) => void;
@@ -233,7 +266,7 @@ function SemaphoreTable({
       .map(i => {
         const hoursAsDays = i.hoursRemaining != null ? i.hoursRemaining / DAILY_HOURS : Infinity;
         const calDays     = i.daysRemaining  != null ? i.daysRemaining                : Infinity;
-        const stInfo = resolveTaskSTInfo(i, workRequests, aircraftId);
+        const stInfo = resolveTaskSTInfo(i, workRequests, aircraftId, workRequestStateMachine);
         const isOverdueWithoutST = i.status === 'OVERDUE' && !stInfo.hasST;
         return {
           ...i,
@@ -247,7 +280,7 @@ function SemaphoreTable({
         return a.urgencyDays - b.urgencyDays;
       })
       .slice(0, 10);
-  }, [plan, workRequests, aircraftId]);
+  }, [plan, workRequests, aircraftId, workRequestStateMachine]);
 
   if (sorted.length === 0) {
     return (
@@ -316,7 +349,7 @@ function SemaphoreTable({
                     ? item.hoursRemaining < 0
                       ? <span className="text-rose-600">+{Math.abs(item.hoursRemaining).toFixed(0)}h venc.</span>
                       : `${item.hoursRemaining.toFixed(1)} h`
-                    : <span className="text-slate-300">—</span>}
+                    : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
                 </td>
                 <td className={`${cellPadding} text-right font-semibold tabular-nums ${
                   (tier === 'overdue' || tier === 'critical') ? 'text-rose-600' :
@@ -326,10 +359,10 @@ function SemaphoreTable({
                     ? item.daysRemaining < 0
                       ? <span className="text-rose-600">+{Math.abs(item.daysRemaining)}d venc.</span>
                       : `${item.daysRemaining}d`
-                    : <span className="text-slate-300">—</span>}
+                    : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
                 </td>
                 <td className={`${cellPadding} text-right text-slate-500 text-[11px] tabular-nums`}>
-                  {drivingDate ? drivingDate.toLocaleDateString('es-MX') : <span className="text-slate-300">—</span>}
+                  {drivingDate ? drivingDate.toLocaleDateString('es-MX') : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
                 </td>
                 <td className={`${cellPadding} text-center`}>
                   <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-full">
@@ -545,11 +578,268 @@ function SmartSuggestionBanner({
   );
 }
 
+function AircraftUsageHistoryPanel({
+  aircraftId,
+  currentHours,
+  currentCycles,
+  onClose,
+}: {
+  aircraftId: string;
+  currentHours: number;
+  currentCycles: number;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState<{
+    date: string;
+    totalHours: string;
+    totalCycles: string;
+    source: AircraftUsageSource;
+    notes: string;
+  }>({
+    date: new Date().toISOString().slice(0, 10),
+    totalHours: currentHours.toFixed(1),
+    totalCycles: String(currentCycles),
+    source: 'manual',
+    notes: '',
+  });
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['aircraft-usage-history', aircraftId],
+    queryFn: () => aircraftApi.getUsageHistory(aircraftId),
+    staleTime: 30_000,
+  });
+
+  const latest = data?.history[0] ?? null;
+
+  const createUsageMutation = useMutation({
+    mutationFn: async () => {
+      const totalHours = Number(form.totalHours);
+      const totalCycles = Number(form.totalCycles);
+
+      if (!form.date) {
+        throw new Error('La fecha es obligatoria');
+      }
+      if (!Number.isFinite(totalHours) || totalHours < 0) {
+        throw new Error('Las horas totales deben ser validas');
+      }
+      if (!Number.isInteger(totalCycles) || totalCycles < 0) {
+        throw new Error('Los ciclos totales deben ser un entero valido');
+      }
+
+      if (latest) {
+        const latestDate = new Date(latest.date).getTime();
+        const newDate = new Date(form.date).getTime();
+
+        if (newDate < latestDate) {
+          throw new Error('La fecha no puede ser menor al ultimo registro');
+        }
+        if (totalHours < Number(latest.totalHours)) {
+          throw new Error('Las horas no pueden ser menores al ultimo valor registrado');
+        }
+        if (totalCycles < Number(latest.totalCycles)) {
+          throw new Error('Los ciclos no pueden ser menores al ultimo valor registrado');
+        }
+      }
+
+      return aircraftApi.createUsageLog(aircraftId, {
+        date: form.date,
+        totalHours,
+        totalCycles,
+        source: form.source,
+        notes: form.notes.trim() || null,
+      });
+    },
+    onSuccess: async () => {
+      setFormError(null);
+      setShowForm(false);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['aircraft', aircraftId] }),
+        qc.invalidateQueries({ queryKey: ['aircraft-usage-history', aircraftId] }),
+      ]);
+    },
+    onError: (err: unknown) => {
+      const message = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+        ?? (err as { message?: string })?.message
+        ?? 'No se pudo registrar las horas';
+      setFormError(message);
+    },
+  });
+
+  const usageData: AircraftUsageHistory['aircraft'] = data?.aircraft ?? {
+    totalHours: currentHours,
+    totalCycles: currentCycles,
+    lastUpdatedAt: new Date().toISOString(),
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[1px] flex items-center justify-end">
+      <div className="h-full w-full max-w-4xl bg-white shadow-2xl border-l border-slate-200 flex flex-col">
+        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Historial de uso de aeronave</h2>
+            <p className="text-xs text-slate-500">Evolucion de horas y ciclos en el tiempo</p>
+          </div>
+          <button onClick={onClose} className="btn-secondary text-xs">Cerrar</button>
+        </div>
+
+        <div className="px-6 py-4 border-b border-slate-100 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Horas actuales</p>
+            <p className="text-xl font-bold text-slate-900 tabular-nums">{Number(usageData.totalHours).toFixed(1)} h</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Ciclos actuales</p>
+            <p className="text-xl font-bold text-slate-900 tabular-nums">{Number(usageData.totalCycles)}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 md:col-span-2">
+            <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Ultima actualizacion</p>
+            <p className="text-sm font-semibold text-slate-900">
+              {usageData.lastUpdatedAt
+                ? new Date(usageData.lastUpdatedAt).toLocaleString('es-MX', {
+                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                  })
+                : 'Sin registros'}
+            </p>
+          </div>
+        </div>
+
+        <div className="px-6 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-slate-800">Historial de registros</p>
+          <button
+            className="btn-primary text-xs gap-1"
+            onClick={() => {
+              setFormError(null);
+              setShowForm((prev) => !prev);
+            }}
+          >
+            <Plus size={12} /> + Registrar horas
+          </button>
+        </div>
+
+        {showForm && (
+          <div className="px-6 py-4 border-b border-slate-100 bg-slate-50">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div>
+                <label className="form-label">Fecha</label>
+                <input
+                  type="date"
+                  className="input w-full"
+                  value={form.date}
+                  onChange={(e) => setForm((prev) => ({ ...prev, date: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="form-label">Horas totales</label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  className="input w-full"
+                  value={form.totalHours}
+                  onChange={(e) => setForm((prev) => ({ ...prev, totalHours: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="form-label">Ciclos totales</label>
+                <input
+                  type="number"
+                  min={0}
+                  step="1"
+                  className="input w-full"
+                  value={form.totalCycles}
+                  onChange={(e) => setForm((prev) => ({ ...prev, totalCycles: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="form-label">Fuente</label>
+                <select
+                  className="input w-full"
+                  value={form.source}
+                  onChange={(e) => setForm((prev) => ({ ...prev, source: e.target.value as AircraftUsageSource }))}
+                >
+                  <option value="manual">Manual</option>
+                  <option value="flight_log">Bitacora de vuelo</option>
+                  <option value="ot_close">Cierre OT</option>
+                  <option value="import">Importacion</option>
+                  <option value="baseline">Linea base</option>
+                </select>
+              </div>
+              <div>
+                <label className="form-label">Observacion</label>
+                <input
+                  className="input w-full"
+                  value={form.notes}
+                  onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Opcional"
+                />
+              </div>
+            </div>
+            {formError && <p className="text-xs text-rose-600 mt-2">{formError}</p>}
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button className="btn-secondary text-xs" onClick={() => setShowForm(false)}>Cancelar</button>
+              <button
+                className="btn-primary text-xs"
+                onClick={() => createUsageMutation.mutate()}
+                disabled={createUsageMutation.isPending}
+              >
+                {createUsageMutation.isPending ? 'Guardando...' : 'Guardar registro'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex-1 overflow-auto px-6 py-4">
+          {isLoading ? (
+            <div className="text-sm text-slate-400 flex items-center gap-2">
+              <Activity size={13} className="animate-pulse" /> Cargando historial...
+            </div>
+          ) : (data?.history?.length ?? 0) === 0 ? (
+            <div className="text-sm text-slate-500 border border-dashed border-slate-300 rounded-xl p-6 text-center">
+              Aun no hay registros de uso para esta aeronave.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="table-header">Fecha</th>
+                    <th className="table-header text-right">Horas</th>
+                    <th className="table-header text-right">Ciclos</th>
+                    <th className="table-header">Fuente</th>
+                    <th className="table-header">Observacion</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {data?.history.map((row) => (
+                    <tr key={row.id}>
+                      <td className="table-cell text-xs text-slate-700">
+                        {new Date(row.date).toLocaleDateString('es-MX')}
+                      </td>
+                      <td className="table-cell text-xs text-slate-700 text-right tabular-nums">{Number(row.totalHours).toFixed(1)}</td>
+                      <td className="table-cell text-xs text-slate-700 text-right tabular-nums">{Number(row.totalCycles)}</td>
+                      <td className="table-cell text-xs text-slate-700">{USAGE_SOURCE_LABEL[row.source]}</td>
+                      <td className="table-cell text-xs text-slate-500">{row.notes ?? '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function AircraftProfilePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [showStatusReport, setShowStatusReport] = useState(false);
+  const [showUsageHistoryPanel, setShowUsageHistoryPanel] = useState(false);
   const workRequests = useWorkRequestStore((s) => s.workRequests);
   const viewDensity = useWorkRequestStore((s) => s.viewDensity);
   const setViewDensity = useWorkRequestStore((s) => s.setViewDensity);
@@ -567,6 +857,25 @@ export default function AircraftProfilePage() {
     enabled: !!id,
     staleTime: 5 * 60 * 1000,
   });
+
+  const { data: assignedPlansData } = useQuery({
+    queryKey: ['aircraft-assigned-plans', id],
+    queryFn: () => libraryApi.getAircraftAssignedPlans(id!),
+    enabled: !!id,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: aircraftEngines = [] } = useQuery({
+    queryKey: ['aircraft-engines', id],
+    queryFn: () => aircraftApi.listEngines(id!),
+    enabled: !!id,
+    staleTime: 30_000,
+  });
+
+  const { data: workRequestStateMachine, isLoading: loadingWorkRequestStateMachine } = useWorkRequestStateMachine();
+  const stMachine = workRequestStateMachine
+    ? ensureStateMachine(workRequestStateMachine, 'AircraftProfilePage')
+    : null;
 
   // ── Computed values ───────────────────────────────────────────────────────
   const nearestHoursTask = useMemo(() =>
@@ -612,19 +921,39 @@ export default function AircraftProfilePage() {
   const overdueCnt = plan.filter(p => p.status === 'OVERDUE').length;
   const dueSoonCnt = plan.filter(p => p.status === 'DUE_SOON').length;
 
+  const assignedPlansByCategory = useMemo(() => {
+    const map = new Map<AssignedPlanCategory, AircraftAssignedPlan>();
+    for (const assignment of assignedPlansData?.assignments ?? []) {
+      map.set(assignment.category, assignment);
+    }
+    return map;
+  }, [assignedPlansData]);
+
+  const enginesByPosition = useMemo(() => {
+    const map = new Map<AircraftEngine['position'], AircraftEngine>();
+    for (const engine of aircraftEngines) {
+      map.set(engine.position, engine);
+    }
+    return map;
+  }, [aircraftEngines]);
+
   const overdueWithoutST = useMemo(() => (
-    plan
-      .filter((task) => task.status === 'OVERDUE')
-      .filter((task) => !resolveTaskSTInfo(task, workRequests, aircraftId).hasST)
-      .length
-  ), [plan, workRequests, aircraftId]);
+    !stMachine
+      ? 0
+      : plan
+          .filter((task) => task.status === 'OVERDUE')
+          .filter((task) => !resolveTaskSTInfo(task, workRequests, aircraftId, stMachine).hasST)
+          .length
+  ), [plan, workRequests, aircraftId, stMachine]);
 
   const openAnyOverdueST = useMemo(() => (
-    plan
-      .filter((task) => task.status === 'OVERDUE')
-      .map((task) => resolveTaskSTInfo(task, workRequests, aircraftId))
-      .find((info) => info.isOpen) ?? null
-  ), [plan, workRequests, aircraftId]);
+    !stMachine
+      ? null
+      : plan
+          .filter((task) => task.status === 'OVERDUE')
+          .map((task) => resolveTaskSTInfo(task, workRequests, aircraftId, stMachine))
+          .find((info) => info.isOpen) ?? null
+  ), [plan, workRequests, aircraftId, stMachine]);
 
   const openSTFromProfile = (workRequestId: string | null, taskCode: string) => {
     if (workRequestId) {
@@ -641,7 +970,10 @@ export default function AircraftProfilePage() {
   };
 
   const createSTForTask = async (task: MaintenancePlanItem) => {
-    const taskInfo = resolveTaskSTInfo(task, workRequests, aircraftId);
+    if (!stMachine) {
+      throw new Error('[workflow] ST state machine contract is not loaded in AircraftProfilePage.createSTForTask');
+    }
+    const taskInfo = resolveTaskSTInfo(task, workRequests, aircraftId, stMachine);
     if (taskInfo.isOpen && taskInfo.workRequestId) {
       openSTFromProfile(taskInfo.workRequestId, task.taskCode);
       return;
@@ -663,11 +995,14 @@ export default function AircraftProfilePage() {
   };
 
   const generateSTFromProfile = async () => {
+    if (!stMachine) {
+      throw new Error('[workflow] ST state machine contract is not loaded in AircraftProfilePage.generateSTFromProfile');
+    }
     const candidate = plan.find((task) => {
-      const info = resolveTaskSTInfo(task, workRequests, aircraftId);
+      const info = resolveTaskSTInfo(task, workRequests, aircraftId, stMachine);
       return task.status === 'OVERDUE' && !info.hasST;
     }) ?? plan.find((task) => {
-      const info = resolveTaskSTInfo(task, workRequests, aircraftId);
+      const info = resolveTaskSTInfo(task, workRequests, aircraftId, stMachine);
       return !info.hasST;
     });
 
@@ -684,6 +1019,14 @@ export default function AircraftProfilePage() {
     return (
       <div className="p-8 flex items-center gap-2 text-slate-400 text-sm">
         <Activity size={16} className="animate-pulse" /> Cargando ficha de aeronave…
+      </div>
+    );
+  }
+
+  if (loadingWorkRequestStateMachine || !stMachine) {
+    return (
+      <div className="p-8 flex items-center gap-2 text-slate-400 text-sm">
+        <Activity size={16} className="animate-pulse" /> Cargando contrato de estado ST...
       </div>
     );
   }
@@ -793,22 +1136,88 @@ export default function AircraftProfilePage() {
       </div>
 
       {/* ── Counter cards ── */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center">
+            <FileText size={14} className="text-brand-600" />
+          </div>
+          <p className="text-sm font-bold text-slate-900">Planes activos de mantenimiento</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {(['manufacturer', 'national_dgac', 'engine_components', 'origin_country'] as AssignedPlanCategory[]).map((category) => {
+            const assigned = assignedPlansByCategory.get(category);
+            return (
+              <div key={category} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{ASSIGNED_PLAN_CATEGORY_LABELS[category]}</p>
+                <p className="text-sm font-semibold text-slate-900 mt-1">
+                  {assigned?.templateLabel ?? MISSING_OPERATIONAL_CONTEXT_LABEL}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center">
+            <Gauge size={14} className="text-slate-600" />
+          </div>
+          <p className="text-sm font-bold text-slate-900">Motores</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {(['N1', 'N2'] as const).map((position) => {
+            const engine = enginesByPosition.get(position);
+            return (
+              <div key={position} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Motor {position}</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {engine ? `${engine.manufacturer} ${engine.model}` : MISSING_OPERATIONAL_CONTEXT_LABEL}
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  S/N: {engine?.serialNumber ?? MISSING_OPERATIONAL_CONTEXT_LABEL}
+                </p>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500">Horas</p>
+                    <p className="font-semibold text-slate-900 tabular-nums">
+                      {engine?.latestUsage ? `${Number(engine.latestUsage.hours).toFixed(1)} h` : MISSING_OPERATIONAL_CONTEXT_LABEL}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500">Ciclos</p>
+                    <p className="font-semibold text-slate-900 tabular-nums">
+                      {engine?.latestUsage ? Number(engine.latestUsage.cycles) : MISSING_OPERATIONAL_CONTEXT_LABEL}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div>
         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">
           Contadores Actualizados
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {/* TSN ring */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowUsageHistoryPanel(true)}
+            className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col items-center gap-2 hover:border-brand-300 hover:shadow-md transition text-left"
+            title="Ver historial de uso de aeronave"
+          >
             <ProgressRing
               pct={tsnPct}
               value={Number(aircraft.totalFlightHours).toLocaleString('es-MX', { maximumFractionDigits: 1 })}
               unit="h TSN"
               label="Horas Totales"
               tier={tsnTier}
-              sublabel={nearestHoursTask ? `Próx. ATA ${nearestHoursTask.taskCode}` : 'Sin tarea h.'}
+              sublabel={nearestHoursTask ? `Próx. ATA ${nearestHoursTask.taskCode}` : MISSING_OPERATIONAL_CONTEXT_LABEL}
             />
-          </div>
+          </button>
 
           {/* Cycles ring */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col items-center gap-2">
@@ -818,7 +1227,7 @@ export default function AircraftProfilePage() {
               unit="Ciclos"
               label="Ciclos N1"
               tier={cyclesTier}
-              sublabel={nearestCalTask ? `Próx. ${nearestCalTask.taskCode}` : 'Sin tarea cal.'}
+              sublabel={nearestCalTask ? `Próx. ${nearestCalTask.taskCode}` : MISSING_OPERATIONAL_CONTEXT_LABEL}
             />
           </div>
 
@@ -831,9 +1240,9 @@ export default function AircraftProfilePage() {
                 ? nearestHoursTask.hoursRemaining! < 0
                   ? 'VENCIDA'
                   : `${nearestHoursTask.hoursRemaining!.toFixed(0)} h`
-                : '—'
+                : MISSING_OPERATIONAL_CONTEXT_LABEL
             }
-            sub={nearestHoursTask?.taskTitle ?? 'Sin tareas con horas'}
+            sub={nearestHoursTask?.taskTitle ?? MISSING_OPERATIONAL_CONTEXT_LABEL}
             colorClass={
               tsnTier === 'overdue' || tsnTier === 'critical'
                 ? 'bg-rose-50 text-rose-500'
@@ -852,12 +1261,12 @@ export default function AircraftProfilePage() {
                 ? coaDaysLeft < 0
                   ? 'VENCIDO'
                   : `${coaDaysLeft}d`
-                : '—'
+                : MISSING_OPERATIONAL_CONTEXT_LABEL
             }
             sub={
               coaExpiryDate
                 ? coaExpiryDate.toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })
-                : 'Sin fecha'
+                : MISSING_OPERATIONAL_CONTEXT_LABEL
             }
             colorClass={
               coaTier === 'overdue' || coaTier === 'critical'
@@ -894,6 +1303,7 @@ export default function AircraftProfilePage() {
           plan={plan}
           aircraftId={aircraft.id}
           workRequests={workRequests}
+          workRequestStateMachine={stMachine}
           viewDensity={viewDensity}
           onOpenST={openSTFromProfile}
           onGenerateST={generateSTFromProfile}
@@ -965,6 +1375,15 @@ export default function AircraftProfilePage() {
           model={aircraft.model}
           currentHours={Number(aircraft.totalFlightHours)}
           onClose={() => setShowStatusReport(false)}
+        />
+      )}
+
+      {showUsageHistoryPanel && (
+        <AircraftUsageHistoryPanel
+          aircraftId={aircraft.id}
+          currentHours={Number(aircraft.totalFlightHours)}
+          currentCycles={Number(aircraft.totalCycles)}
+          onClose={() => setShowUsageHistoryPanel(false)}
         />
       )}
     </div>

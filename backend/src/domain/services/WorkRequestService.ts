@@ -3,8 +3,16 @@ import { PrismaAircraftRepository } from '../../infrastructure/database/reposito
 import { AppError } from '../../shared/errors/AppError';
 import { ComplianceDueDateService } from './ComplianceDueDateService';
 import { auditLogService } from './AuditLogService';
+import { WORK_REQUEST_STATE_MACHINE, assertValidTransition } from '../workflows/stateMachines';
+import {
+  workRequestExecutionEligibilityService,
+  type ExecutionEligibilityInput,
+} from './WorkRequestExecutionEligibilityService';
+import { aircraftUsageService } from './AircraftUsageService';
 
 type WorkRequestItemCategory = 'MAINTENANCE_PLAN' | 'NORMATIVE' | 'COMPONENT_INSPECTION' | 'DISCREPANCY' | 'OTHER';
+type WorkRequestItemSourceKind = 'maintenance_plan' | 'component_inspection' | 'discrepancy' | 'compliance_due' | 'manual';
+type WorkRequestExecutionType = 'maintenance_application' | 'component_replacement' | 'discrepancy_action';
 
 const AMBER_DAYS = 30;
 const AMBER_HOURS = 10;
@@ -39,10 +47,16 @@ export class WorkRequestService {
   private static async createTaskSnapshot(taskId: string, organizationId: string) {
     const task = await prisma.maintenanceTask.findFirst({ where: { id: taskId, organizationId } });
     if (!task) throw new AppError('Tarea no encontrada', 404);
+    const requiresComponentTracking = Boolean(task.applicablePartNumber) || Boolean(task.requiresInspection);
     return {
       task,
       payload: {
         taskId: task.id,
+        sourceKind: 'maintenance_plan' as WorkRequestItemSourceKind,
+        sourceId: task.id,
+        executionType: (requiresComponentTracking ? 'component_replacement' : 'maintenance_application') as WorkRequestExecutionType,
+        requiresComponentTracking,
+        componentDefinitionId: requiresComponentTracking ? task.id : null,
         category: this.classifyTask(task),
         itemCode: task.code,
         itemTitle: task.title,
@@ -180,6 +194,11 @@ export class WorkRequestService {
       taskId?: string;
       componentId?: string;
       discrepancyId?: string;
+      sourceKind?: WorkRequestItemSourceKind;
+      sourceId?: string;
+      executionType?: WorkRequestExecutionType | null;
+      requiresComponentTracking?: boolean;
+      componentDefinitionId?: string | null;
       category?: WorkRequestItemCategory;
       code?: string | null;
       title?: string;
@@ -193,6 +212,11 @@ export class WorkRequestService {
       taskId?: string | null;
       componentId?: string | null;
       discrepancyId?: string | null;
+      sourceKind: WorkRequestItemSourceKind;
+      sourceId: string;
+      executionType?: WorkRequestExecutionType | null;
+      requiresComponentTracking: boolean;
+      componentDefinitionId?: string | null;
       category: WorkRequestItemCategory;
       itemCode?: string | null;
       itemTitle: string;
@@ -209,6 +233,11 @@ export class WorkRequestService {
       if (!component) throw new AppError('Componente no encontrado para esta aeronave', 404);
       payload = {
         componentId: component.id,
+        sourceKind: 'component_inspection',
+        sourceId: component.id,
+        executionType: 'component_replacement',
+        requiresComponentTracking: true,
+        componentDefinitionId: component.id,
         category: 'COMPONENT_INSPECTION',
         itemCode: component.partNumber,
         itemTitle: `${component.description}`,
@@ -225,6 +254,11 @@ export class WorkRequestService {
       if (!discrepancy) throw new AppError('Discrepancia no encontrada para esta aeronave', 404);
       payload = {
         discrepancyId: discrepancy.id,
+        sourceKind: 'discrepancy',
+        sourceId: discrepancy.id,
+        executionType: 'discrepancy_action',
+        requiresComponentTracking: false,
+        componentDefinitionId: null,
         category: 'DISCREPANCY',
         itemCode: discrepancy.code,
         itemTitle: discrepancy.title,
@@ -232,7 +266,20 @@ export class WorkRequestService {
       };
     } else {
       if (!input.title) throw new AppError('Título requerido para ítem manual', 400);
+      const sourceKind = input.sourceKind ?? 'manual';
+      const sourceId = input.sourceId?.trim()
+        || (sourceKind === 'manual' ? `manual:${Date.now()}:${Math.random().toString(36).slice(2, 8)}` : '');
+
+      if (!sourceId) {
+        throw new AppError('sourceId es requerido para ítems no manuales sin task/component/discrepancy', 400);
+      }
+
       payload = {
+        sourceKind,
+        sourceId,
+        executionType: input.executionType ?? null,
+        requiresComponentTracking: input.requiresComponentTracking ?? false,
+        componentDefinitionId: input.componentDefinitionId ?? null,
         category: input.category ?? 'OTHER',
         itemCode: input.code ?? null,
         itemTitle: input.title,
@@ -247,6 +294,9 @@ export class WorkRequestService {
           payload.taskId ? { taskId: payload.taskId } : undefined,
           payload.componentId ? { componentId: payload.componentId } : undefined,
           payload.discrepancyId ? { discrepancyId: payload.discrepancyId } : undefined,
+          !payload.taskId && !payload.componentId && !payload.discrepancyId
+            ? { sourceKind: payload.sourceKind, sourceId: payload.sourceId }
+            : undefined,
           !payload.taskId && !payload.componentId && !payload.discrepancyId
             ? { itemTitle: payload.itemTitle, category: payload.category }
             : undefined,
@@ -271,6 +321,10 @@ export class WorkRequestService {
     await this.ensureDraft(workRequestId, organizationId);
     await prisma.workRequestItem.deleteMany({ where: { id: itemId, workRequestId } });
     return this.getById(workRequestId, organizationId);
+  }
+
+  static async getExecutionEligibility(input: ExecutionEligibilityInput) {
+    return workRequestExecutionEligibilityService.evaluate(input);
   }
 
   static async updateDraft(
@@ -349,24 +403,49 @@ export class WorkRequestService {
 
   static async send(workRequestId: string, organizationId: string, sentById: string) {
     const wr = await this.getById(workRequestId, organizationId);
-    if (wr.status !== 'DRAFT') throw new AppError('Solo se puede enviar una ST en borrador', 400);
+    assertValidTransition(WORK_REQUEST_STATE_MACHINE, wr.status, 'SENT', 'Work Request');
     if (!wr.responsibleId) throw new AppError('Debe asignar un responsable antes de enviar', 400);
     if (wr.items.length === 0) throw new AppError('La ST no tiene tareas incluidas', 400);
 
-    return prisma.workRequest.update({
+    const sent = await prisma.workRequest.update({
       where: { id: workRequestId },
       data: { status: 'SENT', sentAt: new Date(), sentById },
       include: { responsible: true, aircraft: true, items: { include: { task: true, component: true, discrepancy: true } } },
     });
+
+    const actor = await prisma.user.findFirst({
+      where: { id: sentById, organizationId },
+      select: { email: true, role: true },
+    });
+    if (!actor) throw new AppError('Usuario no encontrado para auditoría', 404);
+
+    await auditLogService.log({
+      organizationId,
+      entityType: 'WorkRequest',
+      entityId: wr.id,
+      action: 'SEND',
+      previousValue: { status: wr.status, sentAt: wr.sentAt },
+      newValue: { status: sent.status, sentAt: sent.sentAt, sentById },
+      userId: sentById,
+      userEmail: actor.email,
+      userRole: actor.role,
+      metadata: {
+        workRequestNumber: wr.number,
+        aircraftId: wr.aircraftId,
+        itemsCount: wr.items.length,
+      },
+    });
+
+    return sent;
   }
 
   static async closeAndComply(input: {
     workRequestId: string;
     organizationId: string;
     user: { id: string; name?: string; email: string; role: string };
-    aircraftHoursAtClose: number;
-    aircraftCyclesN1AtClose: number;
-    aircraftCyclesN2AtClose: number;
+    aircraftHoursAtClose?: number;
+    aircraftCyclesN1AtClose?: number;
+    aircraftCyclesN2AtClose?: number;
     closedAt?: Date;
     evidenceFileUrl: string;
     evidenceFileName: string;
@@ -385,6 +464,9 @@ export class WorkRequestService {
     }
 
     const closeDate = input.closedAt ?? new Date();
+  const usageSummary = await aircraftUsageService.getAircraftUsageSummary(wr.aircraftId, input.organizationId);
+  const masterHoursAtClose = usageSummary.totalHours;
+  const masterCyclesAtClose = usageSummary.totalCycles;
 
     const taskItems = wr.items.filter((item) => !!item.taskId && !!item.task);
     if (taskItems.length === 0) {
@@ -420,8 +502,8 @@ export class WorkRequestService {
           };
         const computed = this.dueDateService.calculate(
             taskForDue,
-          input.aircraftHoursAtClose,
-          input.aircraftCyclesN1AtClose,
+          masterHoursAtClose,
+          masterCyclesAtClose,
           closeDate,
         );
 
@@ -431,7 +513,11 @@ export class WorkRequestService {
           `Sustento ${legalRef}`,
           `Evidencia ${input.evidenceFileUrl}`,
           `Archivo ${input.evidenceFileName}`,
-          `Ciclos N2 ${input.aircraftCyclesN2AtClose}`,
+          `Master FH ${masterHoursAtClose}`,
+          `Master CYC ${masterCyclesAtClose}`,
+          input.aircraftHoursAtClose != null ? `Snapshot cliente FH ${input.aircraftHoursAtClose}` : null,
+          input.aircraftCyclesN1AtClose != null ? `Snapshot cliente CYC N1 ${input.aircraftCyclesN1AtClose}` : null,
+          input.aircraftCyclesN2AtClose != null ? `Snapshot cliente CYC N2 ${input.aircraftCyclesN2AtClose}` : null,
           input.notes?.trim() ?? null,
         ].filter(Boolean);
 
@@ -443,8 +529,8 @@ export class WorkRequestService {
             componentId: item.componentId ?? null,
             performedById: input.user.id,
             performedAt: closeDate,
-            aircraftHoursAtCompliance: input.aircraftHoursAtClose,
-            aircraftCyclesAtCompliance: input.aircraftCyclesN1AtClose,
+            aircraftHoursAtCompliance: masterHoursAtClose,
+            aircraftCyclesAtCompliance: masterCyclesAtClose,
             nextDueHours: computed.nextDueHours,
             nextDueCycles: computed.nextDueCycles,
             nextDueDate: computed.nextDueDate,
@@ -461,12 +547,23 @@ export class WorkRequestService {
         data: {
           notes: [
             wr.notes?.trim() ?? null,
-            `[CLOSE_AND_COMPLY ${closeDate.toISOString()}] FH ${input.aircraftHoursAtClose} N1 ${input.aircraftCyclesN1AtClose} N2 ${input.aircraftCyclesN2AtClose} EVIDENCE ${input.evidenceFileName}`,
+            `[CLOSE_AND_COMPLY ${closeDate.toISOString()}] MASTER_FH ${masterHoursAtClose} MASTER_CYC ${masterCyclesAtClose} SNAPSHOT_FH ${input.aircraftHoursAtClose ?? 'n/a'} SNAPSHOT_CYC_N1 ${input.aircraftCyclesN1AtClose ?? 'n/a'} SNAPSHOT_CYC_N2 ${input.aircraftCyclesN2AtClose ?? 'n/a'} EVIDENCE ${input.evidenceFileName}`,
           ].filter(Boolean).join('\n'),
         },
       });
 
       return createdRows;
+    });
+
+    await aircraftUsageService.recordUsage({
+      organizationId: input.organizationId,
+      aircraftId: wr.aircraftId,
+      date: closeDate,
+      totalHours: masterHoursAtClose,
+      totalCycles: masterCyclesAtClose,
+      source: 'ot_close',
+      notes: `Cierre ST ${wr.number} con evidencia ${input.evidenceFileName}`,
+      updateMaster: false,
     });
 
     await auditLogService.log({
@@ -487,6 +584,10 @@ export class WorkRequestService {
         message: `Usuario ${input.user.name ?? input.user.email} cerró ST ${wr.number} y generó ${created.length} cumplimientos legales`,
         evidenceFileUrl: input.evidenceFileUrl,
         evidenceFileName: input.evidenceFileName,
+        aircraftUsageMaster: {
+          totalHours: masterHoursAtClose,
+          totalCycles: masterCyclesAtClose,
+        },
       },
     });
 

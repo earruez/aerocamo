@@ -67,6 +67,21 @@ export interface CreateTemplateTaskInput {
 
 export interface UpdateTemplateTaskInput extends Partial<CreateTemplateTaskInput> {}
 
+export type AssignedPlanCategory = 'manufacturer' | 'national_dgac' | 'engine_components' | 'origin_country';
+
+export interface AircraftAssignedPlanInput {
+  category: AssignedPlanCategory;
+  templateId: string;
+}
+
+export interface AircraftAssignedPlan {
+  category: AssignedPlanCategory;
+  templateId: string;
+  templateLabel: string;
+  assignedAt?: string;
+  tasksCloned?: number;
+}
+
 export const libraryApi = {
   /**
    * List all maintenance templates
@@ -146,6 +161,30 @@ export const libraryApi = {
       `/library/templates/${templateId}/clone-to-aircraft`,
       { aircraftId }
     );
+    return data;
+  },
+
+  /**
+   * Assign one maintenance plan template per category to an aircraft.
+   */
+  async assignBundleToAircraft(
+    aircraftId: string,
+    assignments: AircraftAssignedPlanInput[],
+  ): Promise<{ message: string; assignments: AircraftAssignedPlan[] }> {
+    const { data } = await axios.post('/library/templates/assign-bundle-to-aircraft', {
+      aircraftId,
+      assignments,
+    });
+    return data;
+  },
+
+  /**
+   * Get last assigned active plans by category for an aircraft.
+   */
+  async getAircraftAssignedPlans(
+    aircraftId: string,
+  ): Promise<{ assignments: AircraftAssignedPlan[] }> {
+    const { data } = await axios.get(`/library/templates/aircraft/${aircraftId}/assigned-plans`);
     return data;
   },
 

@@ -1,7 +1,11 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { authMiddleware, requireRoles } from '../middlewares/authMiddleware';
-import { TemplateCloneService } from '../../../domain/services/TemplateCloneService';
+import {
+  TemplateCloneService,
+  type AssignPlanByCategoryInput,
+  type PlanCategory,
+} from '../../../domain/services/TemplateCloneService';
 
 const prisma = new PrismaClient();
 
@@ -37,6 +41,11 @@ interface CreateTemplateTaskInput {
 }
 
 interface UpdateTemplateTaskInput extends Partial<CreateTemplateTaskInput> {}
+
+interface AssignPlansBundleInput {
+  aircraftId: string;
+  assignments: AssignPlanByCategoryInput[];
+}
 
 // ─── GET /templates ─ Listar todas las templates ────────────────────────────────
 
@@ -421,4 +430,77 @@ templateLibraryRouter.post(
       next(err);
     }
   }
+);
+
+// ─── POST /templates/assign-bundle-to-aircraft ─ Assign one template per category ──
+
+templateLibraryRouter.post(
+  '/templates/assign-bundle-to-aircraft',
+  authMiddleware,
+  requireRoles('ADMIN', 'SUPERVISOR'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { aircraftId, assignments } = req.body as AssignPlansBundleInput;
+      if (!aircraftId) {
+        return res.status(400).json({ message: 'aircraftId is required' });
+      }
+
+      const result = await TemplateCloneService.assignBundleToAircraft({
+        organizationId: req.organizationId,
+        aircraftId,
+        assignments,
+        actor: {
+          id: req.currentUser.id,
+          email: req.currentUser.email,
+          role: req.currentUser.role,
+        },
+      });
+
+      res.json({
+        message: `Assigned ${result.assignments.length} maintenance plan categories`,
+        assignments: result.assignments,
+      });
+    } catch (err) {
+      const message = (err as Error).message;
+      if (message.includes('aircraft') || message.includes('Aircraft')) {
+        return res.status(404).json({ message });
+      }
+      if (message.includes('Forbidden') || message.includes('Unauthorized')) {
+        return res.status(403).json({ message });
+      }
+      if (message.includes('Invalid') || message.includes('repeated') || message.includes('assignments') || message.includes('inactive')) {
+        return res.status(400).json({ message });
+      }
+      next(err);
+    }
+  },
+);
+
+// ─── GET /templates/aircraft/:aircraftId/assigned-plans ─ Last assigned plan by category ──
+
+templateLibraryRouter.get(
+  '/templates/aircraft/:aircraftId/assigned-plans',
+  authMiddleware,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { aircraftId } = req.params;
+
+      const aircraft = await prisma.aircraft.findUnique({ where: { id: aircraftId } });
+      if (!aircraft) {
+        return res.status(404).json({ message: 'Aircraft not found' });
+      }
+      if (aircraft.organizationId !== req.organizationId) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+
+      const assignments = await TemplateCloneService.getAircraftAssignedPlans(
+        aircraftId,
+        req.organizationId,
+      );
+
+      res.json({ assignments });
+    } catch (err) {
+      next(err);
+    }
+  },
 );

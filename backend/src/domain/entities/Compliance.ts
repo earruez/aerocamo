@@ -1,4 +1,5 @@
 export type ComplianceStatus = 'COMPLETED' | 'DEFERRED' | 'OVERDUE' | 'CANCELLED';
+export type ComplianceApplicationType = 'baseline' | 'application' | 'replacement_start';
 
 export interface Compliance {
   id: string;
@@ -15,6 +16,8 @@ export interface Compliance {
   nextDueCycles: number | null;
   nextDueDate: Date | null;
   workOrderNumber: string | null;
+  applicationType: ComplianceApplicationType;
+  isInitial: boolean;
   status: ComplianceStatus;
   deferralReference: string | null;
   deferralExpiresAt: Date | null;
@@ -37,6 +40,8 @@ export type CreateComplianceInput = Pick<
   | 'nextDueCycles'
   | 'nextDueDate'
   | 'workOrderNumber'
+  | 'applicationType'
+  | 'isInitial'
   | 'notes'
   | 'deferralReference'
   | 'deferralExpiresAt'

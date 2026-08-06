@@ -13,6 +13,7 @@ const recordSchema = z.object({
   nextDueDate: z.coerce.date().optional().nullable(),
   inspectedById: z.string().uuid().optional().nullable(),
   workOrderNumber: z.string().max(50).optional().nullable(),
+  applicationType: z.enum(['application', 'replacement_start']).optional(),
   notes: z.string().optional().nullable(),
   deferralReference: z.string().max(100).optional().nullable(),
   deferralExpiresAt: z.coerce.date().optional().nullable(),

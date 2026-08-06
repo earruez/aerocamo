@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { WorkOrderStatus } from '@prisma/client';
 import { workOrderService } from '../../../domain/services/WorkOrderService';
 import { ValidationError } from '../../../shared/errors/AppError';
+import { WORK_ORDER_STATE_MACHINE } from '../../../domain/workflows/stateMachines';
 
 const STATUSES = ['DRAFT', 'OPEN', 'IN_PROGRESS', 'QUALITY', 'CLOSED'] as const;
 
@@ -40,6 +41,12 @@ const completeTaskSchema = z.object({
 });
 
 export class WorkOrderController {
+
+  stateMachine = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      res.json({ status: 'success', data: WORK_ORDER_STATE_MACHINE });
+    } catch (err) { next(err); }
+  };
 
   // ── List ───────────────────────────────────────────────────────────────────
   list = async (req: Request, res: Response, next: NextFunction): Promise<void> => {

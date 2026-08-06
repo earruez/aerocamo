@@ -4,6 +4,7 @@ import { WorkRequestService } from '../../../domain/services/WorkRequestService'
 import { WorkRequestDocumentService } from '../../../domain/services/WorkRequestDocumentService';
 import { EmailService } from '../../../domain/services/EmailService';
 import { FileStorageService } from '../../../domain/services/FileStorageService';
+import { WORK_REQUEST_STATE_MACHINE } from '../../../domain/workflows/stateMachines';
 
 const createSchema = z.object({
   aircraftId: z.string().uuid(),
@@ -19,6 +20,11 @@ const addItemSchema = z.object({
   taskId: z.string().uuid().optional(),
   componentId: z.string().uuid().optional(),
   discrepancyId: z.string().uuid().optional(),
+  sourceKind: z.enum(['maintenance_plan', 'component_inspection', 'discrepancy', 'compliance_due', 'manual']).optional(),
+  sourceId: z.string().min(1).max(100).optional(),
+  executionType: z.enum(['maintenance_application', 'component_replacement', 'discrepancy_action']).nullable().optional(),
+  requiresComponentTracking: z.boolean().optional(),
+  componentDefinitionId: z.string().uuid().nullable().optional(),
   category: z.enum(['MAINTENANCE_PLAN', 'NORMATIVE', 'COMPONENT_INSPECTION', 'DISCREPANCY', 'OTHER']).optional(),
   code: z.string().max(100).nullable().optional(),
   title: z.string().max(255).optional(),
@@ -27,16 +33,36 @@ const addItemSchema = z.object({
 });
 const emailSchema = z.object({ email: z.string().email().optional() });
 const closeAndComplySchema = z.object({
-  aircraftHoursAtClose: z.coerce.number().nonnegative(),
-  aircraftCyclesN1AtClose: z.coerce.number().int().nonnegative(),
-  aircraftCyclesN2AtClose: z.coerce.number().int().nonnegative(),
+  aircraftHoursAtClose: z.coerce.number().nonnegative().optional(),
+  aircraftCyclesN1AtClose: z.coerce.number().int().nonnegative().optional(),
+  aircraftCyclesN2AtClose: z.coerce.number().int().nonnegative().optional(),
   closedAt: z.coerce.date().optional(),
   notes: z.string().max(3000).optional(),
   evidenceUrl: z.string().url().optional(),
   evidenceFileName: z.string().max(255).optional(),
 });
 
+const executionEligibilityQuerySchema = z.object({
+  sourceKind: z.enum(['maintenance_plan', 'component_inspection', 'discrepancy', 'compliance_due', 'manual']),
+  sourceId: z.string().min(1).max(100),
+  executionType: z.enum(['maintenance_application', 'component_replacement', 'discrepancy_action']),
+  requiredComponentSourceId: z.string().min(1).max(100).optional(),
+});
+
 export class WorkRequestController {
+  static async stateMachine(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.json({ status: 'success', data: WORK_REQUEST_STATE_MACHINE });
+    } catch (err) { next(err); }
+  }
+
+  static async send(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const data = await WorkRequestService.send(req.params.id, req.organizationId, req.currentUser.id);
+      res.json({ status: 'success', data });
+    } catch (err) { next(err); }
+  }
+
   static async createDraft(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { aircraftId, taskIds } = createSchema.parse(req.body);
@@ -95,6 +121,21 @@ export class WorkRequestController {
     } catch (err) { next(err); }
   }
 
+  static async executionEligibility(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const query = executionEligibilityQuerySchema.parse(req.query);
+      const data = await WorkRequestService.getExecutionEligibility({
+        organizationId: req.organizationId,
+        aircraftId: req.params.aircraftId,
+        sourceKind: query.sourceKind,
+        sourceId: query.sourceId,
+        executionType: query.executionType,
+        requiredComponentSourceId: query.requiredComponentSourceId,
+      });
+      res.json({ status: 'success', data });
+    } catch (err) { next(err); }
+  }
+
   static async listResponsibles(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const data = await WorkRequestService.listResponsibles(req.organizationId);
@@ -115,7 +156,7 @@ export class WorkRequestController {
   static async sendEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { email } = emailSchema.parse(req.body);
-      const wr = await WorkRequestService.send(req.params.id, req.organizationId, req.currentUser.id);
+      const wr = await WorkRequestService.getById(req.params.id, req.organizationId);
       const pdf = await WorkRequestDocumentService.generateSTDocument(wr.id);
       const pdfPath = await WorkRequestDocumentService.savePdfToFile(pdf, `${wr.number}.pdf`);
 
@@ -132,7 +173,7 @@ export class WorkRequestController {
         pdfAttachmentPath: pdfPath,
       });
 
-      res.json({ status: 'success', message: 'Solicitud enviada por correo', data: wr });
+      res.json({ status: 'success', message: 'Correo enviado', data: { workRequestId: wr.id } });
     } catch (err) { next(err); }
   }
 

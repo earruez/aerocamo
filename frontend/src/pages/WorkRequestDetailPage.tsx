@@ -3,19 +3,19 @@ import { RegisterOTModal } from '../components/workRequests/RegisterOTModal';
 import { useNavigate } from 'react-router-dom';
 import { saveAs } from 'file-saver';
 import { ArrowLeft, FileDown, History, MessageSquareText, Paperclip, Save, Send, Wrench } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useWorkRequestStore } from '../store/workRequestStore';
 import { WorkRequestBadge } from '../components/workRequests/WorkRequestBadges';
 import { WorkRequestAttachments } from '../components/workRequests/WorkRequestAttachments';
 import { WorkRequestItemForm } from '../components/workRequests/WorkRequestItemForm';
+import { workRequestsApi } from '../api/workRequests.api';
+import { adaptApiWorkRequest, upsertWorkRequestCache } from '../shared/workRequestApiAdapter';
 import {
-  canEditWorkRequest,
-  canSendToTechnicalOffice,
-  getVisibleSTStatus,
-  getVisibleSTStatusLabel,
   WORK_REQUEST_ITEM_STATUS_LABELS,
-  WorkRequestStatus,
   WorkRequestItem,
 } from '../shared/workRequestTypes';
+import { canTransitionTo, getVisibleState, getVisibleStateLabel } from '../shared/workflowVisibleState';
+import { useWorkRequestStateMachine } from '../shared/workflowStateMachineQueries';
 
 const SOURCE_LABELS: Record<string, string> = {
   maintenance_plan: 'Plan de mantenimiento',
@@ -45,46 +45,63 @@ export default function WorkRequestDetailPage() {
   const setFilterAircraftId = useWorkRequestStore(s => s.setFilterAircraftId);
   const setFilterStatus = useWorkRequestStore(s => s.setFilterStatus);
   const setSearchText = useWorkRequestStore(s => s.setSearchText);
-  const updateWorkRequest = useWorkRequestStore(s => s.updateWorkRequest);
-  const addItemToWorkRequest = useWorkRequestStore(s => s.addItemToWorkRequest);
-  const removeItemFromWorkRequest = useWorkRequestStore(s => s.removeItemFromWorkRequest);
+  const setWorkRequests = useWorkRequestStore(s => s.setWorkRequests);
   const workRequest = useWorkRequestStore(s => s.workRequests.find(w => w.id === selectedId));
   const historyRef = useRef<HTMLDivElement | null>(null);
+  const { data: workRequestStateMachine } = useWorkRequestStateMachine();
   const [notice, setNotice] = useState<string | null>(null);
   const [showRegisterOT, setShowRegisterOT] = useState(false);
   const [showAddItemForm, setShowAddItemForm] = useState(false);
+  const [pendingOtData, setPendingOtData] = useState<{ otNumber: string; receivedAt: string; file?: File | null; notes: string } | null>(null);
+
+  const syncWorkRequest = (nextApiWorkRequest: Awaited<ReturnType<typeof workRequestsApi.getById>>) => {
+    const adapted = adaptApiWorkRequest(nextApiWorkRequest);
+    setWorkRequests(upsertWorkRequestCache(useWorkRequestStore.getState().workRequests, adapted));
+    return adapted;
+  };
 
   const visibleStatus = useMemo(() => (
-    workRequest ? getVisibleSTStatus(workRequest.status) : 'borrador'
-  ), [workRequest]);
+    workRequest
+      ? workRequestStateMachine
+        ? (getVisibleState(workRequestStateMachine, workRequest.status) === 'draft'
+            ? 'borrador'
+            : getVisibleState(workRequestStateMachine, workRequest.status) === 'cancelled'
+              ? 'cancelada'
+              : 'en_proceso')
+        : 'en_proceso'
+      : 'borrador'
+  ), [workRequest, workRequestStateMachine]);
+
+  const canEditCurrent = useMemo(() => {
+    if (!workRequest) return false;
+    if (!workRequestStateMachine) return false;
+    return getVisibleState(workRequestStateMachine, workRequest.status) === 'draft';
+  }, [workRequest, workRequestStateMachine]);
+
+  const canSendCurrent = useMemo(() => {
+    if (!workRequest) return false;
+    if (!workRequestStateMachine) return false;
+    return canTransitionTo(workRequestStateMachine, workRequest.status, 'SENT');
+  }, [workRequest, workRequestStateMachine]);
+
+  const visibleStatusLabel = useMemo(() => {
+    if (!workRequest) return '';
+    return workRequestStateMachine
+      ? getVisibleStateLabel(workRequestStateMachine, workRequest.status)
+      : workRequest.status;
+  }, [workRequest, workRequestStateMachine]);
 
   const timeline = useMemo(() => {
     if (!workRequest) return [] as Array<{ label: string; done: boolean; date?: string }>;
-
-    const inProcessDate = workRequest.statusHistory.find((h) => (
-      h.toStatus === WorkRequestStatus.IN_REVIEW
-      || h.toStatus === WorkRequestStatus.OBSERVED
-      || h.toStatus === WorkRequestStatus.APPROVED
-      || h.toStatus === WorkRequestStatus.REJECTED
-    ))?.changedAt;
 
     return [
       { label: 'Creada', done: true, date: workRequest.createdAt },
       {
         label: 'Enviada',
-        done: Boolean(workRequest.sentAt) || visibleStatus === 'en_proceso' || visibleStatus === 'cerrada',
+        done: Boolean(workRequest.sentAt) || visibleStatus === 'en_proceso',
         date: workRequest.sentAt,
       },
-      {
-        label: 'En proceso',
-        done: visibleStatus === 'en_proceso' || visibleStatus === 'cerrada',
-        date: inProcessDate,
-      },
-      {
-        label: 'Cerrada',
-        done: visibleStatus === 'cerrada',
-        date: workRequest.closedAt,
-      },
+      { label: 'Cancelada', done: visibleStatus === 'cancelada', date: workRequest.closedAt },
     ];
   }, [workRequest, visibleStatus]);
 
@@ -108,42 +125,31 @@ export default function WorkRequestDetailPage() {
   const headingClass = viewDensity === 'compact' ? 'text-sm font-semibold text-slate-900 mb-2' : 'text-base font-semibold text-slate-900 mb-3';
   const paragraphClass = viewDensity === 'compact' ? 'text-xs text-slate-600' : 'text-sm text-slate-600';
 
-  const handleSaveDraft = () => {
-    if (!workRequest || !canEditWorkRequest(workRequest.status)) return;
-    updateWorkRequest({
-      ...workRequest,
-      status: WorkRequestStatus.DRAFT,
-      updatedAt: new Date().toISOString(),
-    });
-    setNotice('Borrador guardado.');
+  const handleSaveDraft = async () => {
+    if (!workRequest || !canEditCurrent) return;
+    try {
+      const updated = await workRequestsApi.updateDraft(workRequest.id, { notes: workRequest.generalNotes ?? null });
+      syncWorkRequest(updated);
+      setNotice('Borrador guardado.');
+    } catch {
+      toast.error('No se pudo guardar el borrador');
+    }
   };
 
-  const handleSend = () => {
-    if (!workRequest || !canSendToTechnicalOffice(workRequest.status)) return;
+  const handleSend = async () => {
+    if (!workRequest || !canSendCurrent) return;
     if (workRequest.items.length === 0) {
       setNotice('Agrega al menos un item antes de enviar.');
       return;
     }
 
-    updateWorkRequest({
-      ...workRequest,
-      status: WorkRequestStatus.SENT,
-      sentAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      statusHistory: [
-        ...workRequest.statusHistory,
-        {
-          id: `hist-${Math.random().toString(36).slice(2, 9)}`,
-          workRequestId: workRequest.id,
-          fromStatus: workRequest.status,
-          toStatus: WorkRequestStatus.SENT,
-          changedByUserId: 'user-001',
-          changedAt: new Date().toISOString(),
-          comment: 'Enviada a Oficina Tecnica',
-        },
-      ],
-    });
-    setNotice('Solicitud enviada a Oficina Tecnica.');
+    try {
+      const sent = await workRequestsApi.send(workRequest.id);
+      syncWorkRequest(sent);
+      setNotice('Solicitud enviada a Oficina Tecnica.');
+    } catch {
+      toast.error('No se pudo enviar la solicitud');
+    }
   };
 
   const handleDownloadPdf = () => {
@@ -154,7 +160,7 @@ export default function WorkRequestDetailPage() {
       `N° ST: ${workRequest.folio}`,
       `Aeronave: ${workRequest.aircraftId}`,
       `Prioridad: ${workRequest.priority}`,
-      `Estado: ${getVisibleSTStatusLabel(workRequest.status)}`,
+      `Estado: ${visibleStatusLabel}`,
       '',
       'Items:',
       ...workRequest.items.map((item) => `- ${item.title} (${item.ataCode})`),
@@ -180,7 +186,7 @@ export default function WorkRequestDetailPage() {
 
   if (!workRequest) return <div className="p-8 text-sm text-slate-500">Seleccione una ST desde la bandeja.</div>;
 
-  const handleAddItem = (item: Omit<WorkRequestItem, 'id' | 'createdAt' | 'updatedAt'>) => {
+  const handleAddItem = async (item: Omit<WorkRequestItem, 'id' | 'createdAt' | 'updatedAt'>) => {
     const openDuplicate = useWorkRequestStore.getState().itemAlreadyInOpenWorkRequest(
       item.sourceKind,
       item.sourceId,
@@ -192,83 +198,68 @@ export default function WorkRequestDetailPage() {
       return;
     }
 
-    addItemToWorkRequest(workRequest.id, {
-      sourceKind: item.sourceKind,
-      sourceId: item.sourceId,
-      ataCode: item.ataCode,
-      title: item.title,
-      description: item.description,
-      priority: item.priority,
-      aircraftHoursAtRequest: item.aircraftHoursAtRequest,
-      aircraftCyclesAtRequest: item.aircraftCyclesAtRequest,
-      referenceCode: item.referenceCode,
-      regulatoryBasis: item.regulatoryBasis,
-      itemStatus: item.itemStatus,
-    });
+    try {
+      const payload = item.sourceKind === 'maintenance_plan'
+        ? { taskId: item.sourceId, category: 'MAINTENANCE_PLAN' as const }
+        : item.sourceKind === 'component_inspection'
+          ? { componentId: item.sourceId, category: 'COMPONENT_INSPECTION' as const }
+          : item.sourceKind === 'discrepancy'
+            ? { discrepancyId: item.sourceId, category: 'DISCREPANCY' as const }
+            : {
+                category: 'OTHER' as const,
+                code: item.referenceCode ?? item.ataCode,
+                title: item.title,
+                description: item.description,
+              };
 
-    setShowAddItemForm(false);
-    setNotice('Item agregado a la ST.');
+      const updated = await workRequestsApi.addItem(workRequest.id, payload);
+      syncWorkRequest(updated);
+      setShowAddItemForm(false);
+      setNotice('Item agregado a la ST.');
+    } catch {
+      toast.error('No se pudo agregar el item');
+    }
   };
 
   // Determinar si la ST ya tiene OT cargada
-  const hasOT = Boolean(workRequest?.otReference && workRequest?.returnedSignedOtUrl);
+  const hasOT = Boolean(
+    (workRequest?.otReference && workRequest?.otReceivedAt)
+    || pendingOtData,
+  );
 
   // Handler para guardar datos de OT
   const handleRegisterOT = (data: { otNumber: string; receivedAt: string; file?: File | null; notes: string }) => {
-    if (!workRequest) return;
-    let fileUrl = workRequest.returnedSignedOtUrl || '';
-    if (data.file) {
-      fileUrl = URL.createObjectURL(data.file);
-    }
-    updateWorkRequest({
-      ...workRequest,
-      otReference: data.otNumber,
-      returnedSignedOtUrl: fileUrl,
-      otReceivedAt: data.receivedAt,
-      otNotes: data.notes,
-      updatedAt: new Date().toISOString(),
-      status: WorkRequestStatus.IN_REVIEW, // Mantener en proceso pero con OT cargada
-      statusHistory: [
-        ...workRequest.statusHistory,
-        {
-          id: `hist-${Math.random().toString(36).slice(2, 9)}`,
-          workRequestId: workRequest.id,
-          fromStatus: workRequest.status,
-          toStatus: WorkRequestStatus.IN_REVIEW,
-          changedByUserId: 'user-001',
-          changedAt: new Date().toISOString(),
-          comment: `Se registró OT recibida: ${data.otNumber}`,
-        },
-      ],
-    });
+    setPendingOtData(data);
     setShowRegisterOT(false);
     setNotice('OT registrada correctamente. Ahora puedes cerrar la solicitud.');
   };
 
   // Handler para cerrar solicitud (solo habilitado si hay OT cargada)
   const canClose = hasOT;
-  const handleCloseRequest = () => {
+  const handleCloseRequest = async () => {
     if (!workRequest || !canClose) return;
-    updateWorkRequest({
-      ...workRequest,
-      status: WorkRequestStatus.CLOSED,
-      closedAt: new Date().toISOString(),
-      closedByUserId: 'user-001',
-      updatedAt: new Date().toISOString(),
-      statusHistory: [
-        ...workRequest.statusHistory,
-        {
-          id: `hist-${Math.random().toString(36).slice(2, 9)}`,
-          workRequestId: workRequest.id,
-          fromStatus: workRequest.status,
-          toStatus: WorkRequestStatus.CLOSED,
-          changedByUserId: 'user-001',
-          changedAt: new Date().toISOString(),
-          comment: 'Solicitud cerrada por usuario',
-        },
-      ],
-    });
-    setNotice('Solicitud cerrada correctamente.');
+    try {
+      const aircraftHoursAtClose = Math.max(0, ...workRequest.items.map((it) => it.aircraftHoursAtRequest));
+      const aircraftCyclesAtClose = Math.max(0, ...workRequest.items.map((it) => it.aircraftCyclesAtRequest));
+
+      await workRequestsApi.closeAndComply(workRequest.id, {
+        aircraftHoursAtClose,
+        aircraftCyclesN1AtClose: aircraftCyclesAtClose,
+        aircraftCyclesN2AtClose: aircraftCyclesAtClose,
+        notes: pendingOtData
+          ? `OT: ${pendingOtData.otNumber}. ${pendingOtData.notes}`
+          : 'Cierre desde detalle de ST',
+        closedAt: pendingOtData?.receivedAt,
+        evidenceFile: pendingOtData?.file ?? undefined,
+      });
+
+      const refreshed = await workRequestsApi.getById(workRequest.id);
+      syncWorkRequest(refreshed);
+      setPendingOtData(null);
+      setNotice('Solicitud cerrada correctamente.');
+    } catch {
+      toast.error('No se pudo cerrar la solicitud');
+    }
   };
 
   return (
@@ -295,7 +286,7 @@ export default function WorkRequestDetailPage() {
 
           <div className="ml-auto rounded-xl border border-slate-200 bg-white/90 px-3 py-2">
             <p className="text-[10px] uppercase tracking-wider font-semibold text-slate-400">Estado actual</p>
-            <p className="text-sm font-semibold text-slate-700">{getVisibleSTStatusLabel(workRequest.status)}</p>
+            <p className="text-sm font-semibold text-slate-700">{visibleStatusLabel}</p>
           </div>
         </div>
 
@@ -320,15 +311,15 @@ export default function WorkRequestDetailPage() {
             <button
               className="btn-secondary"
               onClick={() => setShowAddItemForm((v) => !v)}
-              disabled={!canEditWorkRequest(workRequest.status)}
+              disabled={!canEditCurrent}
             >
               {showAddItemForm ? 'Ocultar formulario' : 'Agregar item'}
             </button>
-            <button className="btn-primary" onClick={handleSend} disabled={!canSendToTechnicalOffice(workRequest.status)}>
+            <button className="btn-primary" onClick={handleSend} disabled={!canSendCurrent}>
               <Send size={14} />
               Enviar a Oficina Tecnica
             </button>
-            <button className="btn-secondary" onClick={handleSaveDraft} disabled={!canEditWorkRequest(workRequest.status)}>
+            <button className="btn-secondary" onClick={handleSaveDraft} disabled={!canEditCurrent}>
               <Save size={14} />
               Guardar borrador
             </button>
@@ -349,7 +340,7 @@ export default function WorkRequestDetailPage() {
               </button>
             )}
           </div>
-          {showAddItemForm && canEditWorkRequest(workRequest.status) && (
+          {showAddItemForm && canEditCurrent && (
             <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
               <p className="text-xs font-semibold text-slate-600 mb-2">Agregar item a esta ST</p>
               <div className="mb-3 flex flex-wrap gap-2">
@@ -414,13 +405,20 @@ export default function WorkRequestDetailPage() {
                 <div className={`${viewDensity === 'compact' ? 'mt-1.5' : 'mt-2'} text-xs text-slate-500`}>
                   Horas/Ciclos al momento: {item.aircraftHoursAtRequest} / {item.aircraftCyclesAtRequest}
                 </div>
-                {canEditWorkRequest(workRequest.status) && (
+                {canEditCurrent && (
                   <div className="mt-2">
                     <button
                       className="btn-xs btn-outline"
                       onClick={() => {
-                        removeItemFromWorkRequest(workRequest.id, item.id);
-                        setNotice('Item eliminado de la ST.');
+                        void (async () => {
+                          try {
+                            const updated = await workRequestsApi.removeItem(workRequest.id, item.id);
+                            syncWorkRequest(updated);
+                            setNotice('Item eliminado de la ST.');
+                          } catch {
+                            toast.error('No se pudo eliminar el item');
+                          }
+                        })();
                       }}
                     >
                       Eliminar item

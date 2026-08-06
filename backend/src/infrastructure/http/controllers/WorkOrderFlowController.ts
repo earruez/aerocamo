@@ -2,10 +2,13 @@ import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../../../shared/errors/AppError';
 import { WorkOrderAutoGeneratorService } from '../../../domain/services/WorkOrderAutoGeneratorService';
 import { WorkOrderAssignmentService } from '../../../domain/services/WorkOrderAssignmentService';
+import { WorkOrderService } from '../../../domain/services/WorkOrderService';
 import { PDFGenerationService } from '../../../domain/services/PDFGenerationService';
 import { EmailService } from '../../../domain/services/EmailService';
 import { FileStorageService } from '../../../domain/services/FileStorageService';
 import { prisma } from '../../database/prisma.client';
+
+const workOrderService = new WorkOrderService();
 
 export class WorkOrderController {
   static async getPendingAssignmentWorkOrders(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -105,7 +108,10 @@ export class WorkOrderController {
       const { id } = req.params;
       const organizationId = req.currentUser?.organizationId;
       const userId = req.currentUser?.id;
+      const userRole = req.currentUser?.role;
+      const userEmail = req.currentUser?.email;
       if (!organizationId || !userId) throw new AppError('Authentication context required', 401);
+      if (!userRole || !userEmail) throw new AppError('Authentication context incomplete', 401);
 
       const workOrder = await prisma.workOrder.findUnique({
         where: { id },
@@ -117,15 +123,16 @@ export class WorkOrderController {
         throw new AppError(`Cannot close: WO must be EVIDENCE_UPLOADED (currently: ${workOrder.assignmentStatus})`, 400);
       }
 
+      await workOrderService.transition(id, 'CLOSED', organizationId, {
+        id: userId,
+        email: userEmail,
+        role: userRole,
+      });
+
       const closedWO = await prisma.workOrder.update({
         where: { id },
         data: {
           assignmentStatus: 'CLOSED',
-          status: 'CLOSED',
-          closedAt: new Date(),
-          closedById: userId,
-          aircraftHoursAtClose: workOrder.aircraft.totalFlightHours,
-          aircraftCyclesAtClose: workOrder.aircraft.totalCycles,
         },
       });
 

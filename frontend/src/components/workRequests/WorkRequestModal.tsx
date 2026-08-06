@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { CheckCircle2, FileWarning, Mail, Plus, Search, Settings2, ShieldAlert, Trash2, Wrench, X } from 'lucide-react';
+import { CheckCircle2, FileWarning, Plus, Search, Settings2, ShieldAlert, Trash2, Wrench, X } from 'lucide-react';
 import { workRequestsApi } from '@api/workRequests.api';
 
 interface WorkRequestModalProps {
@@ -12,7 +12,6 @@ interface WorkRequestModalProps {
 export function WorkRequestModal({ aircraftId, onClose }: WorkRequestModalProps) {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
-  const [emailTarget, setEmailTarget] = useState('');
   const [manualTitle, setManualTitle] = useState('');
   const [manualCode, setManualCode] = useState('');
   const [manualDescription, setManualDescription] = useState('');
@@ -67,12 +66,12 @@ export function WorkRequestModal({ aircraftId, onClose }: WorkRequestModalProps)
     onSuccess: () => qc.invalidateQueries({ queryKey: ['work-requests-by-aircraft', aircraftId] }),
   });
 
-  const sendEmailMutation = useMutation({
-    mutationFn: () => workRequestsApi.sendEmail(draft!.id, emailTarget || undefined),
+  const sendMutation = useMutation({
+    mutationFn: () => workRequestsApi.send(draft!.id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['work-requests-by-aircraft', aircraftId] });
       qc.invalidateQueries({ queryKey: ['maintenance-plan', aircraftId] });
-      toast.success('ST enviada por correo');
+      toast.success('ST enviada');
     },
     onError: () => toast.error('No se pudo enviar la ST'),
   });
@@ -366,18 +365,12 @@ export function WorkRequestModal({ aircraftId, onClose }: WorkRequestModalProps)
                 >
                   Generar PDF
                 </a>
-                <input
-                  value={emailTarget}
-                  onChange={(e) => setEmailTarget(e.target.value)}
-                  className="input"
-                  placeholder="Email destino (opcional)"
-                />
                 <button
-                  onClick={() => sendEmailMutation.mutate()}
-                  disabled={draft.status !== 'DRAFT' || sendEmailMutation.isPending}
+                  onClick={() => sendMutation.mutate()}
+                  disabled={draft.status !== 'DRAFT' || sendMutation.isPending}
                   className="btn-primary flex w-full items-center justify-center gap-1.5"
                 >
-                  <Mail size={14} /> Enviar por Correo
+                  Enviar ST
                 </button>
 
                 {draft.status === 'SENT' && (
