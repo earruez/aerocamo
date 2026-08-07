@@ -54,6 +54,13 @@ export const complianceApi = {
     return data.data;
   },
 
+  historyForTask: async (aircraftId: string, taskId: string): Promise<Compliance[]> => {
+    const { data } = await apiClient.get<{ status: string; data: Compliance[] }>(
+      `/compliances/aircraft/${aircraftId}/task/${taskId}/history`,
+    );
+    return data.data ?? [];
+  },
+
   record: async (input: RecordComplianceInput): Promise<Compliance> => {
     const { data } = await apiClient.post<{ status: string; data: Compliance }>('/compliances', input);
     return data.data;

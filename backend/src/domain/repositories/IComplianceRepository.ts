@@ -20,6 +20,13 @@ export interface IComplianceRepository {
     organizationId: string,
   ): Promise<Compliance[]>;
 
+  /** Historial completo de una tarea en una aeronave, del más reciente al más antiguo */
+  findHistoryForTask(
+    aircraftId: string,
+    taskId: string,
+    organizationId: string,
+  ): Promise<Compliance[]>;
+
   findAll(
     organizationId: string,
     filters?: ComplianceFilters,

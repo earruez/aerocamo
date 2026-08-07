@@ -107,6 +107,17 @@ enum ComplianceStatus {
   @@map("compliance_status")
 }
 
+enum ComplianceRecurrence {
+  REPETITIVE        // Vuelve a vencer tras cumplirse (Access REP)
+  ONE_TIME          // Cumplimiento único (Access UNA VEZ / UNICA VEZ)
+  ON_CONDITION      // Según condición (Access COND / A REQ.)
+  ON_EVENT          // Ante un evento (Access AL EVENTO)
+  PERMANENT         // Permanente / abierta (Access PERM / OPEN)
+  UNSPECIFIED       // Sin recurrencia declarada en el origen
+
+  @@map("compliance_recurrence")
+}
+
 enum EquipmentScope {
   AIRCRAFT          // Célula / estructura de la aeronave
   ENGINE            // Motor y sus accesorios
@@ -590,6 +601,10 @@ model MaintenanceTask {
   /// Célula de la aeronave vs motor: separa los controles que en Access viven en
   /// las vistas COMP (motor) y COMP1 (aeronave).
   equipmentScope EquipmentScope  @default(AIRCRAFT)
+
+  /// Recurrencia declarada en el origen: separa las AD repetitivas de las de
+  /// cumplimiento único.
+  complianceRecurrence ComplianceRecurrence @default(UNSPECIFIED)
 
   title          String          @db.VarChar(255)
   description    String

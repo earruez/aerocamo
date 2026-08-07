@@ -18,6 +18,23 @@ export class PrismaComplianceRepository implements IComplianceRepository {
    * Returns the most recent compliance record per task for an aircraft.
    * Uses a DISTINCT ON query via raw SQL to guarantee only the latest per task.
    */
+  async findHistoryForTask(
+    aircraftId: string,
+    taskId: string,
+    organizationId: string,
+  ): Promise<Compliance[]> {
+    const rows = await prisma.compliance.findMany({
+      where: { aircraftId, taskId, organizationId },
+      orderBy: { performedAt: 'desc' },
+      include: {
+        performedBy: { select: { id: true, name: true } },
+        inspectedBy: { select: { id: true, name: true } },
+        component: { select: { id: true, partNumber: true, serialNumber: true } },
+      },
+    });
+    return rows as unknown as Compliance[];
+  }
+
   async findLatestPerTask(
     aircraftId: string,
     organizationId: string,

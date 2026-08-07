@@ -13,6 +13,7 @@ export interface MaintenancePlanItem {
   executionType: MaintenanceExecutionType;
   requiresComponentTracking: boolean;
   equipmentScope: 'AIRCRAFT' | 'ENGINE';
+  complianceRecurrence: 'REPETITIVE' | 'ONE_TIME' | 'ON_CONDITION' | 'ON_EVENT' | 'PERMANENT' | 'UNSPECIFIED';
   componentDefinitionId: string | null;
   intervalType: string;
   intervalHours: number | null;

@@ -3,6 +3,14 @@ import { apiClient } from './client';
 export type PlanItemStatus = 'OVERDUE' | 'DUE_SOON' | 'OK' | 'NEVER_PERFORMED';
 export type DueByType = 'HOURS' | 'CALENDAR';
 export type MaintenanceExecutionType = 'maintenance' | 'component_replacement';
+export type ComplianceRecurrence =
+  | 'REPETITIVE'
+  | 'ONE_TIME'
+  | 'ON_CONDITION'
+  | 'ON_EVENT'
+  | 'PERMANENT'
+  | 'UNSPECIFIED';
+
 export type ApplicationType = 'baseline' | 'application' | 'replacement_start';
 
 export interface MaintenancePlanItem {
@@ -11,6 +19,8 @@ export interface MaintenancePlanItem {
   taskTitle: string;
   executionType: MaintenanceExecutionType;
   requiresComponentTracking: boolean;
+  equipmentScope: 'AIRCRAFT' | 'ENGINE';
+  complianceRecurrence: ComplianceRecurrence;
   componentDefinitionId: string | null;
   intervalType: string;
   intervalHours: number | null;

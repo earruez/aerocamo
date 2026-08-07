@@ -141,6 +141,19 @@ function resolveIntervalType(item: { limh: number | null; limt: number | null; l
   return 'ON_CONDITION';
 }
 
+type ComplianceRecurrenceValue = 'REPETITIVE' | 'ONE_TIME' | 'ON_CONDITION' | 'ON_EVENT' | 'PERMANENT' | 'UNSPECIFIED';
+
+/** Traduce la columna REP del Access a la recurrencia del modelo. */
+function mapRecurrence(rep: string): ComplianceRecurrenceValue {
+  const value = rep.trim().toUpperCase();
+  if (value === 'REP') return 'REPETITIVE';
+  if (value === 'UNA VEZ' || value === 'UNICA VEZ') return 'ONE_TIME';
+  if (value === 'COND' || value === 'A REQ.' || value === 'A REQ') return 'ON_CONDITION';
+  if (value === 'AL EVENTO') return 'ON_EVENT';
+  if (value === 'PERM' || value === 'PERMANENTE' || value === 'OPEN') return 'PERMANENT';
+  return 'UNSPECIFIED';
+}
+
 function slugModel(modelo: string): string {
   return modelo.replace(/[^A-Za-z0-9]+/g, '').toUpperCase().slice(0, 12) || 'NA';
 }
@@ -464,6 +477,7 @@ async function main(): Promise<void> {
       // EQ.TIP distingue célula (AN) de motor (EN1/EN2): es el criterio del propio
       // Access para separar sus vistas COMP1 / COMP.
       equipmentScope: representative.eq.tip.startsWith('EN') ? 'ENGINE' as const : 'AIRCRAFT' as const,
+      complianceRecurrence: mapRecurrence(representative.rep),
       title: truncate(group.title, 255),
       description: descriptionParts.join('\n'),
       intervalType,

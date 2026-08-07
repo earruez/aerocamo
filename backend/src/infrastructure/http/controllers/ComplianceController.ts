@@ -43,4 +43,16 @@ export class ComplianceController {
       res.status(200).json({ status: 'success', data });
     } catch (err) { next(err); }
   };
+
+  /** Historial completo de una tarea en una aeronave, del más reciente al más antiguo. */
+  historyForTask = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await this.getUseCase.getHistoryForTask(
+        req.params.aircraftId,
+        req.params.taskId,
+        req.organizationId,
+      );
+      res.status(200).json({ status: 'success', data });
+    } catch (err) { next(err); }
+  };
 }

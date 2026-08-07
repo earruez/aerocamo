@@ -23,6 +23,7 @@ import {
 type MaintenanceType = 'HORARIO' | 'CALENDARIO' | 'MIXTO';
 type MaintenanceTypeTab = 'ALL' | MaintenanceType;
 type NormativeTab = 'ALL' | 'FABRICANTE' | 'DGAC' | 'MOTOR' | 'EASA';
+type RecurrenceTab = 'ALL' | 'REPETITIVE' | 'ONE_TIME';
 
 const MAINTENANCE_TYPE_META: Record<MaintenanceType, { label: string; badge: string }> = {
   HORARIO: {
@@ -860,6 +861,7 @@ interface TaskRowProps {
   onToggleSelect: (item: MaintenancePlanItem, checked: boolean) => void;
   onSetApplicability: (item: MaintenancePlanItem, applies: boolean) => void;
   onRecord: (item: MaintenancePlanItem) => void;
+  onViewHistory: (item: MaintenancePlanItem) => void;
   onEdit:   (item: MaintenancePlanItem) => void;
   onRemove: (item: MaintenancePlanItem) => void;
   onGenerateST: (item: MaintenancePlanItem) => void;
@@ -876,6 +878,7 @@ function TaskRow({
   onToggleSelect,
   onSetApplicability,
   onRecord,
+  onViewHistory,
   onEdit,
   onRemove,
   onGenerateST,
@@ -959,11 +962,18 @@ function TaskRow({
         </span>
       </td>
       <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">
-        {item.lastPerformedAt
-          ? `${new Date(item.lastPerformedAt).toLocaleDateString('es-MX')}${item.lastHoursAtCompliance != null ? ` · ${item.lastHoursAtCompliance.toFixed(0)}h` : ''}`
-          : item.controlStartAt
-            ? `Inicio de control: ${new Date(item.controlStartAt).toLocaleDateString('es-MX')}${item.controlStartHours != null ? ` · ${item.controlStartHours.toFixed(0)}h` : ''}`
-            : 'Sin dato histórico'}
+        <button
+          type="button"
+          onClick={() => onViewHistory(item)}
+          className="text-left underline-offset-2 hover:text-brand-700 hover:underline"
+          title="Ver historial completo de cumplimientos"
+        >
+          {item.lastPerformedAt
+            ? `${new Date(item.lastPerformedAt).toLocaleDateString('es-MX')}${item.lastHoursAtCompliance != null ? ` · ${item.lastHoursAtCompliance.toFixed(0)}h` : ''}`
+            : item.controlStartAt
+              ? `Inicio de control: ${new Date(item.controlStartAt).toLocaleDateString('es-MX')}${item.controlStartHours != null ? ` · ${item.controlStartHours.toFixed(0)}h` : ''}`
+              : 'Sin dato histórico'}
+        </button>
       </td>
       <td className="px-4 py-3.5 whitespace-nowrap">
         <div className="flex items-center gap-1.5">
@@ -1038,6 +1048,103 @@ function TaskRow({
   );
 }
 
+// ─── Panel: historial de cumplimientos de una tarea ───────────────────────────
+function TaskComplianceHistoryPanel({
+  item, aircraftId, onClose,
+}: {
+  item: MaintenancePlanItem;
+  aircraftId: string;
+  onClose: () => void;
+}) {
+  const { data: history = [], isLoading } = useQuery({
+    queryKey: ['task-compliance-history', aircraftId, item.taskId],
+    queryFn: () => complianceApi.historyForTask(aircraftId, item.taskId),
+  });
+
+  const isBaseline = (record: { applicationType?: string; notes?: string | null }) =>
+    record.applicationType === 'baseline'
+    || (record.notes ?? '').trim().toLowerCase() === 'inicio de control';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-slate-200 px-6 py-4">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Historial de cumplimientos</h2>
+            <p className="mt-0.5 text-xs text-slate-500">{item.taskCode} · {item.taskTitle}</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-auto px-6 py-4">
+          {isLoading ? (
+            <p className="py-8 text-center text-sm text-slate-400">Cargando historial…</p>
+          ) : history.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-400">Esta tarea aún no tiene cumplimientos registrados.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-100 text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="table-header">Fecha</th>
+                    <th className="table-header">Tipo</th>
+                    <th className="table-header text-right">Horas</th>
+                    <th className="table-header text-right">Ciclos</th>
+                    <th className="table-header">Próximo vencimiento</th>
+                    <th className="table-header">OT</th>
+                    <th className="table-header">Observación</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {history.map((record) => {
+                    const baseline = isBaseline(record);
+                    const nextDue = [
+                      record.nextDueHours != null ? `${Number(record.nextDueHours).toFixed(1)} FH` : null,
+                      record.nextDueCycles != null ? `${record.nextDueCycles} CYC` : null,
+                      record.nextDueDate ? new Date(record.nextDueDate).toLocaleDateString('es-MX') : null,
+                    ].filter(Boolean).join(' · ');
+                    return (
+                      <tr key={record.id} className="hover:bg-slate-50">
+                        <td className="table-cell text-xs text-slate-700">
+                          {new Date(record.performedAt).toLocaleDateString('es-MX')}
+                        </td>
+                        <td className="table-cell text-xs">
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                            baseline ? 'badge-state-neutral' : 'badge-state-success'
+                          }`}>
+                            {baseline ? 'Inicio de control' : record.applicationType === 'replacement_start' ? 'Reemplazo' : 'Cumplimiento'}
+                          </span>
+                        </td>
+                        <td className="table-cell text-xs tabular-nums text-slate-700 text-right">
+                          {Number(record.aircraftHoursAtCompliance).toFixed(1)}
+                        </td>
+                        <td className="table-cell text-xs tabular-nums text-slate-700 text-right">
+                          {record.aircraftCyclesAtCompliance}
+                        </td>
+                        <td className="table-cell text-xs text-slate-600">{nextDue || '—'}</td>
+                        <td className="table-cell text-xs text-slate-600">
+                          {record.workOrderNumber
+                            ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-progress">{record.workOrderNumber}</span>
+                            : <span className="text-slate-400">—</span>}
+                        </td>
+                        <td className="table-cell max-w-[260px] text-xs text-slate-500">{record.notes ?? '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end border-t border-slate-200 px-6 py-3">
+          <button onClick={onClose} className="btn-secondary">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 type ModalState =
   | null
@@ -1066,6 +1173,8 @@ export default function MaintenancePlanPage() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<PlanItemStatus | ''>(searchParams.get('status') as PlanItemStatus | '' ?? '');
   const [normativeTab, setNormativeTab] = useState<NormativeTab>('ALL');
+  const [recurrenceTab, setRecurrenceTab] = useState<RecurrenceTab>('ALL');
+  const [historyTask, setHistoryTask] = useState<MaintenancePlanItem | null>(null);
   const [maintenanceTab, setMaintenanceTab] = useState<MaintenanceTypeTab>('ALL');
   const [onlyPendingAction, setOnlyPendingAction] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
@@ -1357,6 +1466,8 @@ export default function MaintenancePlanPage() {
         if (normativeTab === 'DGAC' && i.referenceType !== 'INTERNAL') return false;
         if (normativeTab === 'EASA' && i.referenceType !== 'AD') return false;
         if (normativeTab === 'MOTOR' && !isMotorNormativeTask(i)) return false;
+        if (recurrenceTab === 'REPETITIVE' && i.complianceRecurrence !== 'REPETITIVE') return false;
+        if (recurrenceTab === 'ONE_TIME' && i.complianceRecurrence !== 'ONE_TIME') return false;
         if (normativeTab === 'FABRICANTE') {
           if (i.referenceType !== 'AMM') return false;
           if (isMotorNormativeTask(i)) return false;
@@ -1383,7 +1494,7 @@ export default function MaintenancePlanPage() {
 
         return STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
       });
-  }, [planItems, filterStatus, normativeTab, maintenanceTab, search, smartPriorityByTaskId, onlyPendingAction, priorityContext]);
+  }, [planItems, filterStatus, normativeTab, recurrenceTab, maintenanceTab, search, smartPriorityByTaskId, onlyPendingAction, priorityContext]);
 
   const normativeCounts = useMemo(() => {
     const dgac = planItems.filter(i => i.referenceType === 'INTERNAL').length;
@@ -1392,6 +1503,22 @@ export default function MaintenancePlanPage() {
     const fabricante = planItems.filter(i => i.referenceType === 'AMM' && !isMotorNormativeTask(i)).length;
     return { dgac, easa, motor, fabricante };
   }, [planItems]);
+
+  /** Conteo de recurrencia sobre el origen ya elegido, para que las cifras acompañen al filtro. */
+  const recurrenceCounts = useMemo(() => {
+    const scoped = normativeTab === 'ALL'
+      ? planItems
+      : planItems.filter((i) => {
+          if (normativeTab === 'DGAC') return i.referenceType === 'INTERNAL';
+          if (normativeTab === 'EASA') return i.referenceType === 'AD';
+          if (normativeTab === 'MOTOR') return isMotorNormativeTask(i);
+          return i.referenceType === 'AMM' && !isMotorNormativeTask(i);
+        });
+    return {
+      repetitive: scoped.filter((i) => i.complianceRecurrence === 'REPETITIVE').length,
+      oneTime: scoped.filter((i) => i.complianceRecurrence === 'ONE_TIME').length,
+    };
+  }, [planItems, normativeTab]);
 
   const pendingActionCount = useMemo(() => (
     planItems.filter((item) => item.status !== 'OK').length
@@ -1919,6 +2046,27 @@ export default function MaintenancePlanPage() {
               </div>
 
               <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Recurrencia</span>
+                {([
+                  { key: 'ALL', label: 'Todas' },
+                  { key: 'REPETITIVE', label: `Repetitivas (${recurrenceCounts.repetitive})` },
+                  { key: 'ONE_TIME', label: `Cumplimiento único (${recurrenceCounts.oneTime})` },
+                ] as const).map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setRecurrenceTab(tab.key)}
+                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
+                      recurrenceTab === tab.key
+                        ? 'bg-brand-600 text-white border-brand-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Tipo de control</span>
                 {([
                   { key: 'ALL', label: 'Todas' },
@@ -1976,9 +2124,9 @@ export default function MaintenancePlanPage() {
                   />
                   Solo pendientes de acción
                 </label>
-                {(search || filterStatus || normativeTab !== 'ALL' || maintenanceTab !== 'ALL') && (
+                {(search || filterStatus || normativeTab !== 'ALL' || recurrenceTab !== 'ALL' || maintenanceTab !== 'ALL') && (
                   <button
-                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('ALL'); setMaintenanceTab('ALL'); }}
+                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('ALL'); setRecurrenceTab('ALL'); setMaintenanceTab('ALL'); }}
                     className="text-xs text-brand-600 hover:text-brand-700 font-semibold transition-colors"
                   >
                     Limpiar
@@ -2102,6 +2250,7 @@ export default function MaintenancePlanPage() {
                         void setTaskApplicability(taskItem, true, { trackUndo: true });
                       }}
                       onRecord={handleRecord}
+                      onViewHistory={(taskItem) => setHistoryTask(taskItem)}
                       onEdit={handleEdit}
                       onRemove={handleRemove}
                       onGenerateST={handleGenerateSTFromPlan}
@@ -2155,6 +2304,14 @@ export default function MaintenancePlanPage() {
         isPending={removeMutation.isPending}
       />
     )}
+    {historyTask && selectedId && (
+      <TaskComplianceHistoryPanel
+        item={historyTask}
+        aircraftId={selectedId}
+        onClose={() => setHistoryTask(null)}
+      />
+    )}
+
     {pendingSTSelection && (
       <SelectWorkRequestTargetModal
         items={pendingSTSelection.items}

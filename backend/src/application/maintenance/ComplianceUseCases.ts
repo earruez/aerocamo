@@ -147,4 +147,12 @@ export class GetComplianceUseCase {
   ): Promise<Compliance[]> {
     return this.complianceRepo.findLatestPerTask(aircraftId, organizationId);
   }
+
+  async getHistoryForTask(
+    aircraftId: string,
+    taskId: string,
+    organizationId: string,
+  ): Promise<Compliance[]> {
+    return this.complianceRepo.findHistoryForTask(aircraftId, taskId, organizationId);
+  }
 }
