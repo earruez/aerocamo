@@ -2,27 +2,26 @@ import { type ReactNode, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { componentApi, type ComponentComplianceRecord, type CreateComponentInput, type RegisterInitialComponentInput } from '@api/component.api';
+import { componentApi, type CreateComponentInput, type RegisterInitialComponentInput } from '@api/component.api';
 import { aircraftApi } from '@api/aircraft.api';
 import { maintenancePlanApi } from '@api/maintenancePlan.api';
 import type { MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { complianceApi } from '@api/compliance.api';
 import { workRequestsApi } from '@api/workRequests.api';
+import { dueApi, type DueRow, type DueStatus } from '@api/due.api';
 import { Package, ChevronDown, X, Loader2 } from 'lucide-react';
 import { createSTFromSource } from '@/shared/createSTFromSource';
 import { useWorkRequestStore } from '../store/workRequestStore';
-import { isActiveWorkRequestStatus } from '@/shared/workRequestTypes';
 import {
   MISSING_OPERATIONAL_CONTEXT_BADGE_CLASS,
   MISSING_OPERATIONAL_CONTEXT_LABEL,
 } from '@/shared/operationalContext';
 import { calculateComponentDue, calculateNextDue, type ComponentDueResult } from '@/shared/componentDueCalculator';
-import { mockComponentApplications, mockComponentMovements } from '@/shared/componentTrackingMocks';
+import { mockComponentApplications } from '@/shared/componentTrackingMocks';
 import type {
   AircraftSnapshot,
   ComponentApplication,
   ComponentDefinition,
-  ComponentMovement,
   WorkRequestExecutionType,
 } from '@/shared/componentTrackingTypes';
 
@@ -89,7 +88,62 @@ function renderMetricPills(
   );
 }
 
-type VisibleComponentState = 'Sin registro' | 'Próx. vencer' | 'Vencida' | 'En ST' | 'OT recibida' | 'Al día / Ejecutado';
+type VisibleComponentState = 'Sin registro' | 'Próx. vencer' | 'Vencida' | 'En ST' | 'OT recibida' | 'Al día / Ejecutado' | 'En control';
+
+/** Una fila de la vista unificada: control de componente + su pieza física. */
+interface UnifiedComponentRow {
+  key: string;
+  due: DueRow | null;
+  componentId: string | null;
+  component: ComponentRow | null;
+  planItem: MaintenancePlanItem | null;
+  st: { id: string; ref: string } | null;
+}
+
+const DUE_STATUS_META: Record<DueStatus, { label: string; badge: string; rail: string }> = {
+  OVERDUE:        { label: 'Vencida',      badge: 'badge-state-critical', rail: 'border-l-rose-500' },
+  DUE_SOON:       { label: 'Próx. vencer', badge: 'badge-state-warning',  rail: 'border-l-amber-500' },
+  OK:             { label: 'Al día',       badge: 'badge-state-success',  rail: 'border-l-emerald-500' },
+  COMPLIED:       { label: 'Cumplida',     badge: 'badge-state-success',  rail: 'border-l-emerald-500' },
+  NO_CONTEXT:     { label: 'Sin control',  badge: 'badge-state-neutral',  rail: 'border-l-slate-300' },
+  NOT_APPLICABLE: { label: 'No aplica',    badge: 'badge-state-neutral',  rail: 'border-l-slate-300' },
+};
+
+function formatNumber(value: number | null | undefined, unit: string): string | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  const rounded = Math.abs(value) >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${rounded.toLocaleString('es-MX')} ${unit}`;
+}
+
+function formatDueDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toLocaleDateString('es-MX');
+}
+
+/** Intervalo, próximo y remanente por dimensión (H / CYC / calendario), como en Access. */
+function describeDimensions(due: DueRow) {
+  const interval: string[] = [];
+  const nextDue: string[] = [];
+  const remaining: Array<{ label: string; status: DueStatus }> = [];
+
+  for (const dim of due.dimensions) {
+    const intervalLabel = formatNumber(dim.intervalValue, dim.intervalUnit);
+    if (intervalLabel) interval.push(intervalLabel);
+
+    const nextLabel = dim.nextDueValue != null
+      ? formatNumber(dim.nextDueValue, dim.intervalUnit === 'MONTHS' ? 'M' : dim.remainingUnit)
+      : formatDueDate(dim.nextDueDate);
+    if (nextLabel) nextDue.push(nextLabel);
+
+    const remainingLabel = dim.remainingValue != null
+      ? formatNumber(dim.remainingValue, dim.remainingUnit)
+      : null;
+    if (remainingLabel) remaining.push({ label: remainingLabel, status: dim.status });
+  }
+
+  return { interval, nextDue, remaining };
+}
 type TimelineEventType = 'installation' | 'application' | 'removal' | 'replacement';
 
 interface TimelineEvent {
@@ -118,6 +172,9 @@ function visibleStateBadge(state: VisibleComponentState) {
   if (state === 'Al día / Ejecutado') {
     return <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-success">Al día / Ejecutado</span>;
   }
+  if (state === 'En control') {
+    return <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-neutral">En control (inicio)</span>;
+  }
   return <span className={MISSING_OPERATIONAL_CONTEXT_BADGE_CLASS}>{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>;
 }
 
@@ -130,11 +187,8 @@ function timelineStyle(type: TimelineEventType): { dot: string; badge: string; l
 
 function movementTypeBadge(movementType: string): ReactNode {
   const normalized = (movementType ?? '').toLowerCase();
-  if (normalized === 'replacement') {
-    return <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-warning">Reemplazo</span>;
-  }
-  if (normalized === 'remove' || normalized === 'removal') {
-    return <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-neutral">Remoción</span>;
+  if (normalized === 'removed' || normalized === 'remove' || normalized === 'removal') {
+    return <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-warning">Remoción</span>;
   }
   return <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-success">Instalación</span>;
 }
@@ -367,7 +421,6 @@ function RegisterComponentExecutionModal({
   onClose,
   onSaved,
   onCreateComponent,
-  onMovement,
   onApplication,
 }: {
   mode: WorkRequestExecutionType;
@@ -381,7 +434,6 @@ function RegisterComponentExecutionModal({
   onClose: () => void;
   onSaved: () => void;
   onCreateComponent: () => void;
-  onMovement: (movement: ComponentMovement) => void;
   onApplication: (application: ComponentApplication) => void;
 }) {
   const isReplacementFlow = mode === 'component_replacement';
@@ -516,12 +568,41 @@ function RegisterComponentExecutionModal({
 
       let targetComponentId: string | null = isReplacementFlow ? componentId : null;
 
+      // Horas/ciclos acumulados por el componente saliente: lo corrido en la
+      // aeronave desde que se instaló. Sin referencia de instalación queda en 0.
+      const installationHours = selectedComponent?.installationAircraftHours != null
+        ? Number(selectedComponent.installationAircraftHours)
+        : null;
+      const installationCycles = selectedComponent?.installationAircraftCycles != null
+        ? Number(selectedComponent.installationAircraftCycles)
+        : null;
+      const componentHoursAtRemoval = installationHours != null
+        ? Math.max(0, parsedHours - installationHours)
+        : 0;
+      const componentCyclesAtRemoval = installationCycles != null
+        ? Math.max(0, parsedCycles - installationCycles)
+        : 0;
+
       if (isReplacementFlow) {
         if (!newPartNumber.trim() || !newSerialNumber.trim()) {
           throw new Error('P/N y S/N nuevos son obligatorios');
         }
 
         if (targetComponentId) {
+          // Movimiento de remoción: queda en el historial persistente antes de
+          // marcar el componente como removido, para no perder la trazabilidad.
+          await componentApi.recordMovement(targetComponentId, {
+            aircraftId,
+            movementType: 'REMOVED',
+            aircraftHoursAtMovement: parsedHours,
+            aircraftCyclesAtMovement: parsedCycles,
+            componentHoursAtMovement: componentHoursAtRemoval,
+            componentCyclesAtMovement: componentCyclesAtRemoval,
+            position: position.trim(),
+            notes: `Removido por OT ${workOrderNumber.trim()}${notes.trim() ? ` · ${notes.trim()}` : ''}`,
+            movedAt: iso,
+          });
+
           await componentApi.update(targetComponentId, {
             position: `REMOVED ${position.trim()}`,
             notes: `Removido por OT ${workOrderNumber.trim()}`,
@@ -547,29 +628,22 @@ function RegisterComponentExecutionModal({
           notes: notes.trim() || null,
         });
 
-        targetComponentId = created.id;
-
-        onMovement({
-          id: `mov-${Date.now()}`,
+        // Movimiento de instalación del componente entrante: el par
+        // REMOVED + INSTALLED es lo que representa el cambio completo.
+        await componentApi.recordMovement(created.id, {
           aircraftId,
-          position: position.trim(),
-          movementType: 'replacement',
-          removedComponentInstanceId: componentId || null,
-          installedComponentInstanceId: created.id,
-          removedPartNumber: selectedComponent?.partNumber ?? null,
-          removedSerialNumber: selectedComponent?.serialNumber ?? null,
-          installedPartNumber: newPartNumber.trim(),
-          installedSerialNumber: newSerialNumber.trim(),
-          workRequestId: context.workRequestId,
-          officeOrderId: context.officeOrderId,
-          workOrderNumber: workOrderNumber.trim(),
-          performedAt: iso,
+          movementType: 'INSTALLED',
           aircraftHoursAtMovement: parsedHours,
           aircraftCyclesAtMovement: parsedCycles,
-          notes: notes.trim() || null,
-          createdAt: new Date().toISOString(),
-          performedByUserName: 'Usuario Operaciones',
+          componentHoursAtMovement: 0,
+          componentCyclesAtMovement: 0,
+          position: position.trim(),
+          notes: `Instalado por OT ${workOrderNumber.trim()}${notes.trim() ? ` · ${notes.trim()}` : ''}`,
+          movedAt: iso,
         });
+
+        targetComponentId = created.id;
+
       }
 
       if (isReplacementFlow && !targetComponentId) throw new Error('Selecciona un componente');
@@ -853,15 +927,11 @@ export default function ComponentsPage() {
   } | null>(null);
   const [initialRegistrationTask, setInitialRegistrationTask] = useState<MaintenancePlanItem | null>(null);
   const [expandedComponentId, setExpandedComponentId] = useState<string | null>(null);
+  const [scopeFilter, setScopeFilter] = useState<'ALL' | 'AIRCRAFT' | 'ENGINE'>('ALL');
   const [componentSearch, setComponentSearch] = useState('');
-  const [componentTaskSearch, setComponentTaskSearch] = useState('');
-  const [componentMovements, setComponentMovements] = useState<ComponentMovement[]>(
-    DEMO_PLACEHOLDERS_ENABLED ? mockComponentMovements : [],
-  );
   const [componentApplications, setComponentApplications] = useState<ComponentApplication[]>(
     DEMO_PLACEHOLDERS_ENABLED ? mockComponentApplications : [],
   );
-  const [removedComponentIds, setRemovedComponentIds] = useState<string[]>([]);
   const [params, setParams] = useSearchParams();
 
   const workRequests = useWorkRequestStore((s) => s.workRequests);
@@ -876,48 +946,43 @@ export default function ComponentsPage() {
   });
 
   const { data: bulkComponentApplications = [] } = useQuery({
-    queryKey: ['component-applications-bulk', selectedAircraft, components.map((c) => c.id).join(',')],
+    queryKey: ['component-applications-bulk', selectedAircraft],
     queryFn: async () => {
-      const rows = components as ComponentRow[];
-      const historyByComponent = await Promise.all(
-        rows.map(async (component) => {
-          const history = await componentApi.getComplianceHistory(component.id);
-          return { component, history };
-        }),
-      );
+      // Una sola petición por aeronave: la versión por componente disparaba ~1
+      // request por fila y tumbaba el rate limiter del backend (429).
+      const history = await componentApi.getComplianceHistoryByAircraft(selectedAircraft);
 
       const mapped: ComponentApplication[] = [];
-      for (const { component, history } of historyByComponent) {
-        for (const record of history as ComponentComplianceRecord[]) {
-          const hoursAtApplication = Number(record.aircraftHoursAtCompliance);
-          const cyclesAtApplication = Number(record.aircraftCyclesAtCompliance);
-          const nextDueHours = record.nextDueHours != null ? Number(record.nextDueHours) : null;
-          const nextDueCycles = record.nextDueCycles != null ? Number(record.nextDueCycles) : null;
-          mapped.push({
-            id: `api-${record.id}`,
-            type: record.applicationType,
-            isInitial: record.isInitial,
-            componentInstanceId: component.id,
-            taskId: record.task.id,
-            aircraftId: component.aircraftId ?? selectedAircraft,
-            workRequestId: '',
-            officeOrderId: '',
-            workOrderNumber: record.workOrderNumber ?? '',
-            appliedAt: record.performedAt,
-            aircraftHoursAtApplication: Number.isFinite(hoursAtApplication) ? hoursAtApplication : 0,
-            aircraftCyclesAtApplication: Number.isFinite(cyclesAtApplication) ? cyclesAtApplication : 0,
-            nextDueHours,
-            nextDueCycles,
-            nextDueDate: record.nextDueDate,
-            notes: record.notes,
-            createdAt: record.performedAt,
-          });
-        }
+      for (const record of history) {
+        if (!record.componentId || !record.task) continue;
+        const hoursAtApplication = Number(record.aircraftHoursAtCompliance);
+        const cyclesAtApplication = Number(record.aircraftCyclesAtCompliance);
+        const nextDueHours = record.nextDueHours != null ? Number(record.nextDueHours) : null;
+        const nextDueCycles = record.nextDueCycles != null ? Number(record.nextDueCycles) : null;
+        mapped.push({
+          id: `api-${record.id}`,
+          type: record.applicationType,
+          isInitial: record.isInitial,
+          componentInstanceId: record.componentId,
+          taskId: record.task.id,
+          aircraftId: selectedAircraft,
+          workRequestId: '',
+          officeOrderId: '',
+          workOrderNumber: record.workOrderNumber ?? '',
+          appliedAt: record.performedAt,
+          aircraftHoursAtApplication: Number.isFinite(hoursAtApplication) ? hoursAtApplication : 0,
+          aircraftCyclesAtApplication: Number.isFinite(cyclesAtApplication) ? cyclesAtApplication : 0,
+          nextDueHours,
+          nextDueCycles,
+          nextDueDate: record.nextDueDate,
+          notes: record.notes,
+          createdAt: record.performedAt,
+        });
       }
 
       return mapped;
     },
-    enabled: Boolean(selectedAircraft) && components.length > 0,
+    enabled: Boolean(selectedAircraft),
     staleTime: 0,
   });
 
@@ -931,6 +996,23 @@ export default function ComponentsPage() {
   const { data: planItems = [], isLoading: loadingPlanTasks } = useQuery({
     queryKey: ['components-plan-items', selectedAircraft],
     queryFn: () => maintenancePlanApi.getForAircraft(selectedAircraft),
+    enabled: !!selectedAircraft,
+    staleTime: 0,
+  });
+
+  // Historial persistente de instalación/remoción por aeronave.
+  const { data: movementHistory = [], isLoading: loadingMovementHistory } = useQuery({
+    queryKey: ['component-movement-history', selectedAircraft],
+    queryFn: () => componentApi.getMovementHistoryByAircraft(selectedAircraft),
+    enabled: !!selectedAircraft,
+    staleTime: 0,
+  });
+
+  // Vencimientos calculados en el backend (Due Engine). El frontend no recalcula
+  // remanentes: los muestra tal como los entrega el contrato.
+  const { data: dueRows = [], isLoading: loadingDueRows } = useQuery({
+    queryKey: ['due-rows', selectedAircraft],
+    queryFn: () => dueApi.getRows(selectedAircraft),
     enabled: !!selectedAircraft,
     staleTime: 0,
   });
@@ -955,14 +1037,6 @@ export default function ComponentsPage() {
     return map;
   }, [componentChapterTasks]);
 
-  const filteredComponentChapterTasks = useMemo(() => {
-    const q = componentTaskSearch.trim().toLowerCase();
-    if (!q) return componentChapterTasks;
-    return componentChapterTasks.filter((item) =>
-      [item.taskCode, item.taskTitle, item.referenceType, item.referenceNumber ?? ''].join(' ').toLowerCase().includes(q),
-    );
-  }, [componentChapterTasks, componentTaskSearch]);
-
   const filteredComponents = useMemo(() => {
     const q = componentSearch.trim().toLowerCase();
     if (!q) return components;
@@ -978,8 +1052,8 @@ export default function ComponentsPage() {
   }, [components]);
 
   const installedComponents = useMemo(
-    () => filteredComponents.filter((c) => !removedComponentIds.includes(c.id) && !(c.position ?? '').toUpperCase().startsWith('REMOVED')),
-    [filteredComponents, removedComponentIds],
+    () => filteredComponents.filter((c) => !(c.position ?? '').toUpperCase().startsWith('REMOVED')),
+    [filteredComponents],
   );
 
   const effectiveComponentApplications = useMemo(() => {
@@ -1014,24 +1088,19 @@ export default function ComponentsPage() {
     return map;
   }, [effectiveComponentApplications]);
 
-  const currentComponentByTaskId = useMemo(() => {
-    const map = new Map<string, ComponentRow>();
-
-    const sortedApps = [...effectiveComponentApplications].sort(
-      (a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime(),
-    );
-
-    for (const app of sortedApps) {
-      if (app.aircraftId !== selectedAircraft) continue;
-      if (map.has(app.taskId)) continue;
-      const comp = componentById.get(app.componentInstanceId);
-      if (!comp) continue;
-      if ((comp.position ?? '').toUpperCase().startsWith('REMOVED')) continue;
-      map.set(app.taskId, comp);
+  // Baseline ("Inicio de control"): no cuenta como ejecución real, pero sí aporta
+  // el punto de partida para calcular remanentes cuando aún no hay aplicación.
+  const baselineApplicationByComponentId = useMemo(() => {
+    const map = new Map<string, ComponentApplication>();
+    for (const app of effectiveComponentApplications) {
+      if (app.type !== 'baseline') continue;
+      const existing = map.get(app.componentInstanceId);
+      if (!existing || new Date(app.appliedAt).getTime() > new Date(existing.appliedAt).getTime()) {
+        map.set(app.componentInstanceId, app);
+      }
     }
-
     return map;
-  }, [effectiveComponentApplications, componentById, selectedAircraft]);
+  }, [effectiveComponentApplications]);
 
   const taskById = useMemo(() => {
     const map = new Map<string, MaintenancePlanItem>();
@@ -1079,11 +1148,14 @@ export default function ComponentsPage() {
 
   const buildDueContextForComponent = (c: ComponentRow) => {
     const latestApplication = latestApplicationByComponentId.get(c.id) ?? null;
-    const linkedDefinition = latestApplication
-      ? componentDefinitionByTaskId.get(latestApplication.taskId) ?? null
+    const baselineApplication = baselineApplicationByComponentId.get(c.id) ?? null;
+    // El baseline no es ejecución, pero sí sirve de punto de partida del control.
+    const dueApplication = latestApplication ?? baselineApplication;
+    const linkedDefinition = dueApplication
+      ? componentDefinitionByTaskId.get(dueApplication.taskId) ?? null
       : null;
-    const traceTask = latestApplication
-      ? taskById.get(latestApplication.taskId) ?? null
+    const traceTask = dueApplication
+      ? taskById.get(dueApplication.taskId) ?? null
       : null;
 
     const snapshot: AircraftSnapshot = {
@@ -1092,17 +1164,19 @@ export default function ComponentsPage() {
       currentDate: new Date().toISOString(),
     };
 
-    if (!latestApplication || !linkedDefinition) {
+    if (!dueApplication || !linkedDefinition) {
       return {
         due: buildOperationalFallbackDue(c, snapshot),
         latestApplication,
+        hasBaseline: Boolean(baselineApplication),
         traceTask,
       };
     }
 
     return {
-      due: calculateComponentDue(linkedDefinition, latestApplication, snapshot),
+      due: calculateComponentDue(linkedDefinition, dueApplication, snapshot),
       latestApplication,
+      hasBaseline: Boolean(baselineApplication),
       traceTask,
     };
   };
@@ -1120,6 +1194,7 @@ export default function ComponentsPage() {
   const resolveVisibleState = (input: {
     flow: { openOrDraftSt: { id: string; ref: string } | null; validSt: { id: string; ref: string } | null };
     latestApplication: ComponentApplication | null;
+    hasBaseline?: boolean;
     traceStatus?: MaintenancePlanItem['status'];
     dueStatus?: 'critical' | 'warning' | 'ok';
   }): VisibleComponentState => {
@@ -1128,6 +1203,7 @@ export default function ComponentsPage() {
     if (input.latestApplication) return 'Al día / Ejecutado';
     if (input.traceStatus === 'OVERDUE' || input.dueStatus === 'critical') return 'Vencida';
     if (input.traceStatus === 'DUE_SOON' || input.dueStatus === 'warning') return 'Próx. vencer';
+    if (input.hasBaseline) return 'En control';
     return 'Sin registro';
   };
 
@@ -1203,48 +1279,29 @@ export default function ComponentsPage() {
       });
     }
 
-    for (const move of componentMovements) {
-      const touchesComponent = move.installedComponentInstanceId === componentId || move.removedComponentInstanceId === componentId;
-      if (!touchesComponent) continue;
+    // Movimientos persistidos (instalación / remoción) de este componente.
+    for (const move of movementHistory) {
+      if (move.componentId !== componentId) continue;
       const movementHours = Number(move.aircraftHoursAtMovement);
       const movementCycles = Number(move.aircraftCyclesAtMovement);
+      const isRemoval = move.movementType === 'REMOVED';
 
-      if (move.movementType === 'replacement') {
-        events.push({
-          id: `repl-${move.id}`,
-          type: 'replacement',
-          occurredAt: move.performedAt,
-          title: 'Reemplazo de componente',
-          details: [
-            `Saliente: ${move.removedPartNumber ?? (move.removedComponentInstanceId ? componentById.get(move.removedComponentInstanceId)?.partNumber ?? '—' : '—')} / ${move.removedSerialNumber ?? (move.removedComponentInstanceId ? componentById.get(move.removedComponentInstanceId)?.serialNumber ?? '—' : '—')}`,
-            `Entrante: ${move.installedPartNumber ?? (move.installedComponentInstanceId ? componentById.get(move.installedComponentInstanceId)?.partNumber ?? '—' : '—')} / ${move.installedSerialNumber ?? (move.installedComponentInstanceId ? componentById.get(move.installedComponentInstanceId)?.serialNumber ?? '—' : '—')}`,
-            `Posición: ${move.position}`,
-            `Horas/Ciclos: ${Number.isFinite(movementHours) ? movementHours.toFixed(1) : '0.0'} / ${Number.isFinite(movementCycles) ? Math.round(movementCycles) : 0}`,
-          ],
-          stRef: workRequestRefById.get(move.workRequestId) ?? move.workRequestId,
-          otRef: move.workOrderNumber,
-        });
-        continue;
-      }
-
-      if (move.movementType === 'remove' && move.removedComponentInstanceId === componentId) {
-        events.push({
-          id: `rem-${move.id}`,
-          type: 'removal',
-          occurredAt: move.performedAt,
-          title: 'Componente removido',
-          details: [
-            `P/N: ${move.removedPartNumber ?? componentById.get(componentId)?.partNumber ?? '—'}`,
-            `S/N: ${move.removedSerialNumber ?? componentById.get(componentId)?.serialNumber ?? '—'}`,
-            `Posición: ${move.position}`,
-            `Horas/Ciclos: ${Number.isFinite(movementHours) ? movementHours.toFixed(1) : '0.0'} / ${Number.isFinite(movementCycles) ? Math.round(movementCycles) : 0}`,
-          ],
-          stRef: workRequestRefById.get(move.workRequestId) ?? move.workRequestId,
-          otRef: move.workOrderNumber,
-        });
-      }
+      events.push({
+        id: `mov-${move.id}`,
+        type: isRemoval ? 'removal' : 'installation',
+        occurredAt: move.movedAt,
+        title: isRemoval ? 'Componente removido' : 'Componente instalado',
+        details: [
+          `P/N: ${move.component?.partNumber ?? componentById.get(componentId)?.partNumber ?? '—'}`,
+          `S/N: ${move.component?.serialNumber ?? componentById.get(componentId)?.serialNumber ?? '—'}`,
+          `Posición: ${move.position ?? '—'}`,
+          `Horas/Ciclos aeronave: ${Number.isFinite(movementHours) ? movementHours.toFixed(1) : '0.0'} / ${Number.isFinite(movementCycles) ? Math.round(movementCycles) : 0}`,
+          `Horas acumuladas del componente: ${Number(move.componentHoursAtMovement).toFixed(1)}`,
+        ],
+        stRef: null,
+        otRef: move.workOrder?.number ?? null,
+      });
     }
-
     const unique = new Map<string, TimelineEvent>();
     for (const ev of events) {
       const dedupeKey = `${ev.type}-${ev.occurredAt}-${ev.title}-${ev.otRef ?? ''}-${ev.stRef ?? ''}`;
@@ -1252,7 +1309,7 @@ export default function ComponentsPage() {
     }
 
     return Array.from(unique.values()).sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
-  }, [selectedTimelineComponent, effectiveComponentApplications, componentMovements, componentHistory, componentById, taskById, workRequestRefById]);
+  }, [selectedTimelineComponent, effectiveComponentApplications, movementHistory, componentHistory, componentById, taskById, workRequestRefById]);
 
   const isValidSTForExecution = (wrStatus: string, _hasOtEvidence: boolean) => {
     return wrStatus === 'SENT';
@@ -1267,13 +1324,7 @@ export default function ComponentsPage() {
       (app) => app.workRequestId === workRequestId && app.componentInstanceId === componentId,
     );
 
-    const hasMovement = componentMovements.some((movement) => {
-      if (movement.workRequestId !== workRequestId) return false;
-      return movement.removedComponentInstanceId === componentId
-        || movement.installedComponentInstanceId === componentId;
-    });
-
-    return hasApplication || hasMovement;
+    return hasApplication;
   };
 
   const componentFlowById = useMemo(() => {
@@ -1298,40 +1349,7 @@ export default function ComponentsPage() {
       }
     }
     return map;
-  }, [workRequests, selectedAircraft, effectiveComponentApplications, componentMovements]);
-
-  const installedStateSummary = useMemo(() => {
-    const summary = {
-      total: installedComponents.length,
-      overdue: 0,
-      dueSoon: 0,
-      inST: 0,
-      otReceived: 0,
-      executed: 0,
-      noRecord: 0,
-    };
-
-    for (const component of installedComponents) {
-      const flow = componentFlowById.get(component.id) ?? { openOrDraftSt: null, validSt: null };
-      const { due, latestApplication, traceTask } = buildDueContextForComponent(component);
-
-      const state = resolveVisibleState({
-        flow,
-        latestApplication,
-        traceStatus: traceTask?.status,
-        dueStatus: due?.status,
-      });
-
-      if (state === 'Vencida') summary.overdue += 1;
-      else if (state === 'Próx. vencer') summary.dueSoon += 1;
-      else if (state === 'En ST') summary.inST += 1;
-      else if (state === 'OT recibida') summary.otReceived += 1;
-      else if (state === 'Sin registro') summary.noRecord += 1;
-      else summary.executed += 1;
-    }
-
-    return summary;
-  }, [installedComponents, componentFlowById, selectedAircraftData?.totalFlightHours, selectedAircraftData?.totalCycles, latestApplicationByComponentId, taskById]);
+  }, [workRequests, selectedAircraft, effectiveComponentApplications]);
 
   const openOrDraftSTByTaskId = useMemo(() => {
     const map = new Map<string, { id: string; ref: string }>();
@@ -1347,6 +1365,88 @@ export default function ComponentsPage() {
     }
     return map;
   }, [workRequests, selectedAircraft]);
+
+  /**
+   * Vista unificada: una fila por control de componente, con la identidad física
+   * (P/N, S/N) y los vencimientos que calcula el backend. Los componentes que aún
+   * no tienen tarea de control asociada se agregan al final para que no se pierdan.
+   */
+  const unifiedComponentRows = useMemo((): UnifiedComponentRow[] => {
+    const rows: UnifiedComponentRow[] = [];
+    const coveredComponentIds = new Set<string>();
+
+    for (const due of dueRows) {
+      if (!due.requiresComponentTracking) continue;
+      if (due.componentId) coveredComponentIds.add(due.componentId);
+
+      const planItem = taskById.get(due.sourceId) ?? null;
+      const st = openOrDraftSTByTaskId.get(due.sourceId)
+        ?? (due.referenceSt ? { id: due.sourceId, ref: due.referenceSt } : null);
+
+      rows.push({
+        key: due.id,
+        due,
+        componentId: due.componentId,
+        component: due.componentId ? componentById.get(due.componentId) ?? null : null,
+        planItem,
+        st,
+      });
+    }
+
+    for (const component of installedComponents) {
+      if (coveredComponentIds.has(component.id)) continue;
+      rows.push({
+        key: `orphan-${component.id}`,
+        due: null,
+        componentId: component.id,
+        component,
+        planItem: null,
+        st: null,
+      });
+    }
+
+    return rows;
+  }, [dueRows, installedComponents, taskById, componentById, openOrDraftSTByTaskId]);
+
+  const filteredUnifiedRows = useMemo(() => {
+    const byScope = scopeFilter === 'ALL'
+      ? unifiedComponentRows
+      : unifiedComponentRows.filter((row) => (row.due?.equipmentScope ?? 'AIRCRAFT') === scopeFilter);
+
+    const q = componentSearch.trim().toLowerCase();
+    if (!q) return byScope;
+    return byScope.filter((row) => [
+      row.due?.partNumber ?? row.component?.partNumber ?? '',
+      row.due?.serialNumber ?? row.component?.serialNumber ?? '',
+      row.due?.description ?? row.component?.description ?? '',
+      row.due?.taskCode ?? '',
+      row.due?.observations ?? '',
+      row.due?.referenceOt ?? '',
+    ].join(' ').toLowerCase().includes(q));
+  }, [unifiedComponentRows, componentSearch, scopeFilter]);
+
+  /** Conteo por ámbito sobre el universo sin filtrar, para rotular los botones. */
+  const scopeCounts = useMemo(() => {
+    const counts = { ALL: unifiedComponentRows.length, AIRCRAFT: 0, ENGINE: 0 };
+    for (const row of unifiedComponentRows) {
+      counts[row.due?.equipmentScope ?? 'AIRCRAFT'] += 1;
+    }
+    return counts;
+  }, [unifiedComponentRows]);
+
+  const unifiedSummary = useMemo(() => {
+    const summary = { total: filteredUnifiedRows.length, overdue: 0, dueSoon: 0, ok: 0, inST: 0, noContext: 0 };
+    for (const row of filteredUnifiedRows) {
+      const status = row.due?.status ?? 'NO_CONTEXT';
+      if (row.st) summary.inST += 1;
+      if (status === 'OVERDUE') summary.overdue += 1;
+      else if (status === 'DUE_SOON') summary.dueSoon += 1;
+      else if (status === 'OK' || status === 'COMPLIED') summary.ok += 1;
+      else summary.noContext += 1;
+    }
+    return summary;
+  }, [filteredUnifiedRows]);
+
 
   const getWorkRequestRef = (workRequestId: string) => {
     const wr = useWorkRequestStore.getState().workRequests.find((x) => x.id === workRequestId);
@@ -1418,15 +1518,6 @@ export default function ComponentsPage() {
       : `/work-requests?stId=${stId}`;
     navigate(query);
     toast.success(`Abriendo ${stRef}`);
-  };
-
-  const replacementIntervalLabel = (item: MaintenancePlanItem) => {
-    const parts: string[] = [];
-    if (item.intervalHours != null && item.intervalHours > 0) parts.push(`${item.intervalHours} h`);
-    if (item.intervalCycles != null && item.intervalCycles > 0) parts.push(`${item.intervalCycles} cic`);
-    if (item.intervalCalendarDays != null && item.intervalCalendarDays > 0) parts.push(`${item.intervalCalendarDays} d`);
-    if (item.intervalCalendarMonths != null && item.intervalCalendarMonths > 0) parts.push(`${item.intervalCalendarMonths} m`);
-    return parts.length > 0 ? parts.join(' / ') : '—';
   };
 
   const getExecutionBlockMessage = (mode: WorkRequestExecutionType) => (
@@ -1508,18 +1599,6 @@ export default function ComponentsPage() {
     })();
   };
 
-  const openFromInstalledComponent = (component: ComponentRow, mode: WorkRequestExecutionType) => {
-    void (async () => {
-      for (const task of filteredComponentChapterTasks) {
-        const context = await getExecutionContextFromBackend(task, mode, component.id);
-        if (!context) continue;
-        setExecutionDraft({ mode, task, context });
-        return;
-      }
-      toast.error(getExecutionBlockMessage(mode));
-    })();
-  };
-
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -1562,129 +1641,192 @@ export default function ComponentsPage() {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Instalados</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums">{installedStateSummary.total}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Controles</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900 tabular-nums">{unifiedSummary.total}</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Vencidas</p>
-          <p className="mt-1 text-2xl font-bold text-rose-700 tabular-nums">{installedStateSummary.overdue}</p>
+          <p className="mt-1 text-2xl font-bold text-rose-700 tabular-nums">{unifiedSummary.overdue}</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Próx. vencer</p>
-          <p className="mt-1 text-2xl font-bold text-amber-700 tabular-nums">{installedStateSummary.dueSoon}</p>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">En ST</p>
-          <p className="mt-1 text-2xl font-bold text-blue-700 tabular-nums">{installedStateSummary.inST}</p>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">OT recibida</p>
-          <p className="mt-1 text-2xl font-bold text-blue-700 tabular-nums">{installedStateSummary.otReceived}</p>
+          <p className="mt-1 text-2xl font-bold text-amber-700 tabular-nums">{unifiedSummary.dueSoon}</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Al día</p>
-          <p className="mt-1 text-2xl font-bold text-emerald-700 tabular-nums">{installedStateSummary.executed}</p>
+          <p className="mt-1 text-2xl font-bold text-emerald-700 tabular-nums">{unifiedSummary.ok}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Sin control</p>
+          <p className="mt-1 text-2xl font-bold text-slate-500 tabular-nums">{unifiedSummary.noContext}</p>
         </div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
         <div className="px-5 py-4 border-b border-slate-100">
-          <h2 className="text-sm font-bold text-slate-900">Componentes instalados actualmente</h2>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900">Control de componentes</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Una fila por componente y su tarea de control. Límites, próximos vencimientos y remanentes calculados por el backend.
+              </p>
+            </div>
+            <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+              {([
+                { key: 'ALL', label: 'Todos' },
+                { key: 'AIRCRAFT', label: 'Aeronave' },
+                { key: 'ENGINE', label: 'Motor' },
+              ] as const).map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setScopeFilter(option.key)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    scopeFilter === option.key
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {option.label}
+                  <span className="ml-1.5 tabular-nums text-[11px] text-slate-400">{scopeCounts[option.key]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
+        {!selectedAircraft ? (
+          <div className="px-5 py-10 text-sm text-slate-400 text-center">Selecciona una aeronave para ver su control de componentes.</div>
+        ) : (isLoading || loadingDueRows || loadingPlanTasks) ? (
+          <div className="px-5 py-10 text-sm text-slate-400 text-center">Cargando control de componentes…</div>
+        ) : filteredUnifiedRows.length === 0 ? (
+          <div className="px-5 py-10 text-sm text-slate-400 text-center">No hay componentes para esta aeronave.</div>
+        ) : (
         <table className="min-w-full divide-y divide-slate-100 text-sm">
-          <thead className="bg-slate-50">
+          <thead className="bg-white sticky top-0 z-10 border-b border-slate-200">
             <tr>
               <th className="table-header">P/N</th>
               <th className="table-header">S/N</th>
               <th className="table-header">Descripción</th>
-              <th className="table-header">Posición</th>
-              <th className="table-header">ATA</th>
-              <th className="table-header">Límite</th>
-              <th className="table-header">Actual</th>
+              <th className="table-header">Tarea / ATA</th>
+              <th className="table-header">Intervalo</th>
+              <th className="table-header">Último cumpl.</th>
+              <th className="table-header">Próximo</th>
               <th className="table-header">Remanente</th>
-              <th className="table-header">Próximo cumplimiento</th>
-              <th className="table-header">Vence el</th>
               <th className="table-header">Estado</th>
+              <th className="table-header">OT / Observación</th>
               <th className="table-header">ST</th>
               <th className="table-header text-center">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {isLoading && <tr><td colSpan={13} className="table-cell text-center text-slate-400 py-12">Cargando…</td></tr>}
-            {!isLoading && installedComponents.length === 0 && <tr><td colSpan={13} className="table-cell text-center text-slate-400 py-12">No hay componentes instalados actualmente</td></tr>}
-            {installedComponents.map((c: ComponentRow) => {
-              const flow = componentFlowById.get(c.id) ?? { openOrDraftSt: null, validSt: null };
-              const applicationTask = filteredComponentChapterTasks.find((row) => getExecutionContextForTask(row, 'maintenance_application')) ?? null;
-              const replacementTask = filteredComponentChapterTasks.find((row) => getExecutionContextForTask(row, 'component_replacement', c.id)) ?? null;
-              const showExecutionActions = Boolean(flow.validSt);
-              const { due, latestApplication, traceTask } = buildDueContextForComponent(c);
-              const installedVisibleState = resolveVisibleState({
-                flow,
-                latestApplication,
-                traceStatus: traceTask?.status,
-                dueStatus: due?.status,
-              });
+            {filteredUnifiedRows.map((row) => {
+              const due = row.due;
+              const status: DueStatus = due?.status ?? 'NO_CONTEXT';
+              const meta = DUE_STATUS_META[status];
+              const dims = due
+                ? describeDimensions(due)
+                : { interval: [] as string[], nextDue: [] as string[], remaining: [] as Array<{ label: string; status: DueStatus }> };
 
-              const stateAccent = installedVisibleState === 'Vencida'
-                ? 'border-l-2 border-l-rose-500'
-                : installedVisibleState === 'Próx. vencer'
-                  ? 'border-l-2 border-l-amber-500'
-                  : installedVisibleState === 'En ST' || installedVisibleState === 'OT recibida'
-                    ? 'border-l-2 border-l-blue-500'
-                    : installedVisibleState === 'Al día / Ejecutado'
-                      ? 'border-l-2 border-l-emerald-500'
-                      : 'border-l-2 border-l-slate-300';
+              const partNumber = due?.partNumber ?? row.component?.partNumber ?? null;
+              const serialNumber = due?.serialNumber ?? row.component?.serialNumber ?? null;
+              const description = due?.description ?? row.component?.description ?? null;
+
+              const lastCompliance = due?.lastComplianceDate
+                ? `${formatDueDate(due.lastComplianceDate)}${due.lastComplianceValue != null ? ` · ${Math.round(due.lastComplianceValue)} FH` : ''}`
+                : due?.controlStartAt
+                  ? `Inicio de control: ${formatDueDate(due.controlStartAt)}`
+                  : null;
+
+              const planItem = row.planItem;
+              const appContext = planItem ? getExecutionContextForTask(planItem, 'maintenance_application') : null;
+              const replacementContext = planItem ? getExecutionContextForTask(planItem, 'component_replacement', row.componentId ?? undefined) : null;
+              const isReplacement = planItem?.executionType === 'component_replacement';
+              const executionContext = isReplacement ? replacementContext : appContext;
 
               return (
-                <tr key={c.id} className={`hover:bg-slate-50 transition-colors ${stateAccent}`}>
-                  <td className="table-cell font-mono text-xs text-slate-700">{c.partNumber}</td>
-                  <td className="table-cell font-mono text-xs text-slate-700">{c.serialNumber}</td>
-                  <td className="table-cell text-slate-700">{c.description}</td>
-                  <td className="table-cell text-slate-500">{c.position ?? '—'}</td>
-                  <td className="table-cell text-xs text-slate-700 font-medium">{due?.labels.ata ?? MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
-                  <td className="table-cell text-xs">{renderMetricPills(due?.labels.limit ?? [], due?.criticalBy ?? 'none')}</td>
-                  <td className="table-cell text-xs">{renderMetricPills(due?.labels.actual ?? [], due?.criticalBy ?? 'none')}</td>
-                  <td className="table-cell text-xs">{renderMetricPills(due?.labels.remaining ?? [], due?.criticalBy ?? 'none')}</td>
-                  <td className="table-cell text-xs">{renderMetricPills(due?.labels.nextDue ?? [], due?.criticalBy ?? 'none')}</td>
-                  <td className="table-cell text-xs text-slate-600">{due?.labels.dueOn ?? MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
-                  <td className="table-cell text-xs">{visibleStateBadge(installedVisibleState)} <span className="sr-only">{due?.labels.status ?? MISSING_OPERATIONAL_CONTEXT_LABEL}</span></td>
+                <tr key={row.key} className={`border-l-2 ${meta.rail} hover:bg-slate-50 transition-colors`}>
+                  <td className="table-cell font-mono text-xs text-slate-700">{partNumber ?? MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
+                  <td className="table-cell font-mono text-xs text-slate-700">{serialNumber ?? MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
+                  <td className="table-cell text-slate-700">{description ?? MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
+                  <td className="table-cell font-mono text-[11px] text-slate-600">
+                    {due?.taskCode ?? <span className="text-slate-400">Sin tarea de control</span>}
+                  </td>
+                  <td className="table-cell text-xs text-slate-700">
+                    {dims.interval.length > 0
+                      ? dims.interval.join(' / ')
+                      : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
+                  </td>
                   <td className="table-cell text-xs text-slate-600">
-                    {flow.validSt ? `OT recibida/firmada ${flow.validSt.ref}` : flow.openOrDraftSt ? `En borrador ${flow.openOrDraftSt.ref}` : 'Sin ST'}
+                    {lastCompliance ?? <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
+                  </td>
+                  <td className="table-cell text-xs text-slate-700">
+                    {dims.nextDue.length > 0
+                      ? dims.nextDue.join(' / ')
+                      : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
+                  </td>
+                  <td className="table-cell text-xs">
+                    {dims.remaining.length > 0 ? (
+                      <div className="flex flex-wrap items-center gap-1">
+                        {dims.remaining.map((entry) => (
+                          <span
+                            key={entry.label}
+                            className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${DUE_STATUS_META[entry.status].badge}`}
+                          >
+                            {entry.label}
+                          </span>
+                        ))}
+                      </div>
+                    ) : <span className="text-slate-400">{MISSING_OPERATIONAL_CONTEXT_LABEL}</span>}
+                  </td>
+                  <td className="table-cell text-xs">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.badge}`}>{meta.label}</span>
+                  </td>
+                  <td className="table-cell text-xs text-slate-600 max-w-[220px]">
+                    {due?.referenceOt && (
+                      <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-progress">{due.referenceOt}</span>
+                    )}
+                    {due?.observations && (
+                      <p className="mt-1 text-[11px] leading-snug text-slate-500" title={due.observations}>{due.observations}</p>
+                    )}
+                    {!due?.referenceOt && !due?.observations && <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="table-cell text-xs">
+                    {row.st
+                      ? <button className="btn-xs btn-outline" onClick={() => handleInlineViewST(row.st!.id)}>{row.st.ref}</button>
+                      : <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-neutral">Sin ST</span>}
                   </td>
                   <td className="table-cell text-center">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <button
-                        className="btn-secondary btn-xs"
-                        onClick={() => setExpandedComponentId(c.id)}
-                      >
-                        Ver historial
-                      </button>
-                      {!showExecutionActions && !flow.openOrDraftSt && (
-                        <button
-                          className="btn-primary btn-xs"
-                          onClick={() => handleInlineAddComponentToST(c)}
-                        >
+                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                      {row.componentId && (
+                        <button className="btn-secondary btn-xs" onClick={() => setExpandedComponentId(row.componentId)}>
+                          Ver historial
+                        </button>
+                      )}
+                      {!row.st && !executionContext && planItem && (
+                        <button className="btn-primary btn-xs" onClick={() => handleInlineAddTaskToST(planItem)}>
                           Agregar a ST
                         </button>
                       )}
-                      {!showExecutionActions && flow.openOrDraftSt && (
-                        <button
-                          className="btn-secondary btn-xs"
-                          onClick={() => handleInlineViewST(flow.openOrDraftSt!.id)}
-                        >
-                          Ver ST
+                      {!row.st && !executionContext && !planItem && row.component && (
+                        <button className="btn-primary btn-xs" onClick={() => handleInlineAddComponentToST(row.component!)}>
+                          Agregar a ST
                         </button>
                       )}
-                      {showExecutionActions && applicationTask && (
-                        <button className="btn-secondary btn-xs" onClick={() => openExecutionFlow(applicationTask, 'maintenance_application', c.id)}>
+                      {planItem && executionContext && !isReplacement && (
+                        <button className="btn-secondary btn-xs" onClick={() => openExecutionFlow(planItem, 'maintenance_application')}>
                           Registrar aplicación
                         </button>
                       )}
-                      {showExecutionActions && replacementTask && (
-                        <button className="btn-primary btn-xs" onClick={() => openExecutionFlow(replacementTask, 'component_replacement', c.id)}>
-                          Registrar cambio ejecutado
+                      {planItem && executionContext && isReplacement && (
+                        <button className="btn-primary btn-xs" onClick={() => openExecutionFlow(planItem, 'component_replacement')}>
+                          Registrar cambio
+                        </button>
+                      )}
+                      {planItem && due?.requiresComponentTracking && !row.componentId && (
+                        <button className="btn-secondary btn-xs" onClick={() => setInitialRegistrationTask(planItem)}>
+                          Registrar componente inicial
                         </button>
                       )}
                     </div>
@@ -1694,6 +1836,7 @@ export default function ComponentsPage() {
             })}
           </tbody>
         </table>
+        )}
       </div>
 
       {expandedComponentId && selectedTimelineComponent && (
@@ -1734,6 +1877,7 @@ export default function ComponentsPage() {
                       const visible = resolveVisibleState({
                         flow,
                         latestApplication: selectedTimelineDue?.latestApplication ?? null,
+                        hasBaseline: selectedTimelineDue?.hasBaseline ?? false,
                         traceStatus,
                         dueStatus,
                       });
@@ -1789,142 +1933,6 @@ export default function ComponentsPage() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
-        <div className="px-5 py-4 border-b border-slate-100">
-          <h2 className="text-sm font-bold text-slate-900">Tareas de componente desde plan</h2>
-          <p className="text-xs text-slate-500 mt-1">Filtro por contrato backend: tracking explícito o reemplazo de componente.</p>
-          <div className="mt-3">
-            <input
-              type="text"
-              value={componentTaskSearch}
-              onChange={(e) => setComponentTaskSearch(e.target.value)}
-              placeholder="Buscar tarea de componente..."
-              className="filter-input w-full md:w-96"
-            />
-          </div>
-        </div>
-        {!selectedAircraft ? (
-          <div className="px-5 py-10 text-sm text-slate-400 text-center">Selecciona una aeronave para ver sus tareas de componente.</div>
-        ) : loadingPlanTasks ? (
-          <div className="px-5 py-10 text-sm text-slate-400 text-center">Cargando tareas de componente...</div>
-        ) : filteredComponentChapterTasks.length === 0 ? (
-          <div className="px-5 py-10 text-sm text-slate-400 text-center">No hay tareas de componente para esta aeronave.</div>
-        ) : (
-          <table className="min-w-full divide-y divide-slate-100 text-sm">
-            <thead className="bg-white sticky top-0 z-10 border-b border-slate-200">
-              <tr>
-                <th className="table-header">Tarea</th>
-                <th className="table-header">Descripción</th>
-                <th className="table-header">Intervalo</th>
-                <th className="table-header">Próximo cumplimiento</th>
-                <th className="table-header">Estado</th>
-                <th className="table-header">Tracking</th>
-                <th className="table-header">Solicitud</th>
-                <th className="table-header text-center">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredComponentChapterTasks.map((item) => {
-                const taskModel = taskExecutionModelByTaskId.get(item.taskId) ?? {
-                  executionType: item.executionType,
-                  requiresComponentTracking: item.requiresComponentTracking,
-                };
-                const appContext = getExecutionContextForTask(item, 'maintenance_application');
-                const replacementContext = getExecutionContextForTask(item, 'component_replacement');
-                const openSt = openOrDraftSTByTaskId.get(item.taskId) ?? null;
-                const associatedComponent = currentComponentByTaskId.get(item.taskId) ?? null;
-                const hasExecutedApplication = effectiveComponentApplications.some((app) => (
-                  app.taskId === item.taskId
-                  && app.aircraftId === selectedAircraft
-                  && app.type !== 'baseline'
-                ));
-                const contextForTask = taskModel.executionType === 'component_replacement' ? replacementContext : appContext;
-                const taskVisibleState: VisibleComponentState = contextForTask
-                  ? 'OT recibida'
-                  : openSt
-                    ? 'En ST'
-                    : hasExecutedApplication || item.status === 'OK'
-                      ? 'Al día / Ejecutado'
-                      : item.status === 'OVERDUE'
-                        ? 'Vencida'
-                        : item.status === 'DUE_SOON'
-                          ? 'Próx. vencer'
-                          : 'Sin registro';
-
-                return (
-                <tr key={item.taskId} className="hover:bg-slate-50 transition-colors">
-                  <td className="table-cell font-mono text-xs text-slate-700">{item.taskCode}</td>
-                  <td className="table-cell text-slate-700">{item.taskTitle}</td>
-                  <td className="table-cell text-xs text-slate-600">{replacementIntervalLabel(item)}</td>
-                  <td className="table-cell text-xs text-slate-600">
-                    {[
-                      item.nextDueHours != null ? `${item.nextDueHours.toFixed(1)} h` : null,
-                      item.nextDueCycles != null ? `${item.nextDueCycles} cic` : null,
-                      item.nextDueDate ? new Date(item.nextDueDate).toLocaleDateString('es-MX') : null,
-                    ].filter(Boolean).join(' / ') || MISSING_OPERATIONAL_CONTEXT_LABEL}
-                  </td>
-                  <td className="table-cell text-xs">{visibleStateBadge(taskVisibleState)}</td>
-                  <td className="table-cell text-xs text-slate-600">
-                    {taskModel.requiresComponentTracking
-                      ? associatedComponent
-                        ? `${associatedComponent.partNumber} / ${associatedComponent.serialNumber}`
-                        : 'Sin componente asociado'
-                      : 'No requiere componente'}
-                  </td>
-                  <td className="table-cell text-xs text-slate-600">
-                    {contextForTask ? (
-                      <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-progress">OT recibida/firmada</span>
-                    ) : openSt ? (
-                      <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-progress">En borrador {openSt.ref}</span>
-                    ) : (
-                      <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-neutral">Sin solicitud</span>
-                    )}
-                  </td>
-                  <td className="table-cell text-center">
-                    <div className="flex items-center justify-center gap-1.5">
-                      {!contextForTask && !openSt && (
-                        <button
-                          className="btn-primary btn-xs"
-                          onClick={() => handleInlineAddTaskToST(item)}
-                        >
-                          Agregar a ST
-                        </button>
-                      )}
-                      {taskModel.executionType === 'component_replacement' && taskModel.requiresComponentTracking && !associatedComponent && (
-                        <button
-                          className="btn-secondary btn-xs"
-                          onClick={() => setInitialRegistrationTask(item)}
-                        >
-                          Registrar componente inicial
-                        </button>
-                      )}
-                      {!contextForTask && openSt && (
-                        <button
-                          className="btn-secondary btn-xs"
-                          onClick={() => handleInlineViewST(openSt.id)}
-                        >
-                          Ver ST
-                        </button>
-                      )}
-                      {taskModel.executionType === 'maintenance' && appContext && (
-                        <button className="btn-secondary btn-xs" onClick={() => openExecutionFlow(item, 'maintenance_application')}>
-                          Registrar aplicación
-                        </button>
-                      )}
-                      {taskModel.executionType === 'component_replacement' && replacementContext && (
-                        <button className="btn-primary btn-xs" onClick={() => openExecutionFlow(item, 'component_replacement')}>
-                          Registrar cambio ejecutado
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
         <div className="px-5 py-4 border-b border-slate-100">
@@ -1934,42 +1942,44 @@ export default function ComponentsPage() {
           <thead className="bg-white sticky top-0 z-10 border-b border-slate-200">
             <tr>
               <th className="table-header">Fecha</th>
-              <th className="table-header">Posición</th>
               <th className="table-header">Movimiento</th>
-              <th className="table-header">P/N saliente</th>
-              <th className="table-header">S/N saliente</th>
-              <th className="table-header">P/N entrante</th>
-              <th className="table-header">S/N entrante</th>
-              <th className="table-header">Hrs</th>
-              <th className="table-header">Ciclos</th>
-              <th className="table-header">ST</th>
+              <th className="table-header">P/N</th>
+              <th className="table-header">S/N</th>
+              <th className="table-header">Descripción</th>
+              <th className="table-header">Posición</th>
+              <th className="table-header">Hrs aeronave</th>
+              <th className="table-header">Ciclos aeronave</th>
+              <th className="table-header">Hrs componente</th>
               <th className="table-header">OT</th>
               <th className="table-header">Usuario</th>
+              <th className="table-header">Notas</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {componentMovements.map((row) => (
+            {loadingMovementHistory && (
+              <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-8">Cargando historial…</td></tr>
+            )}
+            {!loadingMovementHistory && movementHistory.length === 0 && (
+              <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-8">Sin movimientos registrados para esta aeronave.</td></tr>
+            )}
+            {movementHistory.map((row) => (
               <tr key={row.id} className="hover:bg-slate-50 transition-colors">
-                <td className="table-cell text-xs text-slate-600">{new Date(row.performedAt).toLocaleString('es-MX')}</td>
-                <td className="table-cell text-xs text-slate-700">{row.position}</td>
+                <td className="table-cell text-xs text-slate-600">{new Date(row.movedAt).toLocaleString('es-MX')}</td>
                 <td className="table-cell text-xs text-slate-700">{movementTypeBadge(row.movementType)}</td>
-                <td className="table-cell text-xs text-slate-700 font-mono">{row.removedPartNumber ?? (row.removedComponentInstanceId ? componentById.get(row.removedComponentInstanceId)?.partNumber ?? '—' : '—')}</td>
-                <td className="table-cell text-xs text-slate-700 font-mono">{row.removedSerialNumber ?? (row.removedComponentInstanceId ? componentById.get(row.removedComponentInstanceId)?.serialNumber ?? '—' : '—')}</td>
-                <td className="table-cell text-xs text-slate-700 font-mono">{row.installedPartNumber ?? (row.installedComponentInstanceId ? componentById.get(row.installedComponentInstanceId)?.partNumber ?? '—' : '—')}</td>
-                <td className="table-cell text-xs text-slate-700 font-mono">{row.installedSerialNumber ?? (row.installedComponentInstanceId ? componentById.get(row.installedComponentInstanceId)?.serialNumber ?? '—' : '—')}</td>
-                <td className="table-cell text-xs text-slate-700 tabular-nums">{row.aircraftHoursAtMovement.toFixed(1)}</td>
+                <td className="table-cell text-xs text-slate-700 font-mono">{row.component?.partNumber ?? componentById.get(row.componentId)?.partNumber ?? '—'}</td>
+                <td className="table-cell text-xs text-slate-700 font-mono">{row.component?.serialNumber ?? componentById.get(row.componentId)?.serialNumber ?? '—'}</td>
+                <td className="table-cell text-xs text-slate-700">{row.component?.description ?? componentById.get(row.componentId)?.description ?? '—'}</td>
+                <td className="table-cell text-xs text-slate-700">{row.position ?? '—'}</td>
+                <td className="table-cell text-xs text-slate-700 tabular-nums">{Number(row.aircraftHoursAtMovement).toFixed(1)}</td>
                 <td className="table-cell text-xs text-slate-700 tabular-nums">{row.aircraftCyclesAtMovement}</td>
+                <td className="table-cell text-xs text-slate-700 tabular-nums">{Number(row.componentHoursAtMovement).toFixed(1)}</td>
                 <td className="table-cell text-xs text-slate-700">
-                  {row.workRequestId
-                    ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-progress">ST {row.workRequestId}</span>
-                    : <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-neutral">Sin ST</span>}
-                </td>
-                <td className="table-cell text-xs text-slate-700">
-                  {row.workOrderNumber
-                    ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-progress">OT {row.workOrderNumber}</span>
+                  {row.workOrder?.number
+                    ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-progress">OT {row.workOrder.number}</span>
                     : <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-neutral">Sin OT</span>}
                 </td>
-                <td className="table-cell text-xs text-slate-500">{row.performedByUserName}</td>
+                <td className="table-cell text-xs text-slate-500">{row.performedBy?.name ?? '—'}</td>
+                <td className="table-cell text-xs text-slate-500 max-w-[260px]">{row.notes ?? '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -1996,7 +2006,7 @@ export default function ComponentsPage() {
             {effectiveComponentApplications.map((row) => (
               <tr key={row.id} className="hover:bg-slate-50 transition-colors">
                 <td className="table-cell text-xs text-slate-600">{new Date(row.appliedAt).toLocaleString('es-MX')}</td>
-                <td className="table-cell text-xs text-slate-700">{row.taskId}</td>
+                <td className="table-cell text-xs text-slate-700">{taskById.get(row.taskId)?.taskCode ?? MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
                 <td className="table-cell text-xs text-slate-700 tabular-nums">{row.aircraftHoursAtApplication.toFixed(1)}</td>
                 <td className="table-cell text-xs text-slate-700 tabular-nums">{row.aircraftCyclesAtApplication}</td>
                 <td className="table-cell text-xs text-slate-700">
@@ -2030,6 +2040,8 @@ export default function ComponentsPage() {
             qc.invalidateQueries({ queryKey: ['components-plan-items', selectedAircraft] });
             qc.invalidateQueries({ queryKey: ['maintenance-plan', selectedAircraft] });
             qc.invalidateQueries({ queryKey: ['component-applications-bulk', selectedAircraft] });
+            qc.invalidateQueries({ queryKey: ['component-movement-history', selectedAircraft] });
+            qc.invalidateQueries({ queryKey: ['due-rows', selectedAircraft] });
           }}
         />
       )}
@@ -2049,17 +2061,13 @@ export default function ComponentsPage() {
             setExecutionDraft(null);
             setShowModal(true);
           }}
-          onMovement={(movement) => {
-            setComponentMovements((prev) => [movement, ...prev]);
-            if (movement.removedComponentInstanceId) {
-              setRemovedComponentIds((prev) => [...prev, movement.removedComponentInstanceId!]);
-            }
-          }}
           onApplication={(application) => setComponentApplications((prev) => [application, ...prev])}
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ['components', selectedAircraft] });
             qc.invalidateQueries({ queryKey: ['components-plan-items', selectedAircraft] });
             qc.invalidateQueries({ queryKey: ['maintenance-plan', selectedAircraft] });
+            qc.invalidateQueries({ queryKey: ['component-movement-history', selectedAircraft] });
+            qc.invalidateQueries({ queryKey: ['due-rows', selectedAircraft] });
           }}
         />
       )}

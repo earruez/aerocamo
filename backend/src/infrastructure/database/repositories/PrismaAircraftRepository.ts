@@ -285,6 +285,7 @@ export class PrismaAircraftRepository implements IAircraftRepository {
         taskTitle:           task.title,
         executionType,
         requiresComponentTracking,
+        equipmentScope: (task as unknown as { equipmentScope?: 'AIRCRAFT' | 'ENGINE' }).equipmentScope ?? 'AIRCRAFT',
         componentDefinitionId: requiresComponentTracking ? task.id : null,
         intervalType:        task.intervalType,
         intervalHours:       task.intervalHours != null ? Number(task.intervalHours) : null,

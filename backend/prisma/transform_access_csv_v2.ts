@@ -456,7 +456,70 @@ async function main(): Promise<void> {
       DESCRIPCION: objeto,
       IDE_ORIGEN: ide,
       DOMINIO_ORIGEN: domain,
+      _FULT: get(row, 'FULT', 'fult'),
+      _OBS: get(row, 'OBS', 'obs'),
     });
+  }
+
+  // El mismo S/N puede aparecer en varias aeronaves (historial de rotación en Access)
+  // y la base impone S/N único por organización: gana la fila con actividad más
+  // reciente. La actividad se estima con la fecha FULT y con el año de la referencia
+  // de OT en la observación ("OT DET/05-2026" > FULT 2023 de la aeronave anterior),
+  // porque las filas controladas solo por horas no traen fecha.
+  const parseFult = (value: string | undefined): number => {
+    const raw = (value ?? '').trim().split(' ')[0];
+    const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (!m) return 0;
+    let year = Number(m[3]);
+    if (year < 100) year += year <= 68 ? 2000 : 1900;
+    return Date.UTC(year, Number(m[1]) - 1, Number(m[2]));
+  };
+  const parseOtYear = (obs: string | undefined): number => {
+    const match = (obs ?? '').match(/\bOT[\s.:]+([A-ZÑ0-9][A-ZÑ0-9/.\- ]{0,20})/i);
+    if (!match) return 0;
+    const tokens = match[1].match(/\d{2,4}/g) ?? [];
+    const fourDigit = tokens.find((t) => /^20\d{2}$/.test(t));
+    if (fourDigit) return Date.UTC(Number(fourDigit), 0, 1);
+    const twoDigit = tokens.map(Number).find((n) => n >= 0 && n <= 49);
+    if (twoDigit != null) return Date.UTC(2000 + twoDigit, 0, 1);
+    return 0;
+  };
+  const activityScore = (row: CsvRow): number => Math.max(parseFult(row._FULT), parseOtYear(row._OBS));
+  const duplicatedSerials: Array<{ sn: string; kept: string; discarded: string[] }> = [];
+  const bySerial = new Map<string, CsvRow>();
+  for (const row of componentesRows) {
+    const key = row.SN;
+    const current = bySerial.get(key);
+    if (!current) {
+      bySerial.set(key, row);
+      continue;
+    }
+    const currentScore = activityScore(current);
+    const candidateScore = activityScore(row);
+    const winner = candidateScore > currentScore ? row : current;
+    const loser = winner === row ? current : row;
+    bySerial.set(key, winner);
+    const existing = duplicatedSerials.find((d) => d.sn === key);
+    if (existing) {
+      existing.kept = `${winner.MAT}|${winner.PN}`;
+      existing.discarded.push(`${loser.MAT}|${loser.PN}`);
+    } else {
+      duplicatedSerials.push({ sn: key, kept: `${winner.MAT}|${winner.PN}`, discarded: [`${loser.MAT}|${loser.PN}`] });
+    }
+  }
+  const dedupedComponentesRows = Array.from(bySerial.values()).map((row) => {
+    const { _FULT, _OBS, ...rest } = row;
+    return rest;
+  });
+  componentesRows.length = 0;
+  componentesRows.push(...dedupedComponentesRows);
+  if (duplicatedSerials.length > 0) {
+    fs.writeFileSync(
+      path.join(CSV_DIR, 'componentes-duplicados-por-sn.json'),
+      JSON.stringify(duplicatedSerials, null, 2),
+      'utf-8',
+    );
+    console.log(`Seriales duplicados entre aeronaves resueltos por FULT: ${duplicatedSerials.length} (ver componentes-duplicados-por-sn.json)`);
   }
 
   const domainCounts: DomainSummary[] = Array.from(domainCounter.entries())

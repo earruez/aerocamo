@@ -86,6 +86,72 @@ router.get('/aircraft/:aircraftId', async (req: Request, res: Response, next: Ne
   } catch (err) { next(err); }
 });
 
+const complianceInclude = {
+  task: {
+    select: {
+      id: true,
+      code: true,
+      title: true,
+      referenceType: true,
+      referenceNumber: true,
+    },
+  },
+  performedBy: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+  component: {
+    select: {
+      installationDate: true,
+    },
+  },
+} as const;
+
+function mapComplianceRow(row: {
+  notes: string | null;
+  applicationType: unknown;
+  workOrderNumber: string | null;
+  performedAt: Date;
+  isInitial: boolean | null;
+  component: { installationDate: Date | null } | null;
+}) {
+  const note = (row.notes ?? '').trim().toLowerCase();
+  const explicitType = row.applicationType as string | null;
+  const isBaseline = explicitType === 'baseline' || note === BASELINE_NOTE.toLowerCase();
+  const installedAt = row.component?.installationDate ? new Date(row.component.installationDate).getTime() : null;
+  const performedAt = new Date(row.performedAt).getTime();
+  const isReplacementStart = explicitType === 'replacement_start'
+    || (!isBaseline && row.workOrderNumber != null && installedAt != null && installedAt === performedAt);
+
+  return {
+    ...row,
+    applicationType: isBaseline ? 'baseline' : isReplacementStart ? 'replacement_start' : 'application',
+    isInitial: row.isInitial ?? isBaseline,
+  };
+}
+
+// Bulk: todos los cumplimientos de componentes de una aeronave en una sola petición.
+// (La versión por componente disparaba ~1 request por componente y tumbaba el rate limiter.)
+router.get('/aircraft/:aircraftId/compliances', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const rows = await prisma.compliance.findMany({
+      where: {
+        organizationId: req.organizationId,
+        aircraftId: req.params.aircraftId,
+        componentId: { not: null },
+      },
+      include: complianceInclude,
+      orderBy: { performedAt: 'desc' },
+    });
+
+    res.status(200).json({ status: 'success', data: rows.map(mapComplianceRow) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id/compliances', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const rows = await prisma.compliance.findMany({
@@ -93,49 +159,12 @@ router.get('/:id/compliances', async (req: Request, res: Response, next: NextFun
         componentId: req.params.id,
         organizationId: req.organizationId,
       },
-      include: {
-        task: {
-          select: {
-            id: true,
-            code: true,
-            title: true,
-            referenceType: true,
-            referenceNumber: true,
-          },
-        },
-        performedBy: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        component: {
-          select: {
-            installationDate: true,
-          },
-        },
-      },
+      include: complianceInclude,
       orderBy: { performedAt: 'desc' },
       take: 100,
     });
 
-    const data = rows.map((row) => {
-      const note = (row.notes ?? '').trim().toLowerCase();
-      const explicitType = row.applicationType as string | null;
-      const isBaseline = explicitType === 'baseline' || note === BASELINE_NOTE.toLowerCase();
-      const installedAt = row.component?.installationDate ? new Date(row.component.installationDate).getTime() : null;
-      const performedAt = new Date(row.performedAt).getTime();
-      const isReplacementStart = explicitType === 'replacement_start'
-        || (!isBaseline && row.workOrderNumber != null && installedAt != null && installedAt === performedAt);
-
-      return {
-        ...row,
-        applicationType: isBaseline ? 'baseline' : isReplacementStart ? 'replacement_start' : 'application',
-        isInitial: row.isInitial ?? isBaseline,
-      };
-    });
-
-    res.status(200).json({ status: 'success', data });
+    res.status(200).json({ status: 'success', data: rows.map(mapComplianceRow) });
   } catch (err) {
     next(err);
   }

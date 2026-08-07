@@ -30,10 +30,17 @@ export interface DueRow {
   aircraftRegistration: string;
   sourceType: DueSourceType;
   sourceId: string;
+  taskCode: string;
   category: string;
   description: string;
+  componentId: string | null;
   partNumber: string | null;
   serialNumber: string | null;
+  requiresComponentTracking: boolean;
+  equipmentScope: 'AIRCRAFT' | 'ENGINE';
+  controlStartAt: string | null;
+  controlStartHours: number | null;
+  hasRealCompliance: boolean;
   method: DueMethod;
   intervalValue: number | null;
   intervalUnit: string;

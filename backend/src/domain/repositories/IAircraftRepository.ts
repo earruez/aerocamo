@@ -12,6 +12,7 @@ export interface MaintenancePlanItem {
   taskTitle: string;
   executionType: MaintenanceExecutionType;
   requiresComponentTracking: boolean;
+  equipmentScope: 'AIRCRAFT' | 'ENGINE';
   componentDefinitionId: string | null;
   intervalType: string;
   intervalHours: number | null;

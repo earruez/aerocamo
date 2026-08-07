@@ -31,7 +31,12 @@ export function createApp(): Application {
     },
     credentials: true,
   }));
-  app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false }));
+  app.use(rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: env.NODE_ENV === 'development' ? 2000 : 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }));
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true }));
   app.use(requestLogger);
