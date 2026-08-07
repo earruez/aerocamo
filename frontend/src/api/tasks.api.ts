@@ -69,6 +69,15 @@ export const tasksApi = {
     await apiClient.post(`/tasks/aircraft/${aircraftId}/assign`, { taskId });
   },
 
+  /** Marca si la tarea aplica o no a la aeronave, conservando el vínculo. */
+  setApplicability: async (
+    aircraftId: string,
+    taskId: string,
+    input: { applies: boolean; notes?: string | null },
+  ): Promise<void> => {
+    await apiClient.patch(`/tasks/aircraft/${aircraftId}/tasks/${taskId}/applicability`, input);
+  },
+
   removeFromAircraft: async (aircraftId: string, taskId: string): Promise<void> => {
     await apiClient.delete(`/tasks/aircraft/${aircraftId}/tasks/${taskId}`);
   },

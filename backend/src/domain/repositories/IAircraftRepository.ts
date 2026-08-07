@@ -13,6 +13,9 @@ export interface MaintenancePlanItem {
   executionType: MaintenanceExecutionType;
   requiresComponentTracking: boolean;
   equipmentScope: 'AIRCRAFT' | 'ENGINE';
+  isApplicable: boolean;
+  applicabilityNotes: string | null;
+  applicabilityChangedAt: Date | null;
   complianceRecurrence: 'REPETITIVE' | 'ONE_TIME' | 'ON_CONDITION' | 'ON_EVENT' | 'PERMANENT' | 'UNSPECIFIED';
   componentDefinitionId: string | null;
   intervalType: string;
@@ -57,5 +60,9 @@ export interface IAircraftRepository {
   create(input: CreateAircraftInput): Promise<Aircraft>;
   update(id: string, organizationId: string, input: UpdateAircraftInput): Promise<Aircraft>;
   delete(id: string, organizationId: string): Promise<void>;
-  getMaintenancePlan(aircraftId: string, organizationId: string): Promise<MaintenancePlanItem[]>;
+  getMaintenancePlan(
+    aircraftId: string,
+    organizationId: string,
+    options?: { includeNotApplicable?: boolean },
+  ): Promise<MaintenancePlanItem[]>;
 }

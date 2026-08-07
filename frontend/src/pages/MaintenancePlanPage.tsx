@@ -24,6 +24,7 @@ type MaintenanceType = 'HORARIO' | 'CALENDARIO' | 'MIXTO';
 type MaintenanceTypeTab = 'ALL' | MaintenanceType;
 type NormativeTab = 'ALL' | 'FABRICANTE' | 'DGAC' | 'MOTOR' | 'EASA';
 type RecurrenceTab = 'ALL' | 'REPETITIVE' | 'ONE_TIME';
+type ApplicabilityTab = 'APPLIES' | 'NOT_APPLIES' | 'ALL';
 
 const MAINTENANCE_TYPE_META: Record<MaintenanceType, { label: string; badge: string }> = {
   HORARIO: {
@@ -955,7 +956,13 @@ function TaskRow({
           </p>
         )}
       </td>
-      <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">{intervalLabel()}</td>
+      <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">
+        {!item.isApplicable && item.applicabilityNotes ? (
+          <span className="block max-w-[220px] truncate text-[11px] text-amber-800" title={item.applicabilityNotes}>
+            No aplica: {item.applicabilityNotes}
+          </span>
+        ) : intervalLabel()}
+      </td>
       <td className="px-4 py-3.5 whitespace-nowrap text-xs">
         <span className={item.status === 'OVERDUE' ? 'text-rose-700 font-semibold' : item.status === 'DUE_SOON' ? 'text-amber-700 font-semibold' : 'text-slate-600'}>
           {nextDueLabel()}
@@ -1018,12 +1025,10 @@ function TaskRow({
       <td className="px-4 py-3.5 whitespace-nowrap">
         <div className="flex items-center gap-2">
           <select
-            className="filter-input h-7 min-w-[108px] py-0 px-2 text-xs"
-            value="applies"
+            className={`filter-input h-7 min-w-[108px] py-0 px-2 text-xs ${item.isApplicable ? '' : 'border-amber-300 bg-amber-50 text-amber-800'}`}
+            value={item.isApplicable ? 'applies' : 'not_applies'}
             disabled={applicabilityPending}
-            onChange={(e) => {
-              if (e.target.value === 'not_applies') onSetApplicability(item, false);
-            }}
+            onChange={(e) => onSetApplicability(item, e.target.value === 'applies')}
           >
             <option value="applies">Aplica</option>
             <option value="not_applies">No aplica</option>
@@ -1145,6 +1150,62 @@ function TaskComplianceHistoryPanel({
   );
 }
 
+// ─── Modal: justificar la no aplicabilidad ────────────────────────────────────
+function NotApplicableModal({
+  item, currentNotes, onCancel, onConfirm, isPending,
+}: {
+  item: MaintenancePlanItem;
+  currentNotes: string | null;
+  onCancel: () => void;
+  onConfirm: (notes: string) => void;
+  isPending: boolean;
+}) {
+  const [notes, setNotes] = useState(currentNotes ?? '');
+
+  return (
+    <Modal title="Marcar como no aplica" onClose={onCancel}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!notes.trim()) return;
+          onConfirm(notes.trim());
+        }}
+        className="space-y-4"
+      >
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <p className="font-mono text-xs text-slate-500">{item.taskCode}</p>
+          <p className="text-sm font-medium text-slate-800">{item.taskTitle}</p>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-slate-600">
+            ¿Por qué no aplica? <span className="text-rose-500">*</span>
+          </label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={3}
+            autoFocus
+            className="input"
+            placeholder="Ej: no aplica por ambiente salino; aeronave nueva; superseded por AD posterior…"
+          />
+          <p className="mt-1.5 text-[11px] text-slate-500">
+            La tarea seguirá visible en el plan y podrás volver a marcarla como aplica
+            si cambian las condiciones de operación.
+          </p>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" onClick={onCancel} className="btn-secondary">Cancelar</button>
+          <button type="submit" className="btn-primary" disabled={isPending || !notes.trim()}>
+            {isPending ? 'Guardando…' : 'Marcar como no aplica'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 type ModalState =
   | null
@@ -1164,6 +1225,7 @@ type ApplicabilityUndoAction = {
   taskId: string;
   taskCode: string;
   appliesAfterChange: boolean;
+  previousNotes: string | null;
 };
 
 export default function MaintenancePlanPage() {
@@ -1174,7 +1236,9 @@ export default function MaintenancePlanPage() {
   const [filterStatus, setFilterStatus] = useState<PlanItemStatus | ''>(searchParams.get('status') as PlanItemStatus | '' ?? '');
   const [normativeTab, setNormativeTab] = useState<NormativeTab>('ALL');
   const [recurrenceTab, setRecurrenceTab] = useState<RecurrenceTab>('ALL');
+  const [applicabilityTab, setApplicabilityTab] = useState<ApplicabilityTab>('APPLIES');
   const [historyTask, setHistoryTask] = useState<MaintenancePlanItem | null>(null);
+  const [notApplicableTask, setNotApplicableTask] = useState<MaintenancePlanItem | null>(null);
   const [maintenanceTab, setMaintenanceTab] = useState<MaintenanceTypeTab>('ALL');
   const [onlyPendingAction, setOnlyPendingAction] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
@@ -1210,7 +1274,7 @@ export default function MaintenancePlanPage() {
     error: planErrorDetails,
   } = useQuery({
     queryKey: ['maintenance-plan', selectedId],
-    queryFn: () => maintenancePlanApi.getForAircraft(selectedId!),
+    queryFn: () => maintenancePlanApi.getForAircraft(selectedId!, { includeNotApplicable: true }),
     enabled: !!selectedId,
     staleTime: 0,
     refetchOnMount: 'always',
@@ -1307,7 +1371,7 @@ export default function MaintenancePlanPage() {
   const setTaskApplicability = async (
     item: MaintenancePlanItem,
     applies: boolean,
-    options?: { trackUndo?: boolean; aircraftIdOverride?: string },
+    options?: { trackUndo?: boolean; aircraftIdOverride?: string; notes?: string | null },
   ) => {
     const aircraftId = options?.aircraftIdOverride ?? selectedId;
     if (!aircraftId) {
@@ -1317,11 +1381,10 @@ export default function MaintenancePlanPage() {
 
     setApplicabilityBusyTaskId(item.taskId);
     try {
-      if (applies) {
-        await tasksApi.assignToAircraft(aircraftId, item.taskId);
-      } else {
-        await tasksApi.removeFromAircraft(aircraftId, item.taskId);
-      }
+      await tasksApi.setApplicability(aircraftId, item.taskId, {
+        applies,
+        notes: options?.notes ?? null,
+      });
 
       qc.invalidateQueries({ queryKey: ['maintenance-plan', aircraftId] });
 
@@ -1331,6 +1394,7 @@ export default function MaintenancePlanPage() {
           taskId: item.taskId,
           taskCode: item.taskCode,
           appliesAfterChange: applies,
+          previousNotes: item.applicabilityNotes,
         });
         toast.success(applies ? 'Marcada como aplica' : 'Marcada como no aplica');
         toast('Presiona Ctrl+Z o Cmd+Z para deshacer', { icon: '↩️' });
@@ -1349,11 +1413,14 @@ export default function MaintenancePlanPage() {
     setApplicabilityBusyTaskId(lastApplicabilityAction.taskId);
 
     try {
-      if (reverseApplies) {
-        await tasksApi.assignToAircraft(lastApplicabilityAction.aircraftId, lastApplicabilityAction.taskId);
-      } else {
-        await tasksApi.removeFromAircraft(lastApplicabilityAction.aircraftId, lastApplicabilityAction.taskId);
-      }
+      await tasksApi.setApplicability(
+        lastApplicabilityAction.aircraftId,
+        lastApplicabilityAction.taskId,
+        {
+          applies: reverseApplies,
+          notes: reverseApplies ? null : lastApplicabilityAction.previousNotes ?? 'Restaurado por deshacer',
+        },
+      );
 
       qc.invalidateQueries({ queryKey: ['maintenance-plan', lastApplicabilityAction.aircraftId] });
       toast.success(`Deshecho: ${lastApplicabilityAction.taskCode}`);
@@ -1466,6 +1533,8 @@ export default function MaintenancePlanPage() {
         if (normativeTab === 'DGAC' && i.referenceType !== 'INTERNAL') return false;
         if (normativeTab === 'EASA' && i.referenceType !== 'AD') return false;
         if (normativeTab === 'MOTOR' && !isMotorNormativeTask(i)) return false;
+        if (applicabilityTab === 'APPLIES' && !i.isApplicable) return false;
+        if (applicabilityTab === 'NOT_APPLIES' && i.isApplicable) return false;
         if (recurrenceTab === 'REPETITIVE' && i.complianceRecurrence !== 'REPETITIVE') return false;
         if (recurrenceTab === 'ONE_TIME' && i.complianceRecurrence !== 'ONE_TIME') return false;
         if (normativeTab === 'FABRICANTE') {
@@ -1494,21 +1563,30 @@ export default function MaintenancePlanPage() {
 
         return STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
       });
-  }, [planItems, filterStatus, normativeTab, recurrenceTab, maintenanceTab, search, smartPriorityByTaskId, onlyPendingAction, priorityContext]);
+  }, [planItems, filterStatus, normativeTab, recurrenceTab, applicabilityTab, maintenanceTab, search, smartPriorityByTaskId, onlyPendingAction, priorityContext]);
+
+  // Las tareas marcadas "no aplica" siguen en el plan, pero no deben contar como
+  // pendientes ni disparar alertas de aeronavegabilidad.
+  const activePlanItems = useMemo(() => planItems.filter((i) => i.isApplicable), [planItems]);
 
   const normativeCounts = useMemo(() => {
-    const dgac = planItems.filter(i => i.referenceType === 'INTERNAL').length;
-    const easa = planItems.filter(i => i.referenceType === 'AD').length;
-    const motor = planItems.filter(i => isMotorNormativeTask(i)).length;
-    const fabricante = planItems.filter(i => i.referenceType === 'AMM' && !isMotorNormativeTask(i)).length;
+    const dgac = activePlanItems.filter(i => i.referenceType === 'INTERNAL').length;
+    const easa = activePlanItems.filter(i => i.referenceType === 'AD').length;
+    const motor = activePlanItems.filter(i => isMotorNormativeTask(i)).length;
+    const fabricante = activePlanItems.filter(i => i.referenceType === 'AMM' && !isMotorNormativeTask(i)).length;
     return { dgac, easa, motor, fabricante };
   }, [planItems]);
+
+  const applicabilityCounts = useMemo(() => ({
+    applies: planItems.filter((i) => i.isApplicable).length,
+    notApplies: planItems.filter((i) => !i.isApplicable).length,
+  }), [planItems]);
 
   /** Conteo de recurrencia sobre el origen ya elegido, para que las cifras acompañen al filtro. */
   const recurrenceCounts = useMemo(() => {
     const scoped = normativeTab === 'ALL'
-      ? planItems
-      : planItems.filter((i) => {
+      ? activePlanItems
+      : activePlanItems.filter((i) => {
           if (normativeTab === 'DGAC') return i.referenceType === 'INTERNAL';
           if (normativeTab === 'EASA') return i.referenceType === 'AD';
           if (normativeTab === 'MOTOR') return isMotorNormativeTask(i);
@@ -1518,11 +1596,11 @@ export default function MaintenancePlanPage() {
       repetitive: scoped.filter((i) => i.complianceRecurrence === 'REPETITIVE').length,
       oneTime: scoped.filter((i) => i.complianceRecurrence === 'ONE_TIME').length,
     };
-  }, [planItems, normativeTab]);
+  }, [activePlanItems, normativeTab]);
 
   const pendingActionCount = useMemo(() => (
-    planItems.filter((item) => item.status !== 'OK').length
-  ), [planItems]);
+    activePlanItems.filter((item) => item.status !== 'OK').length
+  ), [activePlanItems]);
 
   const smartSummary = useMemo(() => {
     const criticalItems = filteredPlan.filter((item) => {
@@ -1564,7 +1642,7 @@ export default function MaintenancePlanPage() {
     let inWorkRequestCount = 0;
     let dueSoonCount = 0;
 
-    for (const item of planItems) {
+    for (const item of activePlanItems) {
       const priority = smartPriorityByTaskId.get(item.taskId) ?? getSmartPriority(item, priorityContext);
       const maintenanceType = classifyMaintenanceType(item);
       const inRequest = isItemInRequest(item);
@@ -1614,19 +1692,19 @@ export default function MaintenancePlanPage() {
       rawScore,
       mitigation,
     };
-  }, [planItems, smartPriorityByTaskId, inlineStByTaskId, priorityContext]);
+  }, [activePlanItems, smartPriorityByTaskId, inlineStByTaskId, priorityContext]);
 
   const aircraftAlert = useMemo(() => {
-    const overdueCount = planItems.filter((item) => item.status === 'OVERDUE').length;
-    const dueSoonCount = planItems.filter((item) => item.status === 'DUE_SOON').length;
+    const overdueCount = activePlanItems.filter((item) => item.status === 'OVERDUE').length;
+    const dueSoonCount = activePlanItems.filter((item) => item.status === 'DUE_SOON').length;
 
-    const mixedCriticalSoonCount = planItems.filter((item) => {
+    const mixedCriticalSoonCount = activePlanItems.filter((item) => {
       if (classifyMaintenanceType(item) !== 'MIXTO') return false;
       const priority = smartPriorityByTaskId.get(item.taskId) ?? getSmartPriority(item, priorityContext);
       return priority.visual === 'critical' || priority.visual === 'attention';
     }).length;
 
-    const pendingWithoutSTCount = planItems.filter((item) => (
+    const pendingWithoutSTCount = activePlanItems.filter((item) => (
       item.status !== 'OK' && !isItemInRequest(item)
     )).length;
 
@@ -1896,7 +1974,7 @@ export default function MaintenancePlanPage() {
             <div className="flex items-start justify-end gap-2.5 flex-wrap lg:flex-nowrap">
               <div className="text-right rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 min-w-[112px]">
                 <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Tareas asignadas</p>
-                <p className="text-3xl font-bold text-slate-900 tabular-nums leading-none mt-1">{planItems.length}</p>
+                <p className="text-3xl font-bold text-slate-900 tabular-nums leading-none mt-1">{activePlanItems.length}</p>
               </div>
 
               {selectedAircraft && (
@@ -2025,7 +2103,7 @@ export default function MaintenancePlanPage() {
               <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Origen</span>
                 {([
-                  { key: 'ALL', label: `Todas (${planItems.length})` },
+                  { key: 'ALL', label: `Todas (${activePlanItems.length})` },
                   { key: 'FABRICANTE', label: `Fabricante (${normativeCounts.fabricante})` },
                   { key: 'DGAC', label: `DGAC (${normativeCounts.dgac})` },
                   { key: 'MOTOR', label: `Motor (${normativeCounts.motor})` },
@@ -2036,6 +2114,27 @@ export default function MaintenancePlanPage() {
                     onClick={() => setNormativeTab(tab.key)}
                     className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
                       normativeTab === tab.key
+                        ? 'bg-brand-600 text-white border-brand-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Aplicabilidad</span>
+                {([
+                  { key: 'APPLIES', label: `Aplica (${applicabilityCounts.applies})` },
+                  { key: 'NOT_APPLIES', label: `No aplica (${applicabilityCounts.notApplies})` },
+                  { key: 'ALL', label: 'Todas' },
+                ] as const).map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setApplicabilityTab(tab.key)}
+                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
+                      applicabilityTab === tab.key
                         ? 'bg-brand-600 text-white border-brand-600'
                         : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                     }`}
@@ -2124,9 +2223,9 @@ export default function MaintenancePlanPage() {
                   />
                   Solo pendientes de acción
                 </label>
-                {(search || filterStatus || normativeTab !== 'ALL' || recurrenceTab !== 'ALL' || maintenanceTab !== 'ALL') && (
+                {(search || filterStatus || normativeTab !== 'ALL' || recurrenceTab !== 'ALL' || applicabilityTab !== 'APPLIES' || maintenanceTab !== 'ALL') && (
                   <button
-                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('ALL'); setRecurrenceTab('ALL'); setMaintenanceTab('ALL'); }}
+                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('ALL'); setRecurrenceTab('ALL'); setApplicabilityTab('APPLIES'); setMaintenanceTab('ALL'); }}
                     className="text-xs text-brand-600 hover:text-brand-700 font-semibold transition-colors"
                   >
                     Limpiar
@@ -2151,7 +2250,7 @@ export default function MaintenancePlanPage() {
               {smartSummary.critical} tareas críticas · {smartSummary.byHours} por horas · {smartSummary.byDate} por fecha
             </p>
             <p className="text-sm text-slate-700">
-              {pendingActionCount} tarea{pendingActionCount !== 1 ? 's' : ''} requieren atención · {planItems.filter((item) => isItemInRequest(item)).length} ya están en solicitud
+              {pendingActionCount} tarea{pendingActionCount !== 1 ? 's' : ''} requieren atención · {activePlanItems.filter((item) => isItemInRequest(item)).length} ya están en solicitud
             </p>
           </div>
 
@@ -2243,7 +2342,8 @@ export default function MaintenancePlanPage() {
                             toast.error('No puedes marcar como no aplica una tarea con ST activa');
                             return;
                           }
-                          void setTaskApplicability(taskItem, false, { trackUndo: true });
+                          // La no aplicabilidad exige justificación auditable.
+                          setNotApplicableTask(taskItem);
                           return;
                         }
 
@@ -2304,6 +2404,20 @@ export default function MaintenancePlanPage() {
         isPending={removeMutation.isPending}
       />
     )}
+    {notApplicableTask && (
+      <NotApplicableModal
+        item={notApplicableTask}
+        currentNotes={notApplicableTask.applicabilityNotes}
+        isPending={applicabilityBusyTaskId === notApplicableTask.taskId}
+        onCancel={() => setNotApplicableTask(null)}
+        onConfirm={(notes) => {
+          const target = notApplicableTask;
+          setNotApplicableTask(null);
+          void setTaskApplicability(target, false, { trackUndo: true, notes });
+        }}
+      />
+    )}
+
     {historyTask && selectedId && (
       <TaskComplianceHistoryPanel
         item={historyTask}

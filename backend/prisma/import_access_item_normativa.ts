@@ -424,6 +424,7 @@ async function main(): Promise<void> {
     taskGroups: groups.size,
     byDomain: {} as Record<string, number>,
     byScope: { AIRCRAFT: 0, ENGINE: 0 } as Record<string, number>,
+    applicabilityNotesLoaded: 0,
     links: { active: 0, inactive: 0 },
     compliances: { toCreate: 0, skippedNoDate: 0, alreadyImported: 0 },
     components: { linked: 0, baselinesToCreate: 0, unmatched: 0 },
@@ -548,11 +549,33 @@ async function main(): Promise<void> {
       const hasCompliance = member.fult != null;
       if (member.hsult != null && member.fult == null) summary.compliances.skippedNoDate += 1;
 
+      // La observación del Access es la justificación de la no aplicabilidad
+      // ("N/A, aeronave nueva", "SUPERSEDED BY EASA AD 2006-0095"): se conserva en
+      // el vínculo para que la decisión quede auditable y sea reversible.
+      const applicabilityNotes = !isApplicable && member.obs ? member.obs : null;
+      if (applicabilityNotes) summary.applicabilityNotesLoaded += 1;
+
       if (APPLY && taskId) {
         await prisma.aircraftTask.upsert({
           where: { aircraftId_taskId: { aircraftId, taskId } },
-          create: { aircraftId, taskId, isActive: isApplicable },
-          update: { isActive: isApplicable },
+          create: {
+            aircraftId,
+            taskId,
+            isActive: isApplicable,
+            applicabilityNotes,
+            applicabilityChangedAt: applicabilityNotes ? new Date() : null,
+            applicabilityChangedById: applicabilityNotes ? performedById : null,
+          },
+          update: {
+            isActive: isApplicable,
+            ...(applicabilityNotes
+              ? {
+                  applicabilityNotes,
+                  applicabilityChangedAt: new Date(),
+                  applicabilityChangedById: performedById,
+                }
+              : {}),
+          },
         });
         summary.applied.linksUpserted += 1;
       }
@@ -742,7 +765,7 @@ async function main(): Promise<void> {
   console.log(`Tareas (grupos dominio+código+modelo): ${summary.taskGroups}`);
   console.log(`Por dominio: ${JSON.stringify(summary.byDomain)}`);
   console.log(`Por equipo: aeronave=${summary.byScope.AIRCRAFT} motor=${summary.byScope.ENGINE}`);
-  console.log(`Links aeronave-tarea: activos=${summary.links.active} noAplica=${summary.links.inactive}`);
+  console.log(`Links aeronave-tarea: activos=${summary.links.active} noAplica=${summary.links.inactive} (con justificación: ${summary.applicabilityNotesLoaded})`);
   console.log(`Cumplimientos: aCrear=${summary.compliances.toCreate} sinFecha=${summary.compliances.skippedNoDate} yaImportados=${summary.compliances.alreadyImported}`);
   console.log(`Componentes: vinculados=${summary.components.linked} iniciosDeControl=${summary.components.baselinesToCreate} sinMatch=${summary.components.unmatched}`);
   console.log(`Conflictos de intervalo: ${summary.conflicts.length} (ver item-normativa-report.json)`);

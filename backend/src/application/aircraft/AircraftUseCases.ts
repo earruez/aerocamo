@@ -51,10 +51,14 @@ export class UpdateAircraftUseCase {
 export class GetMaintenancePlanUseCase {
   constructor(private readonly repo: IAircraftRepository) {}
 
-  async execute(aircraftId: string, organizationId: string): Promise<MaintenancePlanItem[]> {
+  async execute(
+    aircraftId: string,
+    organizationId: string,
+    options?: { includeNotApplicable?: boolean },
+  ): Promise<MaintenancePlanItem[]> {
     const aircraft = await this.repo.findById(aircraftId, organizationId);
     if (!aircraft) throw new NotFoundError('Aircraft', aircraftId);
-    return this.repo.getMaintenancePlan(aircraftId, organizationId);
+    return this.repo.getMaintenancePlan(aircraftId, organizationId, options);
   }
 }
 

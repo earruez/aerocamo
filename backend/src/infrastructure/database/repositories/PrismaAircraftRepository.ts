@@ -54,7 +54,11 @@ export class PrismaAircraftRepository implements IAircraftRepository {
     await prisma.aircraft.delete({ where: { id, organizationId } as never });
   }
 
-  async getMaintenancePlan(aircraftId: string, organizationId: string): Promise<MaintenancePlanItem[]> {
+  async getMaintenancePlan(
+    aircraftId: string,
+    organizationId: string,
+    options?: { includeNotApplicable?: boolean },
+  ): Promise<MaintenancePlanItem[]> {
     const aircraft = await prisma.aircraft.findFirst({ where: { id: aircraftId, organizationId } });
     const now = new Date();
     const currentHours = aircraft ? Number(aircraft.totalFlightHours) : 0;
@@ -62,7 +66,7 @@ export class PrismaAircraftRepository implements IAircraftRepository {
 
     // All tasks assigned to this aircraft with their latest compliance
     const links = await prisma.aircraftTask.findMany({
-      where: { aircraftId, isActive: true },
+      where: { aircraftId, ...(options?.includeNotApplicable ? {} : { isActive: true }) },
       include: {
         task: {
           include: {
@@ -153,7 +157,7 @@ export class PrismaAircraftRepository implements IAircraftRepository {
       }
     }
 
-    return links.map(({ task }) => {
+    return links.map(({ task, isActive, applicabilityNotes, applicabilityChangedAt }) => {
       const requiresComponentTracking =
         task.componentLinks.length > 0
         || Boolean(task.applicablePartNumber);
@@ -287,6 +291,9 @@ export class PrismaAircraftRepository implements IAircraftRepository {
         requiresComponentTracking,
         equipmentScope: (task as unknown as { equipmentScope?: 'AIRCRAFT' | 'ENGINE' }).equipmentScope ?? 'AIRCRAFT',
         complianceRecurrence: (task as unknown as { complianceRecurrence?: MaintenancePlanItem['complianceRecurrence'] }).complianceRecurrence ?? 'UNSPECIFIED',
+        isApplicable: isActive,
+        applicabilityNotes: applicabilityNotes ?? null,
+        applicabilityChangedAt: applicabilityChangedAt ?? null,
         componentDefinitionId: requiresComponentTracking ? task.id : null,
         intervalType:        task.intervalType,
         intervalHours:       task.intervalHours != null ? Number(task.intervalHours) : null,

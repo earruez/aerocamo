@@ -352,6 +352,7 @@ model User {
   discrepanciesResolved    Discrepancy[]  @relation("DiscrepancyResolvedBy")
   componentMovements       ComponentHistory[] @relation("ComponentMovedBy")
   componentTrackingMovements ComponentMovement[] @relation("ComponentTrackingMovedBy")
+  aircraftTaskApplicabilityChanges AircraftTask[] @relation("AircraftTaskApplicability")
   assignedPlans            AircraftAssignedPlan[]
 
   @@unique([email, organizationId])
@@ -691,11 +692,20 @@ model AircraftTask {
   overrideIntervalHours  Decimal? @db.Decimal(10, 2)
   overrideIntervalCycles Int?
 
+  /// isActive=false significa "no aplica a esta aeronave". El vínculo se conserva
+  /// siempre: la no aplicabilidad puede revertirse (p. ej. una tarea descartada por
+  /// ambiente salino vuelve a aplicar si la aeronave cambia de base).
   isActive   Boolean  @default(true)
   assignedAt DateTime @default(now())
 
+  /// Justificación de la última decisión de aplicabilidad
+  applicabilityNotes       String?
+  applicabilityChangedAt   DateTime?
+  applicabilityChangedById String?  @db.Uuid
+
   aircraft   Aircraft        @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
   task       MaintenanceTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  applicabilityChangedBy User? @relation("AircraftTaskApplicability", fields: [applicabilityChangedById], references: [id], onDelete: SetNull)
 
   @@unique([aircraftId, taskId])
   @@index([aircraftId])

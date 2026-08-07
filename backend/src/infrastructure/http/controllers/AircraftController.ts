@@ -165,7 +165,8 @@ export class AircraftController {
 
   getMaintenancePlan = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const plan = await this.planUseCase.execute(req.params.id, req.organizationId);
+      const includeNotApplicable = String(req.query.includeNotApplicable ?? '') === 'true';
+      const plan = await this.planUseCase.execute(req.params.id, req.organizationId, { includeNotApplicable });
       res.status(200).json({ status: 'success', data: plan });
     } catch (err) { next(err); }
   };

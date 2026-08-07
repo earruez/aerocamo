@@ -21,6 +21,9 @@ export interface MaintenancePlanItem {
   requiresComponentTracking: boolean;
   equipmentScope: 'AIRCRAFT' | 'ENGINE';
   complianceRecurrence: ComplianceRecurrence;
+  isApplicable: boolean;
+  applicabilityNotes: string | null;
+  applicabilityChangedAt: string | null;
   componentDefinitionId: string | null;
   intervalType: string;
   intervalHours: number | null;
@@ -54,9 +57,13 @@ export interface MaintenancePlanItem {
 }
 
 export const maintenancePlanApi = {
-  getForAircraft: async (aircraftId: string): Promise<MaintenancePlanItem[]> => {
+  getForAircraft: async (
+    aircraftId: string,
+    options?: { includeNotApplicable?: boolean },
+  ): Promise<MaintenancePlanItem[]> => {
     const { data } = await apiClient.get<{ status: string; data: MaintenancePlanItem[] }>(
       `/aircraft/${aircraftId}/maintenance-plan`,
+      { params: options?.includeNotApplicable ? { includeNotApplicable: true } : undefined },
     );
     return data.data;
   },
