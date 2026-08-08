@@ -37,7 +37,10 @@
     "prisma:apply:aircraft-engine-tracking": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260424_aircraft_engine_tracking.sql",
     "prisma:apply:maintenance-task-equipment-scope": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260806_maintenance_task_equipment_scope.sql",
     "prisma:apply:maintenance-task-compliance-recurrence": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260807_maintenance_task_compliance_recurrence.sql",
-    "prisma:apply:aircraft-task-applicability-notes": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260807_aircraft_task_applicability_notes.sql"
+    "prisma:apply:aircraft-task-applicability-notes": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260807_aircraft_task_applicability_notes.sql",
+    "prisma:apply:aircraft-alterations": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260807_aircraft_alterations.sql",
+    "prisma:apply:aircraft-alterations-unique-fix": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260807_aircraft_alterations_unique_fix.sql",
+    "import:access:alteraciones": "tsx prisma/import_access_mod_alteraciones.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",

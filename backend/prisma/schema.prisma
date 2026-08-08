@@ -290,6 +290,7 @@ model Organization {
   // Relations
   users              User[]
   aircraft           Aircraft[]
+  aircraftAlterations AircraftAlteration[]
   components         Component[]
   maintenanceTasks   MaintenanceTask[]
   compliances        Compliance[]
@@ -353,6 +354,7 @@ model User {
   componentMovements       ComponentHistory[] @relation("ComponentMovedBy")
   componentTrackingMovements ComponentMovement[] @relation("ComponentTrackingMovedBy")
   aircraftTaskApplicabilityChanges AircraftTask[] @relation("AircraftTaskApplicability")
+  createdAlterations               AircraftAlteration[]
   assignedPlans            AircraftAssignedPlan[]
 
   @@unique([email, organizationId])
@@ -412,6 +414,7 @@ model Aircraft {
   workRequests       WorkRequest[]
   componentHistory   ComponentHistory[]
   usageLogs          AircraftUsageLog[]
+  alterations        AircraftAlteration[]
   engines            AircraftEngine[]
   componentInstances ComponentInstance[]
   componentApplications ComponentApplication[]
@@ -463,7 +466,46 @@ model AircraftEngineUsageLog {
   @@map("aircraft_engine_usage_logs")
 }
 
-  model AircraftUsageLog {
+  /// Alteración aprobada a la configuración de la aeronave (STC / Formulario DGAC 337)
+model AircraftAlteration {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  aircraftId     String   @db.Uuid
+
+  /// Documento que aprueba la alteración
+  documentNumber String   @db.VarChar(255)
+  description    String
+  approvalDate   DateTime? @db.Date
+
+  /// Suplemento del manual de vuelo asociado
+  hasFlightManualSupplement Boolean @default(false)
+  flightManualReference     String? @db.VarChar(255)
+
+  /// Instrucciones de aeronavegabilidad continuada asociadas
+  hasIca       Boolean  @default(false)
+  icaReference String?  @db.VarChar(255)
+
+  /// OT / taller donde se ejecutó
+  reference    String?  @db.VarChar(255)
+  notes        String?
+
+  createdById  String?  @db.Uuid
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft     Aircraft     @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  /// La unicidad real es (aircraftId, documentNumber, md5(description)): un mismo
+  /// formulario puede amparar varias alteraciones. Se define como índice por
+  /// expresión en la migración manual, que Prisma no puede representar.
+  @@index([aircraftId])
+  @@index([organizationId])
+  @@map("aircraft_alterations")
+}
+
+model AircraftUsageLog {
     id             String              @id @default(uuid()) @db.Uuid
     organizationId String              @db.Uuid
     aircraftId     String              @db.Uuid

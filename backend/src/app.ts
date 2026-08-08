@@ -10,6 +10,7 @@ import { aircraftRoutes } from './infrastructure/http/routes/aircraft.routes';
 import { complianceRoutes } from './infrastructure/http/routes/compliance.routes';
 import { componentRoutes } from './infrastructure/http/routes/component.routes';
 import { componentTrackingRoutes } from './infrastructure/http/routes/componentTracking.routes';
+import { aircraftAlterationRoutes } from './infrastructure/http/routes/aircraftAlterations.routes';
 import { taskRoutes } from './infrastructure/http/routes/tasks.routes';
 import { workOrderRoutes } from './infrastructure/http/routes/workOrders.routes';
 import { componentHistoryRouter, aircraftHistoryRouter, auditRouter } from './infrastructure/http/routes/componentHistory.routes';
@@ -64,6 +65,7 @@ export function createApp(): Application {
   app.use(`${API}/auth`,             authRoutes);
   app.use(`${API}/aircraft`,         aircraftRoutes);
   app.use(`${API}/aircraft`,         aircraftHistoryRouter);
+  app.use(`${API}`,                  aircraftAlterationRoutes);
   app.use(`${API}/compliances`,      complianceRoutes);
   app.use(`${API}/components`,       componentRoutes);
   app.use(`${API}/components`,       componentTrackingRoutes);
