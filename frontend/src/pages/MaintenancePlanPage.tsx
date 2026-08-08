@@ -25,7 +25,8 @@ import {
 
 type MaintenanceType = 'HORARIO' | 'CALENDARIO' | 'MIXTO';
 type MaintenanceTypeTab = 'ALL' | MaintenanceType;
-type NormativeTab = 'ALL' | 'FABRICANTE' | 'DGAC' | 'MOTOR' | 'EASA';
+type NormativeTab = 'ALL' | 'AD' | 'SB' | 'MIM' | 'INSPECCIONES' | 'COMPONENTES';
+type EquipmentTab = 'ALL' | 'AIRCRAFT' | 'ENGINE';
 type RecurrenceTab = 'ALL' | 'REPETITIVE' | 'ONE_TIME';
 type ApplicabilityTab = 'APPLIES' | 'NOT_APPLIES' | 'ALL';
 
@@ -64,16 +65,20 @@ function classifyMaintenanceType(task: {
   return 'HORARIO';
 }
 
-function isMotorNormativeTask(item: MaintenancePlanItem): boolean {
-  const code = (item.taskCode || '').toUpperCase();
-  const title = (item.taskTitle || '').toUpperCase();
-  const ref = (item.referenceNumber || '').toUpperCase();
-
-  if (/^72\d{2}(-\d+)?$/.test(code)) return true;
-  if (code.startsWith('05-20-10')) return true;
-  if (ref.includes('70BM')) return true;
-
-  return /(ENGINE|MOTOR|TURBINE|COMPRESSOR|GEARBOX|HMU|ACCESSORIES|INJECTION WHEEL|FREE TURBINE|REDUCTION GEAR)/.test(title);
+/**
+ * Categoría normativa de la tarea, en el vocabulario del Access:
+ * AD y SB vienen del tipo de referencia; MIM es la normativa nacional (INTERNAL);
+ * el resto son manual de fabricante, donde el prefijo del código separa
+ * inspecciones (IN-) de control de componentes (COMP-).
+ *
+ * El equipo (aeronave o motor) es un eje aparte: vive en equipmentScope, que
+ * viene del equipo al que el Access asoció el ítem (AN / EN1).
+ */
+function classifyTaskCategory(item: MaintenancePlanItem): 'AD' | 'SB' | 'MIM' | 'INSPECCIONES' | 'COMPONENTES' {
+  if (item.referenceType === 'AD') return 'AD';
+  if (item.referenceType === 'SB') return 'SB';
+  if (item.referenceType === 'INTERNAL') return 'MIM';
+  return (item.taskCode || '').toUpperCase().startsWith('COMP-') ? 'COMPONENTES' : 'INSPECCIONES';
 }
 
 // ─── Status helpers ────────────────────────────────────────────────────────────
@@ -1387,6 +1392,7 @@ export default function MaintenancePlanPage() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<PlanItemStatus | ''>(searchParams.get('status') as PlanItemStatus | '' ?? '');
   const [normativeTab, setNormativeTab] = useState<NormativeTab>('ALL');
+  const [equipmentTab, setEquipmentTab] = useState<EquipmentTab>('ALL');
   const [recurrenceTab, setRecurrenceTab] = useState<RecurrenceTab>('ALL');
   const [applicabilityTab, setApplicabilityTab] = useState<ApplicabilityTab>('APPLIES');
   const [historyTask, setHistoryTask] = useState<MaintenancePlanItem | null>(null);
@@ -1688,17 +1694,12 @@ export default function MaintenancePlanPage() {
   const filteredPlan = useMemo(() => {
     return planItems
       .filter(i => {
-        if (normativeTab === 'DGAC' && i.referenceType !== 'INTERNAL') return false;
-        if (normativeTab === 'EASA' && i.referenceType !== 'AD') return false;
-        if (normativeTab === 'MOTOR' && !isMotorNormativeTask(i)) return false;
+        if (normativeTab !== 'ALL' && classifyTaskCategory(i) !== normativeTab) return false;
+        if (equipmentTab !== 'ALL' && i.equipmentScope !== equipmentTab) return false;
         if (applicabilityTab === 'APPLIES' && !i.isApplicable) return false;
         if (applicabilityTab === 'NOT_APPLIES' && i.isApplicable) return false;
         if (recurrenceTab === 'REPETITIVE' && i.complianceRecurrence !== 'REPETITIVE') return false;
         if (recurrenceTab === 'ONE_TIME' && i.complianceRecurrence !== 'ONE_TIME') return false;
-        if (normativeTab === 'FABRICANTE') {
-          if (i.referenceType !== 'AMM') return false;
-          if (isMotorNormativeTask(i)) return false;
-        }
         if (maintenanceTab !== 'ALL' && classifyMaintenanceType(i) !== maintenanceTab) return false;
         if (filterStatus && i.status !== filterStatus) return false;
         if (onlyPendingAction && i.status === 'OK') return false;
@@ -1721,19 +1722,37 @@ export default function MaintenancePlanPage() {
 
         return STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
       });
-  }, [planItems, filterStatus, normativeTab, recurrenceTab, applicabilityTab, maintenanceTab, search, smartPriorityByTaskId, onlyPendingAction, priorityContext]);
+  }, [planItems, filterStatus, normativeTab, equipmentTab, recurrenceTab, applicabilityTab, maintenanceTab, search, smartPriorityByTaskId, onlyPendingAction, priorityContext]);
 
   // Las tareas marcadas "no aplica" siguen en el plan, pero no deben contar como
   // pendientes ni disparar alertas de aeronavegabilidad.
   const activePlanItems = useMemo(() => planItems.filter((i) => i.isApplicable), [planItems]);
 
   const normativeCounts = useMemo(() => {
-    const dgac = activePlanItems.filter(i => i.referenceType === 'INTERNAL').length;
-    const easa = activePlanItems.filter(i => i.referenceType === 'AD').length;
-    const motor = activePlanItems.filter(i => isMotorNormativeTask(i)).length;
-    const fabricante = activePlanItems.filter(i => i.referenceType === 'AMM' && !isMotorNormativeTask(i)).length;
-    return { dgac, easa, motor, fabricante };
-  }, [planItems]);
+    // El conteo de categorías respeta el equipo elegido, y viceversa: así las
+    // cifras acompañan al filtro en vez de contradecirlo.
+    const scopedByEquipment = equipmentTab === 'ALL'
+      ? activePlanItems
+      : activePlanItems.filter(i => i.equipmentScope === equipmentTab);
+    const ad = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'AD').length;
+    const sb = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'SB').length;
+    const mim = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'MIM').length;
+    const inspecciones = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'INSPECCIONES').length;
+    const componentes = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'COMPONENTES').length;
+    return { ad, sb, mim, inspecciones, componentes, total: scopedByEquipment.length };
+  }, [activePlanItems, equipmentTab]);
+
+  /** Conteo por equipo, respetando la categoría normativa ya elegida. */
+  const equipmentCounts = useMemo(() => {
+    const scopedByCategory = normativeTab === 'ALL'
+      ? activePlanItems
+      : activePlanItems.filter(i => classifyTaskCategory(i) === normativeTab);
+    return {
+      ALL: scopedByCategory.length,
+      AIRCRAFT: scopedByCategory.filter(i => i.equipmentScope === 'AIRCRAFT').length,
+      ENGINE: scopedByCategory.filter(i => i.equipmentScope === 'ENGINE').length,
+    };
+  }, [activePlanItems, normativeTab]);
 
   const applicabilityCounts = useMemo(() => ({
     applies: planItems.filter((i) => i.isApplicable).length,
@@ -1742,19 +1761,19 @@ export default function MaintenancePlanPage() {
 
   /** Conteo de recurrencia sobre el origen ya elegido, para que las cifras acompañen al filtro. */
   const recurrenceCounts = useMemo(() => {
-    const scoped = normativeTab === 'ALL'
+    const byEquipment = equipmentTab === 'ALL'
       ? activePlanItems
-      : activePlanItems.filter((i) => {
-          if (normativeTab === 'DGAC') return i.referenceType === 'INTERNAL';
-          if (normativeTab === 'EASA') return i.referenceType === 'AD';
-          if (normativeTab === 'MOTOR') return isMotorNormativeTask(i);
-          return i.referenceType === 'AMM' && !isMotorNormativeTask(i);
+      : activePlanItems.filter((i) => i.equipmentScope === equipmentTab);
+    const scoped = normativeTab === 'ALL'
+      ? byEquipment
+      : byEquipment.filter((i) => {
+          return classifyTaskCategory(i) === normativeTab;
         });
     return {
       repetitive: scoped.filter((i) => i.complianceRecurrence === 'REPETITIVE').length,
       oneTime: scoped.filter((i) => i.complianceRecurrence === 'ONE_TIME').length,
     };
-  }, [activePlanItems, normativeTab]);
+  }, [activePlanItems, normativeTab, equipmentTab]);
 
   const pendingActionCount = useMemo(() => (
     activePlanItems.filter((item) => item.status !== 'OK').length
@@ -2259,19 +2278,41 @@ export default function MaintenancePlanPage() {
           {/* Filters */}
           <div className="bg-white rounded-2xl border border-slate-200 px-6 py-4 shadow-sm">
               <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Origen</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Categoría</span>
                 {([
-                  { key: 'ALL', label: `Todas (${activePlanItems.length})` },
-                  { key: 'FABRICANTE', label: `Fabricante (${normativeCounts.fabricante})` },
-                  { key: 'DGAC', label: `DGAC (${normativeCounts.dgac})` },
-                  { key: 'MOTOR', label: `Motor (${normativeCounts.motor})` },
-                  { key: 'EASA', label: `EASA (${normativeCounts.easa})` },
+                  { key: 'ALL', label: `Todas (${normativeCounts.total})` },
+                  { key: 'AD', label: `AD (${normativeCounts.ad})` },
+                  { key: 'SB', label: `SB (${normativeCounts.sb})` },
+                  { key: 'MIM', label: `MIM (${normativeCounts.mim})` },
+                  { key: 'INSPECCIONES', label: `Inspecciones (${normativeCounts.inspecciones})` },
+                  { key: 'COMPONENTES', label: `Componentes (${normativeCounts.componentes})` },
                 ] as const).map(tab => (
                   <button
                     key={tab.key}
                     onClick={() => setNormativeTab(tab.key)}
                     className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
                       normativeTab === tab.key
+                        ? 'bg-brand-600 text-white border-brand-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Equipo</span>
+                {([
+                  { key: 'ALL', label: `Todas (${equipmentCounts.ALL})` },
+                  { key: 'AIRCRAFT', label: `Aeronave (${equipmentCounts.AIRCRAFT})` },
+                  { key: 'ENGINE', label: `Motor (${equipmentCounts.ENGINE})` },
+                ] as const).map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setEquipmentTab(tab.key)}
+                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
+                      equipmentTab === tab.key
                         ? 'bg-brand-600 text-white border-brand-600'
                         : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                     }`}
@@ -2381,9 +2422,9 @@ export default function MaintenancePlanPage() {
                   />
                   Solo pendientes de acción
                 </label>
-                {(search || filterStatus || normativeTab !== 'ALL' || recurrenceTab !== 'ALL' || applicabilityTab !== 'APPLIES' || maintenanceTab !== 'ALL') && (
+                {(search || filterStatus || normativeTab !== 'ALL' || equipmentTab !== 'ALL' || recurrenceTab !== 'ALL' || applicabilityTab !== 'APPLIES' || maintenanceTab !== 'ALL') && (
                   <button
-                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('ALL'); setRecurrenceTab('ALL'); setApplicabilityTab('APPLIES'); setMaintenanceTab('ALL'); }}
+                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('ALL'); setEquipmentTab('ALL'); setRecurrenceTab('ALL'); setApplicabilityTab('APPLIES'); setMaintenanceTab('ALL'); }}
                     className="text-xs text-brand-600 hover:text-brand-700 font-semibold transition-colors"
                   >
                     Limpiar
