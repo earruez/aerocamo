@@ -21,6 +21,7 @@ export interface MaintenancePlanItem {
   requiresComponentTracking: boolean;
   equipmentScope: 'AIRCRAFT' | 'ENGINE';
   complianceRecurrence: ComplianceRecurrence;
+  isComponentControl: boolean;
   isApplicable: boolean;
   applicabilityNotes: string | null;
   applicabilityChangedAt: string | null;

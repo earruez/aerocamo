@@ -25,7 +25,7 @@ import {
 
 type MaintenanceType = 'HORARIO' | 'CALENDARIO' | 'MIXTO';
 type MaintenanceTypeTab = 'ALL' | MaintenanceType;
-type NormativeTab = 'ALL' | 'AD' | 'SB' | 'MIM' | 'INSPECCIONES' | 'COMPONENTES';
+type NormativeTab = 'PROGRAMA' | 'AD' | 'SB' | 'MIM' | 'INSPECCIONES' | 'COMPONENTES';
 type EquipmentTab = 'ALL' | 'AIRCRAFT' | 'ENGINE';
 type RecurrenceTab = 'ALL' | 'REPETITIVE' | 'ONE_TIME';
 type ApplicabilityTab = 'APPLIES' | 'NOT_APPLIES' | 'ALL';
@@ -68,8 +68,8 @@ function classifyMaintenanceType(task: {
 /**
  * Categoría normativa de la tarea, en el vocabulario del Access:
  * AD y SB vienen del tipo de referencia; MIM es la normativa nacional (INTERNAL);
- * el resto son manual de fabricante, donde el prefijo del código separa
- * inspecciones (IN-) de control de componentes (COMP-).
+ * el resto son manual de fabricante, separados por isComponentControl entre
+ * inspecciones y control de vida de componentes.
  *
  * El equipo (aeronave o motor) es un eje aparte: vive en equipmentScope, que
  * viene del equipo al que el Access asoció el ítem (AN / EN1).
@@ -78,7 +78,7 @@ function classifyTaskCategory(item: MaintenancePlanItem): 'AD' | 'SB' | 'MIM' | 
   if (item.referenceType === 'AD') return 'AD';
   if (item.referenceType === 'SB') return 'SB';
   if (item.referenceType === 'INTERNAL') return 'MIM';
-  return (item.taskCode || '').toUpperCase().startsWith('COMP-') ? 'COMPONENTES' : 'INSPECCIONES';
+  return item.isComponentControl ? 'COMPONENTES' : 'INSPECCIONES';
 }
 
 // ─── Status helpers ────────────────────────────────────────────────────────────
@@ -1391,7 +1391,7 @@ export default function MaintenancePlanPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<PlanItemStatus | ''>(searchParams.get('status') as PlanItemStatus | '' ?? '');
-  const [normativeTab, setNormativeTab] = useState<NormativeTab>('ALL');
+  const [normativeTab, setNormativeTab] = useState<NormativeTab>('PROGRAMA');
   const [equipmentTab, setEquipmentTab] = useState<EquipmentTab>('ALL');
   const [recurrenceTab, setRecurrenceTab] = useState<RecurrenceTab>('ALL');
   const [applicabilityTab, setApplicabilityTab] = useState<ApplicabilityTab>('APPLIES');
@@ -1694,7 +1694,9 @@ export default function MaintenancePlanPage() {
   const filteredPlan = useMemo(() => {
     return planItems
       .filter(i => {
-        if (normativeTab !== 'ALL' && classifyTaskCategory(i) !== normativeTab) return false;
+        // El control de vida de componentes vive en la página de Componentes:
+        // el plan solo lo muestra si se pide su pestaña explícitamente.
+        if (normativeTab === 'PROGRAMA' ? i.isComponentControl : classifyTaskCategory(i) !== normativeTab) return false;
         if (equipmentTab !== 'ALL' && i.equipmentScope !== equipmentTab) return false;
         if (applicabilityTab === 'APPLIES' && !i.isApplicable) return false;
         if (applicabilityTab === 'NOT_APPLIES' && i.isApplicable) return false;
@@ -1739,13 +1741,14 @@ export default function MaintenancePlanPage() {
     const mim = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'MIM').length;
     const inspecciones = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'INSPECCIONES').length;
     const componentes = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'COMPONENTES').length;
-    return { ad, sb, mim, inspecciones, componentes, total: scopedByEquipment.length };
+    const total = scopedByEquipment.filter(i => !i.isComponentControl).length;
+    return { ad, sb, mim, inspecciones, componentes, total };
   }, [activePlanItems, equipmentTab]);
 
   /** Conteo por equipo, respetando la categoría normativa ya elegida. */
   const equipmentCounts = useMemo(() => {
-    const scopedByCategory = normativeTab === 'ALL'
-      ? activePlanItems
+    const scopedByCategory = normativeTab === 'PROGRAMA'
+      ? activePlanItems.filter(i => !i.isComponentControl)
       : activePlanItems.filter(i => classifyTaskCategory(i) === normativeTab);
     return {
       ALL: scopedByCategory.length,
@@ -1764,8 +1767,8 @@ export default function MaintenancePlanPage() {
     const byEquipment = equipmentTab === 'ALL'
       ? activePlanItems
       : activePlanItems.filter((i) => i.equipmentScope === equipmentTab);
-    const scoped = normativeTab === 'ALL'
-      ? byEquipment
+    const scoped = normativeTab === 'PROGRAMA'
+      ? byEquipment.filter((i) => !i.isComponentControl)
       : byEquipment.filter((i) => {
           return classifyTaskCategory(i) === normativeTab;
         });
@@ -1885,6 +1888,15 @@ export default function MaintenancePlanPage() {
       item.status !== 'OK' && !isItemInRequest(item)
     )).length;
 
+    // Las filas de componentes salen del plan por defecto, pero su vencimiento
+    // debe seguir avisando aquí: una batería vencida no puede dejar de verse.
+    const componentOverdueCount = activePlanItems.filter(
+      (item) => item.isComponentControl && item.status === 'OVERDUE',
+    ).length;
+    const componentDueSoonCount = activePlanItems.filter(
+      (item) => item.isComponentControl && item.status === 'DUE_SOON',
+    ).length;
+
     const draftItemsCount = draftForAircraft?.items.length ?? 0;
     const hasAccumulatedDraft = draftItemsCount >= 3;
 
@@ -1900,6 +1912,8 @@ export default function MaintenancePlanPage() {
       dueSoonCount,
       mixedCriticalSoonCount,
       pendingWithoutSTCount,
+      componentOverdueCount,
+      componentDueSoonCount,
       hasAccumulatedDraft,
       draftItemsCount,
     };
@@ -2244,6 +2258,30 @@ export default function MaintenancePlanPage() {
                     {(aircraftAlert.overdueCount > 0 || aircraftAlert.dueSoonCount > 0 || aircraftAlert.mixedCriticalSoonCount > 0 || aircraftAlert.pendingWithoutSTCount > 0) && aircraftAlert.hasAccumulatedDraft && ' · '}
                     {aircraftAlert.hasAccumulatedDraft && `Borrador ST con ${aircraftAlert.draftItemsCount} ítems acumulados`}
                   </p>
+                  {(aircraftAlert.componentOverdueCount > 0 || aircraftAlert.componentDueSoonCount > 0) && (
+                    <p className="text-xs text-slate-600 mt-1">
+                      Incluye{' '}
+                      {aircraftAlert.componentOverdueCount > 0 && `${aircraftAlert.componentOverdueCount} vencida${aircraftAlert.componentOverdueCount !== 1 ? 's' : ''}`}
+                      {aircraftAlert.componentOverdueCount > 0 && aircraftAlert.componentDueSoonCount > 0 && ' y '}
+                      {aircraftAlert.componentDueSoonCount > 0 && `${aircraftAlert.componentDueSoonCount} próxima${aircraftAlert.componentDueSoonCount !== 1 ? 's' : ''}`}
+                      {' '}de control de componentes ·{' '}
+                      <button
+                        type="button"
+                        onClick={() => setNormativeTab('COMPONENTES')}
+                        className="font-semibold text-brand-700 underline-offset-2 hover:underline"
+                      >
+                        ver en el plan
+                      </button>
+                      {' · '}
+                      <button
+                        type="button"
+                        onClick={() => navigate('/components')}
+                        className="font-semibold text-brand-700 underline-offset-2 hover:underline"
+                      >
+                        ir a Componentes
+                      </button>
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -2280,7 +2318,7 @@ export default function MaintenancePlanPage() {
               <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Categoría</span>
                 {([
-                  { key: 'ALL', label: `Todas (${normativeCounts.total})` },
+                  { key: 'PROGRAMA', label: `Programa (${normativeCounts.total})` },
                   { key: 'AD', label: `AD (${normativeCounts.ad})` },
                   { key: 'SB', label: `SB (${normativeCounts.sb})` },
                   { key: 'MIM', label: `MIM (${normativeCounts.mim})` },
@@ -2422,9 +2460,9 @@ export default function MaintenancePlanPage() {
                   />
                   Solo pendientes de acción
                 </label>
-                {(search || filterStatus || normativeTab !== 'ALL' || equipmentTab !== 'ALL' || recurrenceTab !== 'ALL' || applicabilityTab !== 'APPLIES' || maintenanceTab !== 'ALL') && (
+                {(search || filterStatus || normativeTab !== 'PROGRAMA' || equipmentTab !== 'ALL' || recurrenceTab !== 'ALL' || applicabilityTab !== 'APPLIES' || maintenanceTab !== 'ALL') && (
                   <button
-                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('ALL'); setEquipmentTab('ALL'); setRecurrenceTab('ALL'); setApplicabilityTab('APPLIES'); setMaintenanceTab('ALL'); }}
+                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('PROGRAMA'); setEquipmentTab('ALL'); setRecurrenceTab('ALL'); setApplicabilityTab('APPLIES'); setMaintenanceTab('ALL'); }}
                     className="text-xs text-brand-600 hover:text-brand-700 font-semibold transition-colors"
                   >
                     Limpiar

@@ -158,8 +158,15 @@ export class PrismaAircraftRepository implements IAircraftRepository {
     }
 
     return links.map(({ task, isActive, applicabilityNotes, applicabilityChangedAt }) => {
+      // El control de vida de componente es un dato propio de la tarea: hay
+      // controles reales sin P/N en el Access (TAIL ROTOR CONTROL ROD, 20000 FH)
+      // que quedaban invisibles si la condición dependía del P/N.
+      const isComponentControl = Boolean(
+        (task as unknown as { isComponentControl?: boolean }).isComponentControl,
+      );
       const requiresComponentTracking =
-        task.componentLinks.length > 0
+        isComponentControl
+        || task.componentLinks.length > 0
         || Boolean(task.applicablePartNumber);
       const executionType: MaintenancePlanItem['executionType'] = requiresComponentTracking
         ? 'component_replacement'
@@ -289,6 +296,7 @@ export class PrismaAircraftRepository implements IAircraftRepository {
         taskTitle:           task.title,
         executionType,
         requiresComponentTracking,
+        isComponentControl,
         equipmentScope: (task as unknown as { equipmentScope?: 'AIRCRAFT' | 'ENGINE' }).equipmentScope ?? 'AIRCRAFT',
         complianceRecurrence: (task as unknown as { complianceRecurrence?: MaintenancePlanItem['complianceRecurrence'] }).complianceRecurrence ?? 'UNSPECIFIED',
         isApplicable: isActive,

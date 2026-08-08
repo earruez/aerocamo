@@ -13,6 +13,7 @@ export interface MaintenancePlanItem {
   executionType: MaintenanceExecutionType;
   requiresComponentTracking: boolean;
   equipmentScope: 'AIRCRAFT' | 'ENGINE';
+  isComponentControl: boolean;
   isApplicable: boolean;
   applicabilityNotes: string | null;
   applicabilityChangedAt: Date | null;

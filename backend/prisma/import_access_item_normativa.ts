@@ -500,6 +500,7 @@ async function main(): Promise<void> {
       referenceNumber: group.ata ? truncate(group.ata, 100) : null,
       isMandatory,
       requiresInspection,
+      isComponentControl: group.domain === 'COMP',
       applicableModel: group.modelo ? truncate(group.modelo, 150) : null,
       applicablePartNumber: group.domain === 'COMP' && representative.pn ? truncate(representative.pn, 100) : null,
       isActive: true,

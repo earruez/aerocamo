@@ -715,6 +715,9 @@ model MaintenanceTask {
 
   /// Whether an independent inspection (RII) is required after this task
   requiresInspection Boolean     @default(false)
+  /// Control de vida de un componente (dominio COMP del Access). Se gestiona
+  /// en la página de Componentes; el plan lo excluye salvo que se pida.
+  isComponentControl Boolean  @default(false)
 
   /// Specific aircraft model this task applies to (null = all models)
   applicableModel String?        @db.VarChar(150)
