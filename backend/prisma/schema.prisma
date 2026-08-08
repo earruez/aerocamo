@@ -292,6 +292,8 @@ model Organization {
   aircraft           Aircraft[]
   aircraftAlterations AircraftAlteration[]
   aircraftTaskNotes   AircraftTaskNote[]
+  maintenanceManuals  MaintenanceManual[]
+  repairShops         RepairShop[]
   components         Component[]
   maintenanceTasks   MaintenanceTask[]
   compliances        Compliance[]
@@ -357,6 +359,8 @@ model User {
   aircraftTaskApplicabilityChanges AircraftTask[] @relation("AircraftTaskApplicability")
   createdAlterations               AircraftAlteration[]
   createdTaskNotes                 AircraftTaskNote[]
+  createdManuals                   MaintenanceManual[]
+  createdRepairShops               RepairShop[]
   assignedPlans            AircraftAssignedPlan[]
 
   @@unique([email, organizationId])
@@ -530,6 +534,51 @@ model AircraftTaskNote {
   @@index([aircraftId, taskId, createdAt])
   @@index([organizationId])
   @@map("aircraft_task_notes")
+}
+
+/// Manual de referencia vigente por modelo (tabla DOC del Access).
+model MaintenanceManual {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+
+  model     String  @db.VarChar(120)
+  /// Documento y revisión, tal como se cita en la OT
+  reference String
+  kind      String  @default("ENGINE") @db.VarChar(20)
+  notes     String?
+
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@map("maintenance_manuals")
+}
+
+/// Taller aeronáutico habilitado (tabla CMA del Access).
+model RepairShop {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+
+  /// Código CMA de la autoridad; puede faltar en talleres extranjeros
+  code     String? @db.VarChar(40)
+  name     String  @db.VarChar(180)
+  country  String? @db.VarChar(80)
+  notes    String?
+  isActive Boolean @default(true)
+
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@map("repair_shops")
 }
 
 model AircraftUsageLog {

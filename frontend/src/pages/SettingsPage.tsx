@@ -21,11 +21,13 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
+import { ManualsSection, RepairShopsSection } from '../components/settings/CatalogSections';
+
 export default function SettingsPage() {
   const user = useAuthStore(s => s.user);
 
   return (
-    <div className="p-8 space-y-6 max-w-3xl">
+    <div className="p-8 space-y-6 max-w-4xl">
       <div className="flex items-center gap-3">
         <div className="w-9 h-9 bg-brand-50 rounded-lg flex items-center justify-center">
           <Palette size={18} className="text-brand-600" />
@@ -50,6 +52,9 @@ export default function SettingsPage() {
         <Field label="Rol" value={user?.role ?? '—'} />
         <Field label="ID de Organización" value={user?.organizationId ?? '—'} />
       </Section>
+
+      <ManualsSection />
+      <RepairShopsSection />
 
       {/* Seguridad */}
       <Section title="Seguridad">
