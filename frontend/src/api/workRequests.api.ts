@@ -186,8 +186,16 @@ export const workRequestsApi = {
     return data.data;
   },
 
-  async send(id: string): Promise<WorkRequest> {
-    const { data } = await apiClient.post<{ status: string; data: WorkRequest }>(`/work-requests/${id}/send`);
+  async send(id: string, dispatch?: {
+    repairShopId?: string | null;
+    repairShopContactId?: string | null;
+    dispatchMethod?: 'EMAIL' | 'MANUAL' | null;
+    dispatchNotes?: string | null;
+  }): Promise<WorkRequest> {
+    const { data } = await apiClient.post<{ status: string; data: WorkRequest }>(
+      `/work-requests/${id}/send`,
+      dispatch ?? {},
+    );
     return data.data;
   },
 

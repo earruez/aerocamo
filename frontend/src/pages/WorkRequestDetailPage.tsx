@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { RegisterOTModal } from '../components/workRequests/RegisterOTModal';
+import { SendWorkRequestDialog, type DispatchSelection } from '../components/workRequests/SendWorkRequestDialog';
 import { useNavigate } from 'react-router-dom';
 import { saveAs } from 'file-saver';
 import { ArrowLeft, Ban, FileDown, History, MessageSquareText, Paperclip, Save, Send, Trash2, Wrench } from 'lucide-react';
@@ -53,6 +54,8 @@ export default function WorkRequestDetailPage() {
   const [showRegisterOT, setShowRegisterOT] = useState(false);
   const [showAddItemForm, setShowAddItemForm] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [notesDraft, setNotesDraft] = useState<string | null>(null);
+  const [showSendDialog, setShowSendDialog] = useState(false);
   const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [pendingOtData, setPendingOtData] = useState<{ otNumber: string; receivedAt: string; file?: File | null; notes: string } | null>(null);
 
@@ -168,27 +171,45 @@ export default function WorkRequestDetailPage() {
   const handleSaveDraft = async () => {
     if (!workRequest || !canEditCurrent) return;
     try {
-      const updated = await workRequestsApi.updateDraft(workRequest.id, { notes: workRequest.generalNotes ?? null });
+      const updated = await workRequestsApi.updateDraft(workRequest.id, {
+        notes: notesDraft ?? workRequest.generalNotes ?? null,
+      });
       syncWorkRequest(updated);
-      setNotice('Borrador guardado.');
+      setNotesDraft(null);
+      toast.success('Borrador guardado');
     } catch {
       toast.error('No se pudo guardar el borrador');
     }
   };
 
-  const handleSend = async () => {
+  const handleSend = () => {
     if (!workRequest || !canSendCurrent) return;
     if (workRequest.items.length === 0) {
       setNotice('Agrega al menos un item antes de enviar.');
       return;
     }
+    // La ST va a una persona de un taller: hay que elegir destino y vía.
+    setShowSendDialog(true);
+  };
 
+  const [isSending, setIsSending] = useState(false);
+
+  const handleConfirmSend = async (selection: DispatchSelection) => {
+    if (!workRequest) return;
+    setIsSending(true);
     try {
-      const sent = await workRequestsApi.send(workRequest.id);
+      const sent = await workRequestsApi.send(workRequest.id, selection);
       syncWorkRequest(sent);
-      setNotice('Solicitud enviada a Oficina Tecnica.');
+      setShowSendDialog(false);
+      toast.success(
+        selection.dispatchMethod === 'EMAIL'
+          ? 'Solicitud enviada por correo'
+          : 'Solicitud registrada como entregada en mano',
+      );
     } catch {
       toast.error('No se pudo enviar la solicitud');
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -466,6 +487,17 @@ export default function WorkRequestDetailPage() {
         </div>
       )}
 
+      {showSendDialog && (
+        <SendWorkRequestDialog
+          folio={workRequest.folio}
+          itemsCount={workRequest.items.length}
+          isSending={isSending}
+          onClose={() => setShowSendDialog(false)}
+          onConfirm={handleConfirmSend}
+          onDownloadPdf={handleDownloadPdf}
+        />
+      )}
+
       {/* Modal para registrar OT */}
       <RegisterOTModal
         open={showRegisterOT}
@@ -549,7 +581,20 @@ export default function WorkRequestDetailPage() {
               <MessageSquareText size={14} className="text-slate-600" />
               Observaciones
             </h3>
-            <p className="text-sm text-slate-600 leading-relaxed">{workRequest.generalNotes || 'Sin observaciones registradas.'}</p>
+            {canEditCurrent ? (
+              <textarea
+                value={notesDraft ?? workRequest.generalNotes ?? ''}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                rows={3}
+                className="input text-sm"
+                placeholder="Observaciones para el taller: acceso, disponibilidad, materiales…"
+              />
+            ) : (
+              <p className="text-sm text-slate-600 leading-relaxed">{workRequest.generalNotes || 'Sin observaciones registradas.'}</p>
+            )}
+            {canEditCurrent && notesDraft !== null && notesDraft !== (workRequest.generalNotes ?? '') && (
+              <p className="mt-1.5 text-[11px] text-amber-700">Cambios sin guardar — usa «Guardar borrador».</p>
+            )}
           </div>
 
           <div ref={historyRef} className="scroll-mt-20 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
