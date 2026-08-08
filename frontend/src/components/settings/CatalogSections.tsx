@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, Wrench, Plus, Pencil, Trash2, X } from 'lucide-react';
+import { BookOpen, Wrench, Plus, Pencil, Trash2, X, ChevronDown, ChevronRight, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   catalogsApi,
   type MaintenanceManual,
   type ManualKind,
   type RepairShop,
+  type RepairShopContact,
 } from '@api/catalogs.api';
 import { useAuthStore } from '../../store/authStore';
 
@@ -59,6 +60,113 @@ function RowActions({ onEdit, onRemove, busy }: { onEdit: () => void; onRemove: 
         <Trash2 size={13} className="text-rose-500" />
       </button>
     </span>
+  );
+}
+
+
+// ─── Contactos de un taller ───────────────────────────────────────────────────
+// Es a esta persona a quien se envía la Solicitud de Trabajo.
+function ShopContacts({ shopId, canEdit }: { shopId: string; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: '', role: '', email: '', phone: '' });
+
+  const { data: contacts = [], isLoading } = useQuery({
+    queryKey: ['shop-contacts', shopId],
+    queryFn: () => catalogsApi.listContacts(shopId),
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['shop-contacts', shopId] });
+  const close = () => { setAdding(false); setEditingId(null); setForm({ name: '', role: '', email: '', phone: '' }); };
+
+  const save = useMutation({
+    mutationFn: () => {
+      const payload = {
+        name: form.name.trim(),
+        role: form.role.trim() || null,
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+      };
+      return editingId ? catalogsApi.updateContact(editingId, payload) : catalogsApi.createContact(shopId, payload);
+    },
+    onSuccess: () => { invalidate(); close(); toast.success(editingId ? 'Contacto actualizado' : 'Contacto agregado'); },
+    onError: () => toast.error('No se pudo guardar el contacto. Revisa el correo.'),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => catalogsApi.removeContact(id),
+    onSuccess: () => { invalidate(); toast.success('Contacto eliminado'); },
+    onError: () => toast.error('No se pudo eliminar el contacto'),
+  });
+
+  const openEdit = (c: RepairShopContact) => {
+    setEditingId(c.id);
+    setAdding(false);
+    setForm({ name: c.name, role: c.role ?? '', email: c.email ?? '', phone: c.phone ?? '' });
+  };
+
+  return (
+    <div className="bg-slate-50/70 px-5 py-3 border-t border-slate-100">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          Contactos {contacts.length > 0 && `(${contacts.length})`}
+        </p>
+        {canEdit && !adding && !editingId && (
+          <button onClick={() => setAdding(true)} className="text-[11px] font-semibold text-brand-700 hover:underline">
+            + Agregar contacto
+          </button>
+        )}
+      </div>
+
+      {(adding || editingId) && (
+        <form
+          onSubmit={(e) => { e.preventDefault(); if (form.name.trim()) save.mutate(); }}
+          className="mb-3 grid grid-cols-1 sm:grid-cols-4 gap-2"
+        >
+          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input text-xs" placeholder="Nombre" autoFocus />
+          <input value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="input text-xs" placeholder="Cargo" />
+          <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="input text-xs" placeholder="Correo" type="email" />
+          <div className="flex gap-1.5">
+            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="input text-xs flex-1" placeholder="Teléfono" />
+            <button type="submit" className="btn-primary btn-xs shrink-0" disabled={save.isPending || !form.name.trim()}>
+              {save.isPending ? '…' : 'OK'}
+            </button>
+            <button type="button" onClick={close} className="btn-secondary btn-xs shrink-0">✕</button>
+          </div>
+        </form>
+      )}
+
+      {isLoading ? (
+        <p className="text-[11px] text-slate-400">Cargando…</p>
+      ) : contacts.length === 0 ? (
+        <p className="text-[11px] text-slate-400">
+          Sin contactos. Agrega al menos uno para poder enviarle la Solicitud de Trabajo.
+        </p>
+      ) : (
+        <ul className="space-y-1">
+          {contacts.map((c) => (
+            <li key={c.id} className="flex items-center justify-between gap-2 rounded-lg bg-white border border-slate-200 px-3 py-1.5">
+              <span className="min-w-0 flex-1 text-xs">
+                <span className="font-semibold text-slate-800">{c.name}</span>
+                {c.role && <span className="text-slate-500"> · {c.role}</span>}
+                {c.email ? (
+                  <span className="ml-2 inline-flex items-center gap-1 text-slate-600">
+                    <Mail size={11} /> {c.email}
+                  </span>
+                ) : (
+                  <span className="ml-2 text-amber-700">sin correo — solo envío manual</span>
+                )}
+                {c.phone && <span className="ml-2 text-slate-500">{c.phone}</span>}
+              </span>
+              {canEdit && (
+                <RowActions onEdit={() => openEdit(c)} onRemove={() => remove.mutate(c.id)} busy={remove.isPending} />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -189,6 +297,7 @@ export function RepairShopsSection() {
 
   const [editing, setEditing] = useState<RepairShop | null>(null);
   const [adding, setAdding] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [form, setForm] = useState({ code: '', name: '', country: '' });
 
   const { data: shops = [], isLoading } = useQuery({
@@ -271,9 +380,19 @@ export function RepairShopsSection() {
               <tr><td className="px-5 py-3 text-slate-400 text-xs" colSpan={5}>Sin talleres registrados.</td></tr>
             )}
             {shops.map((s) => (
-              <tr key={s.id} className={`border-t border-slate-100 ${s.isActive ? '' : 'opacity-55'}`}>
+              <Fragment key={s.id}>
+              <tr className={`border-t border-slate-100 ${s.isActive ? '' : 'opacity-55'}`}>
                 <td className="px-5 py-2.5 font-mono text-xs text-slate-600">{s.code ?? '—'}</td>
-                <td className="px-4 py-2.5 font-medium text-slate-800">{s.name}</td>
+                <td className="px-4 py-2.5 font-medium text-slate-800">
+                  <button
+                    onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
+                    className="inline-flex items-center gap-1 hover:text-brand-700"
+                    title="Ver contactos"
+                  >
+                    {expandedId === s.id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    {s.name}
+                  </button>
+                </td>
                 <td className="px-4 py-2.5 text-xs text-slate-500">{s.country ?? '—'}</td>
                 <td className="px-4 py-2.5">
                   <button
@@ -292,6 +411,14 @@ export function RepairShopsSection() {
                   </td>
                 )}
               </tr>
+              {expandedId === s.id && (
+                <tr>
+                  <td colSpan={canEdit ? 5 : 4} className="p-0">
+                    <ShopContacts shopId={s.id} canEdit={canEdit} />
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>

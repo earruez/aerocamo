@@ -45,7 +45,8 @@
     "merge:ot-into-access-items": "tsx prisma/merge_ot_tasks_into_access_items.ts",
     "prisma:apply:task-is-component-control": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260808_task_is_component_control.sql",
     "prisma:apply:manuals-and-repair-shops": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260808_manuals_and_repair_shops.sql",
-    "import:access:doc-cma": "tsx prisma/import_access_doc_cma.ts"
+    "import:access:doc-cma": "tsx prisma/import_access_doc_cma.ts",
+    "prisma:apply:work-request-flow": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260808_work_request_flow.sql"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",

@@ -56,16 +56,24 @@ export const WORK_ORDER_STATE_MACHINE: WorkflowStateMachine<WorkOrderStatus> = {
 
 export const WORK_REQUEST_STATE_MACHINE: WorkflowStateMachine<WorkRequestStatus> = {
   entity: 'work_request',
-  statuses: ['DRAFT', 'SENT', 'CANCELLED'],
+  statuses: ['DRAFT', 'IN_REVIEW', 'SENT', 'OT_RECEIVED', 'CLOSED', 'CANCELLED'],
   transitions: {
-    DRAFT: ['SENT', 'CANCELLED'],
-    SENT: ['CANCELLED'],
+    DRAFT: ['IN_REVIEW', 'SENT', 'CANCELLED'],
+    // La revisión puede devolver la ST a borrador si hay algo que corregir.
+    IN_REVIEW: ['DRAFT', 'SENT', 'CANCELLED'],
+    SENT: ['OT_RECEIVED', 'CANCELLED'],
+    // Cerrar exige haber recibido la OT: es el respaldo del cumplimiento.
+    OT_RECEIVED: ['CLOSED', 'CANCELLED'],
+    CLOSED: [],
     CANCELLED: [],
   },
   stateMeta: {
     DRAFT: { visible: 'draft', visibleLabel: 'Borrador', label: 'Borrador', uiTone: 'neutral', order: 0 },
-    SENT: { visible: 'in_progress', visibleLabel: 'En proceso', label: 'Enviada', uiTone: 'info', order: 1 },
-    CANCELLED: { visible: 'cancelled', visibleLabel: 'Cancelada', label: 'Cancelada', uiTone: 'danger', order: 2 },
+    IN_REVIEW: { visible: 'in_progress', visibleLabel: 'En revisión', label: 'En revisión', uiTone: 'warning', order: 1 },
+    SENT: { visible: 'in_progress', visibleLabel: 'Enviada', label: 'Enviada al taller', uiTone: 'info', order: 2 },
+    OT_RECEIVED: { visible: 'in_progress', visibleLabel: 'OT recibida', label: 'OT recibida', uiTone: 'info', order: 3 },
+    CLOSED: { visible: 'closed', visibleLabel: 'Cerrada', label: 'Cerrada', uiTone: 'success', order: 4 },
+    CANCELLED: { visible: 'cancelled', visibleLabel: 'Cancelada', label: 'Cancelada', uiTone: 'danger', order: 5 },
   },
 };
 

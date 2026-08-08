@@ -19,6 +19,15 @@ const AMBER_HOURS = 10;
 const SUGGEST_DAYS = 90;
 const SUGGEST_HOURS = 50;
 
+const WORK_REQUEST_FLOW_INCLUDE = {
+  aircraft: true,
+  responsible: true,
+  reviewer: { select: { id: true, name: true, email: true, role: true } },
+  repairShop: { select: { id: true, code: true, name: true } },
+  repairShopContact: { select: { id: true, name: true, role: true, email: true } },
+  items: { include: { task: true, component: true, discrepancy: true } },
+} as const;
+
 export class WorkRequestService {
   private static aircraftRepo = new PrismaAircraftRepository();
   private static dueDateService = new ComplianceDueDateService();
@@ -159,6 +168,9 @@ export class WorkRequestService {
         aircraft: true,
         responsible: true,
         createdBy: true,
+        reviewer: { select: { id: true, name: true, email: true, role: true } },
+        repairShop: { select: { id: true, code: true, name: true } },
+        repairShopContact: { select: { id: true, name: true, role: true, email: true, phone: true } },
         items: { include: { task: true, component: true, discrepancy: true }, orderBy: { addedAt: 'asc' } },
       },
     });
@@ -401,15 +413,126 @@ export class WorkRequestService {
     };
   }
 
-  static async send(workRequestId: string, organizationId: string, sentById: string) {
+  /** Pasa la ST a revisión: quien la armó la entrega a un revisor antes de que salga. */
+  static async submitForReview(input: {
+    workRequestId: string;
+    organizationId: string;
+    reviewerId: string;
+    actorId: string;
+  }) {
+    const wr = await this.getById(input.workRequestId, input.organizationId);
+    assertValidTransition(WORK_REQUEST_STATE_MACHINE, wr.status, 'IN_REVIEW', 'Work Request');
+    if (wr.items.length === 0) throw new AppError('La ST no tiene tareas incluidas', 400);
+
+    const reviewer = await prisma.user.findFirst({
+      where: { id: input.reviewerId, organizationId: input.organizationId, isActive: true },
+      select: { id: true },
+    });
+    if (!reviewer) throw new AppError('Revisor no encontrado', 404);
+
+    return prisma.workRequest.update({
+      where: { id: wr.id },
+      data: { status: 'IN_REVIEW', reviewerId: reviewer.id },
+      include: WORK_REQUEST_FLOW_INCLUDE,
+    });
+  }
+
+  /** El revisor aprueba y la ST vuelve a quedar lista para enviarse. */
+  static async approveReview(input: {
+    workRequestId: string;
+    organizationId: string;
+    actorId: string;
+    approved: boolean;
+    reviewNotes?: string | null;
+  }) {
+    const wr = await this.getById(input.workRequestId, input.organizationId);
+    if (wr.status !== 'IN_REVIEW') throw new AppError('La ST no está en revisión', 400);
+
+    // Rechazar devuelve la ST a borrador con el motivo, para corregirla.
+    const nextStatus = input.approved ? 'IN_REVIEW' : 'DRAFT';
+    if (!input.approved && !input.reviewNotes?.trim()) {
+      throw new AppError('Indique qué debe corregirse al devolver la ST', 400);
+    }
+
+    return prisma.workRequest.update({
+      where: { id: wr.id },
+      data: {
+        status: nextStatus,
+        reviewedAt: input.approved ? new Date() : null,
+        reviewNotes: input.reviewNotes?.trim() || null,
+      },
+      include: WORK_REQUEST_FLOW_INCLUDE,
+    });
+  }
+
+  /** Registra la OT que devuelve el taller: es el respaldo para poder cerrar. */
+  static async registerReceivedOt(input: {
+    workRequestId: string;
+    organizationId: string;
+    actorId: string;
+    otNumber: string;
+    otReceivedAt?: Date | null;
+    otDocumentUrl?: string | null;
+  }) {
+    const wr = await this.getById(input.workRequestId, input.organizationId);
+    assertValidTransition(WORK_REQUEST_STATE_MACHINE, wr.status, 'OT_RECEIVED', 'Work Request');
+    if (!input.otNumber.trim()) throw new AppError('Indique el número de la OT recibida', 400);
+
+    return prisma.workRequest.update({
+      where: { id: wr.id },
+      data: {
+        status: 'OT_RECEIVED',
+        otNumber: input.otNumber.trim().slice(0, 80),
+        otReceivedAt: input.otReceivedAt ?? new Date(),
+        otDocumentUrl: input.otDocumentUrl ?? null,
+        otRegisteredById: input.actorId,
+      },
+      include: WORK_REQUEST_FLOW_INCLUDE,
+    });
+  }
+
+  static async send(
+    workRequestId: string,
+    organizationId: string,
+    sentById: string,
+    dispatch?: {
+      repairShopId?: string | null;
+      repairShopContactId?: string | null;
+      /** MANUAL cubre el caso del taller que recibe el PDF impreso en mano. */
+      dispatchMethod?: 'EMAIL' | 'MANUAL' | null;
+      dispatchNotes?: string | null;
+    },
+  ) {
     const wr = await this.getById(workRequestId, organizationId);
     assertValidTransition(WORK_REQUEST_STATE_MACHINE, wr.status, 'SENT', 'Work Request');
-    if (!wr.responsibleId) throw new AppError('Debe asignar un responsable antes de enviar', 400);
+    // El destino puede ser un contacto del taller o un responsable interno:
+    // basta con que la ST sepa a quién va.
+    const destinationContactId = dispatch?.repairShopContactId ?? wr.repairShopContactId;
+    if (!wr.responsibleId && !destinationContactId) {
+      throw new AppError('Asigne un responsable o un contacto del taller antes de enviar', 400);
+    }
     if (wr.items.length === 0) throw new AppError('La ST no tiene tareas incluidas', 400);
+
+    // Enviar por correo exige un contacto con dirección; en mano no.
+    if (dispatch?.dispatchMethod === 'EMAIL' && dispatch.repairShopContactId) {
+      const contact = await prisma.repairShopContact.findFirst({
+        where: { id: dispatch.repairShopContactId, organizationId },
+        select: { email: true },
+      });
+      if (!contact?.email) throw new AppError('El contacto seleccionado no tiene correo registrado', 400);
+    }
 
     const sent = await prisma.workRequest.update({
       where: { id: workRequestId },
-      data: { status: 'SENT', sentAt: new Date(), sentById },
+      data: {
+        status: 'SENT',
+        sentAt: new Date(),
+        sentById,
+        repairShopId: dispatch?.repairShopId ?? undefined,
+        repairShopContactId: dispatch?.repairShopContactId ?? undefined,
+        dispatchMethod: dispatch?.dispatchMethod ?? undefined,
+        dispatchNotes: dispatch?.dispatchNotes?.trim() || undefined,
+      },
       include: { responsible: true, aircraft: true, items: { include: { task: true, component: true, discrepancy: true } } },
     });
 
@@ -459,7 +582,7 @@ export class WorkRequestService {
     });
 
     if (!wr) throw new AppError('Solicitud de Trabajo no encontrada', 404);
-    if (wr.status !== 'SENT') {
+    if (wr.status !== 'OT_RECEIVED' && wr.status !== 'SENT') {
       throw new AppError('La ST debe estar en estado ENVIADA antes de cerrar y cumplir', 400);
     }
 
@@ -545,6 +668,9 @@ export class WorkRequestService {
       await tx.workRequest.update({
         where: { id: wr.id },
         data: {
+          status: 'CLOSED',
+          closedAt: closeDate,
+          closedById: input.user.id,
           notes: [
             wr.notes?.trim() ?? null,
             `[CLOSE_AND_COMPLY ${closeDate.toISOString()}] MASTER_FH ${masterHoursAtClose} MASTER_CYC ${masterCyclesAtClose} SNAPSHOT_FH ${input.aircraftHoursAtClose ?? 'n/a'} SNAPSHOT_CYC_N1 ${input.aircraftCyclesN1AtClose ?? 'n/a'} SNAPSHOT_CYC_N2 ${input.aircraftCyclesN2AtClose ?? 'n/a'} EVIDENCE ${input.evidenceFileName}`,

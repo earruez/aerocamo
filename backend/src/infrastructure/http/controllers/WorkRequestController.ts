@@ -58,7 +58,15 @@ export class WorkRequestController {
 
   static async send(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const data = await WorkRequestService.send(req.params.id, req.organizationId, req.currentUser.id);
+      const dispatch = z.object({
+        repairShopId: z.string().uuid().nullable().optional(),
+        repairShopContactId: z.string().uuid().nullable().optional(),
+        dispatchMethod: z.enum(['EMAIL', 'MANUAL']).nullable().optional(),
+        dispatchNotes: z.string().max(2000).nullable().optional(),
+      }).parse(req.body ?? {});
+      const data = await WorkRequestService.send(
+        req.params.id, req.organizationId, req.currentUser.id, dispatch,
+      );
       res.json({ status: 'success', data });
     } catch (err) { next(err); }
   }
@@ -143,6 +151,55 @@ export class WorkRequestController {
     } catch (err) { next(err); }
   }
 
+  static async submitForReview(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { reviewerId } = z.object({ reviewerId: z.string().uuid() }).parse(req.body);
+      const data = await WorkRequestService.submitForReview({
+        workRequestId: req.params.id,
+        organizationId: req.organizationId,
+        reviewerId,
+        actorId: req.currentUser.id,
+      });
+      res.json({ status: 'success', data });
+    } catch (err) { next(err); }
+  }
+
+  static async reviewDecision(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const body = z.object({
+        approved: z.boolean(),
+        reviewNotes: z.string().max(2000).optional().nullable(),
+      }).parse(req.body);
+      const data = await WorkRequestService.approveReview({
+        workRequestId: req.params.id,
+        organizationId: req.organizationId,
+        actorId: req.currentUser.id,
+        approved: body.approved,
+        reviewNotes: body.reviewNotes ?? null,
+      });
+      res.json({ status: 'success', data });
+    } catch (err) { next(err); }
+  }
+
+  static async registerReceivedOt(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const body = z.object({
+        otNumber: z.string().trim().min(1).max(80),
+        otReceivedAt: z.coerce.date().optional().nullable(),
+        otDocumentUrl: z.string().max(1000).optional().nullable(),
+      }).parse(req.body);
+      const data = await WorkRequestService.registerReceivedOt({
+        workRequestId: req.params.id,
+        organizationId: req.organizationId,
+        actorId: req.currentUser.id,
+        otNumber: body.otNumber,
+        otReceivedAt: body.otReceivedAt ?? null,
+        otDocumentUrl: body.otDocumentUrl ?? (req.file ? `/uploads/${req.file.filename}` : null),
+      });
+      res.json({ status: 'success', data });
+    } catch (err) { next(err); }
+  }
+
   static async generatePdf(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const wr = await WorkRequestService.getById(req.params.id, req.organizationId);
@@ -202,11 +259,23 @@ export class WorkRequestController {
         evidenceFileName = uploaded.originalName;
       }
 
+      // Si la OT firmada ya se cargó al registrarla como recibida, sirve como
+      // evidencia del cierre: pedirla dos veces es fricción sin respaldo extra.
+      if (!evidenceFileUrl || !evidenceFileName) {
+        const registered = await WorkRequestService.getById(req.params.id, req.organizationId);
+        if (registered.otDocumentUrl) {
+          evidenceFileUrl = registered.otDocumentUrl;
+          evidenceFileName = registered.otNumber
+            ? `OT ${registered.otNumber}`
+            : 'OT recibida';
+        }
+      }
+
       if (!evidenceFileUrl || !evidenceFileName) {
         res.status(400).json({
           status: 'error',
           code: 'VALIDATION_ERROR',
-          message: 'Debe adjuntar evidencia documental (foto/PDF de OT firmada)',
+          message: 'Debe adjuntar la OT firmada, o registrarla primero como OT recibida',
         });
         return;
       }

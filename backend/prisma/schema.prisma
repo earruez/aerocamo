@@ -168,7 +168,10 @@ enum WorkOrderEvidenceType {
 /// Work request (Solicitud de Trabajo / ST) lifecycle
 enum WorkRequestStatus {
   DRAFT       // Borrador editable
-  SENT        // Enviada al responsable CMA/OT
+  IN_REVIEW   // En revisión antes de salir
+  SENT        // Enviada al taller
+  OT_RECEIVED // El taller devolvió la OT
+  CLOSED      // Cerrada con cumplimientos registrados
   CANCELLED   // Cancelada
 
   @@map("work_request_status")
@@ -294,6 +297,7 @@ model Organization {
   aircraftTaskNotes   AircraftTaskNote[]
   maintenanceManuals  MaintenanceManual[]
   repairShops         RepairShop[]
+  repairShopContacts  RepairShopContact[]
   components         Component[]
   maintenanceTasks   MaintenanceTask[]
   compliances        Compliance[]
@@ -361,6 +365,9 @@ model User {
   createdTaskNotes                 AircraftTaskNote[]
   createdManuals                   MaintenanceManual[]
   createdRepairShops               RepairShop[]
+  reviewedWorkRequests             WorkRequest[] @relation("WRReviewer")
+  otRegisteredWorkRequests         WorkRequest[] @relation("WROtRegisteredBy")
+  closedWorkRequests               WorkRequest[] @relation("WRClosedBy")
   assignedPlans            AircraftAssignedPlan[]
 
   @@unique([email, organizationId])
@@ -576,9 +583,35 @@ model RepairShop {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  contacts     RepairShopContact[]
+  workRequests WorkRequest[]
 
   @@index([organizationId])
   @@map("repair_shops")
+}
+
+/// Persona de contacto en un taller: a quién se le envía la ST.
+model RepairShopContact {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  repairShopId   String   @db.Uuid
+
+  name      String  @db.VarChar(180)
+  role      String? @db.VarChar(120)
+  email     String? @db.VarChar(255)
+  phone     String? @db.VarChar(60)
+  isPrimary Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repairShop   RepairShop   @relation(fields: [repairShopId], references: [id], onDelete: Cascade)
+  workRequests WorkRequest[]
+
+  @@index([repairShopId, isActive])
+  @@map("repair_shop_contacts")
 }
 
 model AircraftUsageLog {
@@ -1083,6 +1116,27 @@ model WorkRequest {
   aircraftCyclesN1       Int?
   aircraftCyclesN2       Int?
 
+  /// Revisión previa al envío
+  reviewerId     String?           @db.Uuid
+  reviewedAt     DateTime?
+  reviewNotes    String?
+
+  /// Destino: taller y persona a quien se envió, y por qué vía
+  repairShopId        String?      @db.Uuid
+  repairShopContactId String?      @db.Uuid
+  /// EMAIL cuando se envía con el PDF adjunto; MANUAL cuando se imprime y entrega
+  dispatchMethod      String?      @db.VarChar(20)
+  dispatchNotes       String?
+
+  /// OT que devuelve el taller
+  otNumber         String?         @db.VarChar(80)
+  otReceivedAt     DateTime?
+  otDocumentUrl    String?
+  otRegisteredById String?         @db.Uuid
+
+  closedAt       DateTime?
+  closedById     String?           @db.Uuid
+
   /// Dispatch tracking
   sentAt         DateTime?
   sentById       String?           @db.Uuid
@@ -1096,6 +1150,11 @@ model WorkRequest {
   createdBy      User              @relation("WRCreatedBy", fields: [createdById], references: [id])
   responsible    User?             @relation("WRResponsible", fields: [responsibleId], references: [id])
   sentBy         User?             @relation("WRSentBy", fields: [sentById], references: [id])
+  reviewer       User?             @relation("WRReviewer", fields: [reviewerId], references: [id])
+  otRegisteredBy User?             @relation("WROtRegisteredBy", fields: [otRegisteredById], references: [id])
+  closedBy       User?             @relation("WRClosedBy", fields: [closedById], references: [id])
+  repairShop     RepairShop?       @relation(fields: [repairShopId], references: [id], onDelete: SetNull)
+  repairShopContact RepairShopContact? @relation(fields: [repairShopContactId], references: [id], onDelete: SetNull)
 
   items          WorkRequestItem[]
   componentApplications ComponentApplication[]

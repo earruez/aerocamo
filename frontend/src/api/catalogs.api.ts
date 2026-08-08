@@ -22,6 +22,20 @@ export interface RepairShop {
   isActive: boolean;
 }
 
+/** Persona del taller a quien se envía la ST. */
+export interface RepairShopContact {
+  id: string;
+  repairShopId: string;
+  name: string;
+  role: string | null;
+  email: string | null;
+  phone: string | null;
+  isPrimary: boolean;
+  isActive: boolean;
+}
+
+export type RepairShopContactInput = Omit<RepairShopContact, 'id' | 'repairShopId'>;
+
 export type ManualInput = Omit<MaintenanceManual, 'id' | 'updatedAt'>;
 export type RepairShopInput = Omit<RepairShop, 'id'>;
 
@@ -52,5 +66,18 @@ export const catalogsApi = {
 
   removeShop: async (id: string): Promise<void> => {
     await apiClient.delete(`/catalogs/repair-shops/${id}`);
+  },
+
+  listContacts: async (shopId: string): Promise<RepairShopContact[]> =>
+    unwrap((await apiClient.get<{ status: string; data: RepairShopContact[] }>(`/catalogs/repair-shops/${shopId}/contacts`)).data),
+
+  createContact: async (shopId: string, input: Partial<RepairShopContactInput>): Promise<RepairShopContact> =>
+    unwrap((await apiClient.post<{ status: string; data: RepairShopContact }>(`/catalogs/repair-shops/${shopId}/contacts`, input)).data),
+
+  updateContact: async (id: string, input: Partial<RepairShopContactInput>): Promise<RepairShopContact> =>
+    unwrap((await apiClient.patch<{ status: string; data: RepairShopContact }>(`/catalogs/repair-shop-contacts/${id}`, input)).data),
+
+  removeContact: async (id: string): Promise<void> => {
+    await apiClient.delete(`/catalogs/repair-shop-contacts/${id}`);
   },
 };
