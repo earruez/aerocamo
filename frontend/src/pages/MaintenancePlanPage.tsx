@@ -9,6 +9,8 @@ import type { MaintenancePlanItem, PlanItemStatus } from '@api/maintenancePlan.a
 import { tasksApi } from '@api/tasks.api';
 import type { TaskDefinition, CreateTaskInput } from '@api/tasks.api';
 import { complianceApi } from '@api/compliance.api';
+import { taskNotesApi } from '@api/taskNotes.api';
+import { useAuthStore } from '../store/authStore';
 import type { RecordComplianceInput } from '@api/compliance.api';
 import { workRequestsApi } from '@api/workRequests.api';
 import { useWorkRequestStore } from '../store/workRequestStore';
@@ -18,6 +20,7 @@ import {
   ClipboardCheck, AlertTriangle, Clock, CheckCircle2,
   ChevronRight, Search, BookOpen, Calendar, Gauge, RefreshCw,
   Plus, Pencil, Trash2, X, Check,
+  StickyNote,
 } from 'lucide-react';
 
 type MaintenanceType = 'HORARIO' | 'CALENDARIO' | 'MIXTO';
@@ -863,6 +866,7 @@ interface TaskRowProps {
   onSetApplicability: (item: MaintenancePlanItem, applies: boolean) => void;
   onRecord: (item: MaintenancePlanItem) => void;
   onViewHistory: (item: MaintenancePlanItem) => void;
+  noteCount: number;
   onEdit:   (item: MaintenancePlanItem) => void;
   onRemove: (item: MaintenancePlanItem) => void;
   onGenerateST: (item: MaintenancePlanItem) => void;
@@ -880,6 +884,7 @@ function TaskRow({
   onSetApplicability,
   onRecord,
   onViewHistory,
+  noteCount,
   onEdit,
   onRemove,
   onGenerateST,
@@ -973,7 +978,7 @@ function TaskRow({
           type="button"
           onClick={() => onViewHistory(item)}
           className="text-left underline-offset-2 hover:text-brand-700 hover:underline"
-          title="Ver historial completo de cumplimientos"
+          title="Ver historial de cumplimientos y notas de revisión"
         >
           {item.lastPerformedAt
             ? `${new Date(item.lastPerformedAt).toLocaleDateString('es-MX')}${item.lastHoursAtCompliance != null ? ` · ${item.lastHoursAtCompliance.toFixed(0)}h` : ''}`
@@ -981,6 +986,16 @@ function TaskRow({
               ? `Inicio de control: ${new Date(item.controlStartAt).toLocaleDateString('es-MX')}${item.controlStartHours != null ? ` · ${item.controlStartHours.toFixed(0)}h` : ''}`
               : 'Sin dato histórico'}
         </button>
+        {noteCount > 0 && (
+          <button
+            type="button"
+            onClick={() => onViewHistory(item)}
+            className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 hover:bg-sky-100"
+            title={`${noteCount} nota${noteCount !== 1 ? 's' : ''} de revisión`}
+          >
+            <StickyNote size={10} /> {noteCount}
+          </button>
+        )}
       </td>
       <td className="px-4 py-3.5 whitespace-nowrap">
         <div className="flex items-center gap-1.5">
@@ -1075,7 +1090,7 @@ function TaskComplianceHistoryPanel({
       <div className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl">
         <div className="flex items-start justify-between border-b border-slate-200 px-6 py-4">
           <div>
-            <h2 className="text-base font-bold text-slate-900">Historial de cumplimientos</h2>
+            <h2 className="text-base font-bold text-slate-900">Historial y notas</h2>
             <p className="mt-0.5 text-xs text-slate-500">{item.taskCode} · {item.taskTitle}</p>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100">✕</button>
@@ -1142,10 +1157,147 @@ function TaskComplianceHistoryPanel({
           )}
         </div>
 
+        <div className="border-t border-slate-200 px-6 py-4">
+          <TaskNotesSection aircraftId={aircraftId} taskId={item.taskId} />
+        </div>
+
         <div className="flex justify-end border-t border-slate-200 px-6 py-3">
           <button onClick={onClose} className="btn-secondary">Cerrar</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Notas de revisión sobre la tarea ─────────────────────────────────────────
+// Bitácora libre: dejar constancia de una revisión sin registrar cumplimiento
+// (que exigiría ST vigente y OT firmada).
+function TaskNotesSection({ aircraftId, taskId }: { aircraftId: string; taskId: string }) {
+  const qc = useQueryClient();
+  const currentUserId = useAuthStore((state) => state.user?.id);
+  const currentRole = useAuthStore((state) => state.user?.role);
+  const [draft, setDraft] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+
+  const { data: notes = [], isLoading } = useQuery({
+    queryKey: ['task-notes', aircraftId, taskId],
+    queryFn: () => taskNotesApi.listForTask(aircraftId, taskId),
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['task-notes', aircraftId, taskId] });
+    qc.invalidateQueries({ queryKey: ['task-note-counts', aircraftId] });
+  };
+
+  const createMutation = useMutation({
+    mutationFn: (note: string) => taskNotesApi.create(aircraftId, taskId, note),
+    onSuccess: () => { invalidate(); setDraft(''); toast.success('Nota registrada'); },
+    onError: () => toast.error('No se pudo registrar la nota'),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, note }: { id: string; note: string }) => taskNotesApi.update(id, note),
+    onSuccess: () => { invalidate(); setEditingId(null); toast.success('Nota actualizada'); },
+    onError: () => toast.error('No se pudo actualizar la nota'),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (id: string) => taskNotesApi.remove(id),
+    onSuccess: () => { invalidate(); toast.success('Nota eliminada'); },
+    onError: () => toast.error('No se pudo eliminar la nota'),
+  });
+
+  const canModify = (authorId: string | undefined) =>
+    currentRole === 'ADMIN' || currentRole === 'SUPERVISOR' || (!!authorId && authorId === currentUserId);
+
+  return (
+    <div>
+      <div className="mb-2 flex items-baseline justify-between">
+        <h3 className="text-sm font-bold text-slate-900">Notas de revisión</h3>
+        <span className="text-[11px] text-slate-500">No registran cumplimiento ni mueven vencimientos</span>
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const value = draft.trim();
+          if (value) createMutation.mutate(value);
+        }}
+        className="mb-3 flex items-start gap-2"
+      >
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={2}
+          className="input flex-1 text-xs"
+          placeholder="Ej: revisada la AD, sigue vigente; se solicitó aclaración al fabricante…"
+        />
+        <button type="submit" className="btn-primary btn-sm shrink-0" disabled={createMutation.isPending || !draft.trim()}>
+          {createMutation.isPending ? 'Guardando…' : 'Agregar nota'}
+        </button>
+      </form>
+
+      {isLoading ? (
+        <p className="py-3 text-center text-xs text-slate-400">Cargando notas…</p>
+      ) : notes.length === 0 ? (
+        <p className="py-3 text-center text-xs text-slate-400">Sin notas registradas para esta tarea.</p>
+      ) : (
+        <ul className="max-h-48 space-y-2 overflow-auto">
+          {notes.map((entry) => (
+            <li key={entry.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[11px] font-semibold text-slate-600">
+                  {entry.createdBy?.name ?? 'Usuario eliminado'}
+                  <span className="ml-2 font-normal text-slate-400">
+                    {new Date(entry.createdAt).toLocaleString('es-CL')}
+                    {entry.updatedAt !== entry.createdAt ? ' · editada' : ''}
+                  </span>
+                </span>
+                {canModify(entry.createdBy?.id) && editingId !== entry.id && (
+                  <span className="flex shrink-0 gap-1">
+                    <button
+                      onClick={() => { setEditingId(entry.id); setEditDraft(entry.note); }}
+                      className="text-[11px] font-semibold text-slate-500 hover:text-slate-700"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      onClick={() => removeMutation.mutate(entry.id)}
+                      className="text-[11px] font-semibold text-rose-500 hover:text-rose-700"
+                      disabled={removeMutation.isPending}
+                    >
+                      Eliminar
+                    </button>
+                  </span>
+                )}
+              </div>
+              {editingId === entry.id ? (
+                <div className="mt-1.5 flex items-start gap-2">
+                  <textarea
+                    value={editDraft}
+                    onChange={(e) => setEditDraft(e.target.value)}
+                    rows={2}
+                    className="input flex-1 text-xs"
+                  />
+                  <span className="flex shrink-0 flex-col gap-1">
+                    <button
+                      onClick={() => editDraft.trim() && updateMutation.mutate({ id: entry.id, note: editDraft.trim() })}
+                      className="btn-primary btn-xs"
+                      disabled={updateMutation.isPending || !editDraft.trim()}
+                    >
+                      Guardar
+                    </button>
+                    <button onClick={() => setEditingId(null)} className="btn-secondary btn-xs">Cancelar</button>
+                  </span>
+                </div>
+              ) : (
+                <p className="mt-0.5 whitespace-pre-wrap text-xs text-slate-700">{entry.note}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -1312,6 +1464,12 @@ export default function MaintenancePlanPage() {
   const { data: allTasks = [] } = useQuery({ queryKey: ['tasks'], queryFn: tasksApi.listAll });
 
   const selectedAircraft = allAircraft.find(a => a.id === selectedId) ?? null;
+
+  const { data: noteCounts = {} } = useQuery({
+    queryKey: ['task-note-counts', selectedId],
+    queryFn: () => taskNotesApi.countsByAircraft(selectedId!),
+    enabled: !!selectedId,
+  });
 
   const invalidatePlan = () => qc.invalidateQueries({ queryKey: ['maintenance-plan', selectedId] });
 
@@ -2351,6 +2509,7 @@ export default function MaintenancePlanPage() {
                       }}
                       onRecord={handleRecord}
                       onViewHistory={(taskItem) => setHistoryTask(taskItem)}
+                      noteCount={noteCounts[item.taskId] ?? 0}
                       onEdit={handleEdit}
                       onRemove={handleRemove}
                       onGenerateST={handleGenerateSTFromPlan}

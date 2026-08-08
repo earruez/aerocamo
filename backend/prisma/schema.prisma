@@ -291,6 +291,7 @@ model Organization {
   users              User[]
   aircraft           Aircraft[]
   aircraftAlterations AircraftAlteration[]
+  aircraftTaskNotes   AircraftTaskNote[]
   components         Component[]
   maintenanceTasks   MaintenanceTask[]
   compliances        Compliance[]
@@ -355,6 +356,7 @@ model User {
   componentTrackingMovements ComponentMovement[] @relation("ComponentTrackingMovedBy")
   aircraftTaskApplicabilityChanges AircraftTask[] @relation("AircraftTaskApplicability")
   createdAlterations               AircraftAlteration[]
+  createdTaskNotes                 AircraftTaskNote[]
   assignedPlans            AircraftAssignedPlan[]
 
   @@unique([email, organizationId])
@@ -415,6 +417,7 @@ model Aircraft {
   componentHistory   ComponentHistory[]
   usageLogs          AircraftUsageLog[]
   alterations        AircraftAlteration[]
+  taskNotes          AircraftTaskNote[]
   engines            AircraftEngine[]
   componentInstances ComponentInstance[]
   componentApplications ComponentApplication[]
@@ -503,6 +506,30 @@ model AircraftAlteration {
   @@index([aircraftId])
   @@index([organizationId])
   @@map("aircraft_alterations")
+}
+
+/// Nota libre sobre una tarea en una aeronave: bitácora de revisión, sin
+/// cumplimiento asociado. No altera vencimientos ni estado de la tarea.
+model AircraftTaskNote {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  aircraftId     String   @db.Uuid
+  taskId         String   @db.Uuid
+
+  note           String
+
+  createdById    String?  @db.Uuid
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft     Aircraft        @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  task         MaintenanceTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdBy    User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([aircraftId, taskId, createdAt])
+  @@index([organizationId])
+  @@map("aircraft_task_notes")
 }
 
 model AircraftUsageLog {
@@ -712,6 +739,7 @@ model MaintenanceTask {
   workOrderTasks  WorkOrderTask[]
   workRequestItems WorkRequestItem[]
   componentApplications ComponentApplication[]
+  taskNotes       AircraftTaskNote[]
 
   @@unique([code, organizationId])
   @@index([organizationId])
