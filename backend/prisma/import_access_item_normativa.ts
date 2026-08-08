@@ -371,7 +371,17 @@ async function main(): Promise<void> {
     const codeBase = item.domain === 'COMP' && item.ata && pnSlug
       ? `${item.ata}-${pnSlug}${snSlug ? `-${snSlug}` : ''}`
       : (item.ata || `ID${item.id}`);
-    const key = `${item.domain}|${codeBase}|${item.eq.modelo.toUpperCase()}`;
+
+    // Fuera de COMP, el capítulo ATA NO identifica la tarea: un mismo capítulo
+    // agrupa requisitos distintos (bajo "05-25-00" conviven la inspección de
+    // 1200FH, la de 750HC y la de 10FH/7D; bajo "DAN 135/137" el ELT, el pesaje
+    // y el transponder). Sin la descripción en la clave esas filas se fundían en
+    // una sola y el Access perdía controles. Se normaliza para que diferencias de
+    // puntuación o espaciado no partan en dos la misma tarea.
+    const objetoSlug = item.domain === 'COMP'
+      ? ''
+      : item.objeto.replace(/[^A-Za-z0-9]+/g, '').toUpperCase();
+    const key = `${item.domain}|${codeBase}|${objetoSlug}|${item.eq.modelo.toUpperCase()}`;
 
     let group = groups.get(key);
     if (!group) {

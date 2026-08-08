@@ -41,7 +41,8 @@
     "prisma:apply:aircraft-alterations": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260807_aircraft_alterations.sql",
     "prisma:apply:aircraft-alterations-unique-fix": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260807_aircraft_alterations_unique_fix.sql",
     "import:access:alteraciones": "tsx prisma/import_access_mod_alteraciones.ts",
-    "prisma:apply:aircraft-task-notes": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260807_aircraft_task_notes.sql"
+    "prisma:apply:aircraft-task-notes": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260807_aircraft_task_notes.sql",
+    "merge:ot-into-access-items": "tsx prisma/merge_ot_tasks_into_access_items.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",
