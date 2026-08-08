@@ -96,10 +96,17 @@ export default function WorkRequestDetailPage() {
 
   const handleDelete = async () => {
     if (!workRequest) return;
+    const { id, folio } = workRequest;
     try {
-      await workRequestsApi.remove(workRequest.id);
-      toast.success(`Solicitud ${workRequest.folio} eliminada`);
-      navigate('/work-requests');
+      await workRequestsApi.remove(id);
+      // El detalle se muestra según la ST seleccionada en el store, no por ruta:
+      // hay que soltar la selección y sacarla de la caché, o el listado la sigue mostrando.
+      setConfirmDelete(false);
+      selectWorkRequest(null, 'general');
+      setWorkRequests(
+        useWorkRequestStore.getState().workRequests.filter((wr) => wr.id !== id),
+      );
+      toast.success(`${folio} eliminada`);
     } catch {
       toast.error('No se pudo eliminar la solicitud');
     }
