@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { RegisterOTModal } from '../components/workRequests/RegisterOTModal';
 import { useNavigate } from 'react-router-dom';
 import { saveAs } from 'file-saver';
-import { ArrowLeft, FileDown, History, MessageSquareText, Paperclip, Save, Send, Wrench } from 'lucide-react';
+import { ArrowLeft, Ban, FileDown, History, MessageSquareText, Paperclip, Save, Send, Trash2, Wrench } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useWorkRequestStore } from '../store/workRequestStore';
 import { WorkRequestBadge } from '../components/workRequests/WorkRequestBadges';
@@ -52,6 +52,8 @@ export default function WorkRequestDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [showRegisterOT, setShowRegisterOT] = useState(false);
   const [showAddItemForm, setShowAddItemForm] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [pendingOtData, setPendingOtData] = useState<{ otNumber: string; receivedAt: string; file?: File | null; notes: string } | null>(null);
 
   const syncWorkRequest = (nextApiWorkRequest: Awaited<ReturnType<typeof workRequestsApi.getById>>) => {
@@ -83,6 +85,37 @@ export default function WorkRequestDetailPage() {
     if (!workRequestStateMachine) return false;
     return canTransitionTo(workRequestStateMachine, workRequest.status, 'SENT');
   }, [workRequest, workRequestStateMachine]);
+
+  // Borrar solo el borrador: una vez enviada, la ST existe fuera de la
+  // plataforma y debe cancelarse para conservar el registro.
+  const canDeleteCurrent = canEditCurrent;
+  const canCancelCurrent = useMemo(() => {
+    if (!workRequest || !workRequestStateMachine) return false;
+    return canTransitionTo(workRequestStateMachine, workRequest.status, 'CANCELLED');
+  }, [workRequest, workRequestStateMachine]);
+
+  const handleDelete = async () => {
+    if (!workRequest) return;
+    try {
+      await workRequestsApi.remove(workRequest.id);
+      toast.success(`Solicitud ${workRequest.folio} eliminada`);
+      navigate('/work-requests');
+    } catch {
+      toast.error('No se pudo eliminar la solicitud');
+    }
+  };
+
+  const handleCancel = async (reason: string) => {
+    if (!workRequest) return;
+    try {
+      const updated = await workRequestsApi.cancel(workRequest.id, reason);
+      syncWorkRequest(updated);
+      setCancelReason(null);
+      toast.success('Solicitud cancelada');
+    } catch {
+      toast.error('No se pudo cancelar la solicitud');
+    }
+  };
 
   const visibleStatusLabel = useMemo(() => {
     if (!workRequest) return '';
@@ -327,6 +360,18 @@ export default function WorkRequestDetailPage() {
               <FileDown size={14} />
               Descargar PDF
             </button>
+            {canCancelCurrent && !canDeleteCurrent && (
+              <button className="btn-secondary text-amber-700" onClick={() => setCancelReason('')}>
+                <Ban size={14} />
+                Cancelar solicitud
+              </button>
+            )}
+            {canDeleteCurrent && (
+              <button className="btn-secondary text-rose-600" onClick={() => setConfirmDelete(true)}>
+                <Trash2 size={14} />
+                Eliminar
+              </button>
+            )}
             {/* Registrar OT recibida solo si está en proceso y no tiene OT */}
             {visibleStatus === 'en_proceso' && !hasOT && (
               <button className="btn-primary" onClick={() => setShowRegisterOT(true)}>
@@ -361,6 +406,59 @@ export default function WorkRequestDetailPage() {
             </div>
           )}
         </div>
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-sm font-bold text-slate-900">Eliminar solicitud</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Se eliminará <b>{workRequest.folio}</b> y sus {workRequest.items.length} ítem
+              {workRequest.items.length !== 1 ? 's' : ''}. Esta acción no se puede deshacer.
+            </p>
+            <p className="mt-1.5 text-[11px] text-slate-500">
+              Solo se puede eliminar mientras está en borrador, porque nunca salió de la oficina.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setConfirmDelete(false)} className="btn-secondary">Volver</button>
+              <button onClick={handleDelete} className="btn-primary bg-rose-600 hover:bg-rose-700 border-rose-600">
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelReason !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <form
+            onSubmit={(e) => { e.preventDefault(); if (cancelReason.trim()) void handleCancel(cancelReason.trim()); }}
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
+          >
+            <h2 className="text-sm font-bold text-slate-900">Cancelar solicitud</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              <b>{workRequest.folio}</b> quedará anulada pero se conserva en el expediente,
+              porque ya salió de la oficina.
+            </p>
+            <label className="mt-3 block text-xs font-semibold text-slate-600">
+              Motivo <span className="text-rose-500">*</span>
+            </label>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={3}
+              autoFocus
+              className="input mt-1"
+              placeholder="Ej: el taller no tiene disponibilidad; se reemplaza por otra ST…"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setCancelReason(null)} className="btn-secondary">Volver</button>
+              <button type="submit" className="btn-primary" disabled={!cancelReason.trim()}>
+                Cancelar solicitud
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Modal para registrar OT */}
       <RegisterOTModal
         open={showRegisterOT}

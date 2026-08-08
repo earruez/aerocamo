@@ -191,6 +191,20 @@ export const workRequestsApi = {
     return data.data;
   },
 
+  /** Anula la ST conservando el registro; exige motivo. */
+  async cancel(id: string, reason: string): Promise<WorkRequest> {
+    const { data } = await apiClient.post<{ status: string; data: WorkRequest }>(
+      `/work-requests/${id}/cancel`,
+      { reason },
+    );
+    return data.data;
+  },
+
+  /** Elimina definitivamente. Solo permitido en borrador. */
+  async remove(id: string): Promise<void> {
+    await apiClient.delete(`/work-requests/${id}`);
+  },
+
   async sendEmail(id: string, email?: string): Promise<void> {
     await apiClient.post(`/work-requests/${id}/send-email`, { email });
   },

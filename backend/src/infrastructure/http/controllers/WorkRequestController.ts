@@ -200,6 +200,30 @@ export class WorkRequestController {
     } catch (err) { next(err); }
   }
 
+  static async cancel(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { reason } = z.object({ reason: z.string().trim().min(1).max(2000) }).parse(req.body);
+      const data = await WorkRequestService.cancel({
+        workRequestId: req.params.id,
+        organizationId: req.organizationId,
+        actorId: req.currentUser.id,
+        reason,
+      });
+      res.json({ status: 'success', data });
+    } catch (err) { next(err); }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await WorkRequestService.remove({
+        workRequestId: req.params.id,
+        organizationId: req.organizationId,
+        actorId: req.currentUser.id,
+      });
+      res.status(204).send();
+    } catch (err) { next(err); }
+  }
+
   static async generatePdf(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const wr = await WorkRequestService.getById(req.params.id, req.organizationId);

@@ -491,6 +491,92 @@ export class WorkRequestService {
     });
   }
 
+  /**
+   * Cancela la ST conservando el registro. Una vez enviada, la solicitud es parte
+   * del expediente: se anula con motivo, no se borra.
+   */
+  static async cancel(input: {
+    workRequestId: string;
+    organizationId: string;
+    actorId: string;
+    reason: string;
+  }) {
+    const wr = await this.getById(input.workRequestId, input.organizationId);
+    assertValidTransition(WORK_REQUEST_STATE_MACHINE, wr.status, 'CANCELLED', 'Work Request');
+    if (!input.reason.trim()) throw new AppError('Indique el motivo de la cancelación', 400);
+
+    const actor = await prisma.user.findFirst({
+      where: { id: input.actorId, organizationId: input.organizationId },
+      select: { email: true, role: true },
+    });
+    if (!actor) throw new AppError('Usuario no encontrado para auditoría', 404);
+
+    const cancelled = await prisma.workRequest.update({
+      where: { id: wr.id },
+      data: {
+        status: 'CANCELLED',
+        closedAt: new Date(),
+        closedById: input.actorId,
+        notes: [wr.notes?.trim() || null, `[CANCELADA] ${input.reason.trim()}`]
+          .filter(Boolean).join('\n'),
+      },
+      include: WORK_REQUEST_FLOW_INCLUDE,
+    });
+
+    await auditLogService.log({
+      organizationId: input.organizationId,
+      entityType: 'WorkRequest',
+      entityId: wr.id,
+      action: 'CANCEL',
+      previousValue: { status: wr.status },
+      newValue: { status: 'CANCELLED', reason: input.reason.trim() },
+      userId: input.actorId,
+      userEmail: actor.email,
+      userRole: actor.role,
+      metadata: { workRequestNumber: wr.number, itemsCount: wr.items.length },
+    });
+
+    return cancelled;
+  }
+
+  /**
+   * Elimina definitivamente una ST. Solo en borrador: una vez enviada existe
+   * fuera de la plataforma —el taller la recibió— y debe cancelarse, no borrarse.
+   */
+  static async remove(input: { workRequestId: string; organizationId: string; actorId: string }) {
+    const wr = await this.getById(input.workRequestId, input.organizationId);
+    if (wr.status !== 'DRAFT') {
+      throw new AppError(
+        'Solo se puede eliminar una solicitud en borrador. Si ya fue enviada, cancélala para conservar el registro.',
+        400,
+      );
+    }
+
+    const actor = await prisma.user.findFirst({
+      where: { id: input.actorId, organizationId: input.organizationId },
+      select: { email: true, role: true },
+    });
+    if (!actor) throw new AppError('Usuario no encontrado para auditoría', 404);
+
+    // Los ítems caen en cascada; nada más cuelga de un borrador.
+    await prisma.workRequest.delete({ where: { id: wr.id } });
+
+    await auditLogService.log({
+      organizationId: input.organizationId,
+      entityType: 'WorkRequest',
+      entityId: wr.id,
+      action: 'DELETE',
+      previousValue: { number: wr.number, status: wr.status, itemsCount: wr.items.length },
+      newValue: null,
+      userId: input.actorId,
+      userEmail: actor.email,
+      userRole: actor.role,
+      metadata: { workRequestNumber: wr.number, aircraftId: wr.aircraftId },
+    });
+
+    return { id: wr.id, number: wr.number };
+  }
+
   static async send(
     workRequestId: string,
     organizationId: string,

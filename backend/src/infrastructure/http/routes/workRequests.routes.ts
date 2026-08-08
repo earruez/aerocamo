@@ -22,6 +22,8 @@ router.post('/:id/items', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestContro
 router.delete('/:id/items/:itemId', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.removeItem);
 
 router.get('/:id/pdf', WorkRequestController.generatePdf);
+router.post('/:id/cancel', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.cancel);
+router.delete('/:id', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.remove);
 router.post('/:id/submit-review', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.submitForReview);
 router.post('/:id/review', requireRoles('ADMIN', 'SUPERVISOR', 'INSPECTOR'), WorkRequestController.reviewDecision);
 router.post(
