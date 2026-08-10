@@ -3,6 +3,17 @@ import { apiClient } from './client';
 export type AircraftStatus = 'OPERATIONAL' | 'AOG' | 'IN_MAINTENANCE' | 'GROUNDED' | 'DECOMMISSIONED';
 
 /** Registro de un cambio de estado operacional. */
+/** Lectura de un contador para una aeronave o uno de sus motores. */
+export interface CounterReading {
+  id: string;
+  value: string;
+  readingDate: string;
+  notes: string | null;
+  counterType: { id: string; code: string; name: string; unit: string; scope: string };
+  engine: { id: string; position: string; model: string; serialNumber: string } | null;
+  recordedBy: { id: string; name: string } | null;
+}
+
 export interface AircraftStatusChange {
   id: string;
   fromStatus: AircraftStatus | null;
@@ -170,6 +181,27 @@ export const aircraftApi = {
   async listStatusChanges(id: string): Promise<AircraftStatusChange[]> {
     const { data } = await apiClient.get<{ status: string; data: AircraftStatusChange[] }>(
       `/aircraft/${id}/status-changes`,
+    );
+    return data.data;
+  },
+
+  async listCounterReadings(id: string): Promise<CounterReading[]> {
+    const { data } = await apiClient.get<{ status: string; data: CounterReading[] }>(
+      `/aircraft/${id}/counter-readings`,
+    );
+    return data.data;
+  },
+
+  async createCounterReading(id: string, input: {
+    counterTypeId: string;
+    engineId?: string | null;
+    value: number;
+    readingDate: string;
+    notes?: string | null;
+  }): Promise<CounterReading> {
+    const { data } = await apiClient.post<{ status: string; data: CounterReading }>(
+      `/aircraft/${id}/counter-readings`,
+      input,
     );
     return data.data;
   },

@@ -290,18 +290,70 @@ export class AircraftController {
         );
       }
 
-      const created = await prisma.counterReading.create({
-        data: {
-          organizationId: req.organizationId,
-          counterTypeId: counterType.id,
-          aircraftId: body.engineId ? null : aircraft.id,
-          engineId: body.engineId ?? null,
-          value: body.value,
-          readingDate: body.readingDate,
-          notes: body.notes ?? null,
-          recordedById: req.currentUser.id,
-        },
-        include: { counterType: { select: { code: true, name: true, unit: true } } },
+      const created = await prisma.$transaction(async (tx) => {
+        const reading = await tx.counterReading.create({
+          data: {
+            organizationId: req.organizationId,
+            counterTypeId: counterType.id,
+            aircraftId: body.engineId ? null : aircraft.id,
+            engineId: body.engineId ?? null,
+            value: body.value,
+            readingDate: body.readingDate,
+            notes: body.notes ?? null,
+            recordedById: req.currentUser.id,
+          },
+          include: { counterType: { select: { code: true, name: true, unit: true } } },
+        });
+
+        // Los contadores que reflejan un campo previo lo actualizan también: el
+        // plan calcula horas contra ese campo, y dos verdades para el mismo
+        // número es peor que una sola en el lugar equivocado.
+        if (counterType.legacyField === 'aircraftHours' || counterType.legacyField === 'aircraftCycles') {
+          const last = await tx.aircraftUsageLog.findFirst({
+            where: { aircraftId: aircraft.id },
+            orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+          });
+          const hours = counterType.legacyField === 'aircraftHours'
+            ? body.value
+            : Number(last?.totalHours ?? 0);
+          const cycles = counterType.legacyField === 'aircraftCycles'
+            ? Math.round(body.value)
+            : Number(last?.totalCycles ?? 0);
+
+          await tx.aircraftUsageLog.create({
+            data: {
+              organizationId: req.organizationId,
+              aircraftId: aircraft.id,
+              date: body.readingDate,
+              totalHours: hours,
+              totalCycles: cycles,
+              source: 'manual',
+              notes: `Registrado desde el contador ${counterType.code}`,
+            },
+          });
+          await tx.aircraft.update({
+            where: { id: aircraft.id },
+            data: { totalFlightHours: hours, totalCycles: cycles },
+          });
+        }
+
+        if ((counterType.legacyField === 'engineHours' || counterType.legacyField === 'engineCycles') && body.engineId) {
+          const last = await tx.aircraftEngineUsageLog.findFirst({
+            where: { engineId: body.engineId },
+            orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+          });
+          await tx.aircraftEngineUsageLog.create({
+            data: {
+              organizationId: req.organizationId,
+              engineId: body.engineId,
+              date: body.readingDate,
+              hours: counterType.legacyField === 'engineHours' ? body.value : Number(last?.hours ?? 0),
+              cycles: counterType.legacyField === 'engineCycles' ? Math.round(body.value) : Number(last?.cycles ?? 0),
+            },
+          });
+        }
+
+        return reading;
       });
 
       res.status(201).json({ status: 'success', data: created });

@@ -13,6 +13,7 @@ import {
   Calendar, Gauge, RotateCcw, Zap, ExternalLink, Plus,
 } from 'lucide-react';
 import { AircraftStatusControl } from '../components/aircraft/AircraftStatusControl';
+import { AircraftCountersPanel } from '../components/aircraft/AircraftCountersPanel';
 import { useAuthStore } from '../store/authStore';
 import {
   aircraftApi,
@@ -1170,6 +1171,12 @@ export default function AircraftProfilePage() {
           })}
         </div>
       </div>
+
+      <AircraftCountersPanel
+        aircraftId={aircraft.id}
+        engines={aircraftEngines}
+        canEdit={canChangeStatus}
+      />
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
         <div className="flex items-center gap-2 mb-3">

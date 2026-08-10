@@ -36,6 +36,19 @@ export interface RepairShopContact {
 
 export type RepairShopContactInput = Omit<RepairShopContact, 'id' | 'repairShopId'>;
 
+/** Contador configurable (modelo de la tabla TN del Access). */
+export interface CounterType {
+  id: string;
+  code: string;
+  name: string;
+  unit: string;
+  scope: 'AIRCRAFT' | 'ENGINE' | 'BOTH';
+  slot: number | null;
+  legacyField: string | null;
+  isActive: boolean;
+  sortOrder: number;
+}
+
 export type ManualInput = Omit<MaintenanceManual, 'id' | 'updatedAt'>;
 export type RepairShopInput = Omit<RepairShop, 'id'>;
 
@@ -79,5 +92,18 @@ export const catalogsApi = {
 
   removeContact: async (id: string): Promise<void> => {
     await apiClient.delete(`/catalogs/repair-shop-contacts/${id}`);
+  },
+
+  listCounterTypes: async (): Promise<CounterType[]> =>
+    unwrap((await apiClient.get<{ status: string; data: CounterType[] }>('/catalogs/counter-types')).data),
+
+  createCounterType: async (input: Partial<CounterType>): Promise<CounterType> =>
+    unwrap((await apiClient.post<{ status: string; data: CounterType }>('/catalogs/counter-types', input)).data),
+
+  updateCounterType: async (id: string, input: Partial<CounterType>): Promise<CounterType> =>
+    unwrap((await apiClient.patch<{ status: string; data: CounterType }>(`/catalogs/counter-types/${id}`, input)).data),
+
+  removeCounterType: async (id: string): Promise<void> => {
+    await apiClient.delete(`/catalogs/counter-types/${id}`);
   },
 };

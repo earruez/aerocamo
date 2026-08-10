@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, Wrench, Plus, Pencil, Trash2, X, ChevronDown, ChevronRight, Mail } from 'lucide-react';
+import { BookOpen, Wrench, Plus, Pencil, Trash2, X, ChevronDown, ChevronRight, Mail, Gauge } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   catalogsApi,
@@ -8,6 +8,7 @@ import {
   type ManualKind,
   type RepairShop,
   type RepairShopContact,
+  type CounterType,
 } from '@api/catalogs.api';
 import { useAuthStore } from '../../store/authStore';
 
@@ -167,6 +168,158 @@ function ShopContacts({ shopId, canEdit }: { shopId: string; canEdit: boolean })
         </ul>
       )}
     </div>
+  );
+}
+
+
+const SCOPE_LABEL: Record<string, string> = {
+  AIRCRAFT: 'Aeronave',
+  ENGINE: 'Motor',
+  BOTH: 'Ambos',
+};
+
+// ─── Contadores ───────────────────────────────────────────────────────────────
+export function CounterTypesSection() {
+  const qc = useQueryClient();
+  const role = useAuthStore((s) => s.user?.role);
+  const canEdit = role === 'ADMIN' || role === 'SUPERVISOR';
+
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({ code: '', name: '', unit: 'ciclos', scope: 'BOTH' as CounterType['scope'] });
+
+  const { data: types = [], isLoading } = useQuery({
+    queryKey: ['catalog-counter-types'],
+    queryFn: catalogsApi.listCounterTypes,
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['catalog-counter-types'] });
+  const close = () => { setAdding(false); setEditingId(null); setForm({ code: '', name: '', unit: 'ciclos', scope: 'BOTH' }); };
+
+  const save = useMutation({
+    mutationFn: () => editingId
+      ? catalogsApi.updateCounterType(editingId, { name: form.name.trim(), unit: form.unit.trim() })
+      : catalogsApi.createCounterType({ ...form, code: form.code.trim().toUpperCase(), name: form.name.trim() }),
+    onSuccess: () => { invalidate(); close(); toast.success(editingId ? 'Contador actualizado' : 'Contador agregado'); },
+    onError: (err) => {
+      const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(detail ?? 'No se pudo guardar el contador');
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => catalogsApi.removeCounterType(id),
+    onSuccess: () => { invalidate(); toast.success('Contador eliminado'); },
+    onError: (err) => {
+      const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(detail ?? 'No se pudo eliminar el contador', { duration: 6000 });
+    },
+  });
+
+  const toggle = useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) => catalogsApi.updateCounterType(id, { isActive }),
+    onSuccess: () => invalidate(),
+    onError: () => toast.error('No se pudo cambiar el estado'),
+  });
+
+  return (
+    <CatalogShell
+      icon={Gauge}
+      title="Contadores"
+      hint="Lo que mide el avance de cada aeronave y motor. Son los que gobiernan los vencimientos del plan."
+      canEdit={canEdit}
+      onAdd={() => { setAdding(true); setEditingId(null); setForm({ code: '', name: '', unit: 'ciclos', scope: 'BOTH' }); }}
+      addLabel="Agregar contador"
+    >
+      {(adding || editingId) && (
+        <form
+          onSubmit={(e) => { e.preventDefault(); if (form.name.trim() && (editingId || form.code.trim())) save.mutate(); }}
+          className="border-b border-slate-100 bg-slate-50 px-5 py-4 space-y-3"
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <input
+              value={form.code}
+              onChange={(e) => setForm({ ...form, code: e.target.value })}
+              className="input text-sm"
+              placeholder="Código (CTL)"
+              disabled={!!editingId}
+              autoFocus={!editingId}
+            />
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input text-sm" placeholder="Nombre" />
+            <input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} className="input text-sm" placeholder="Unidad" />
+            <select
+              value={form.scope}
+              onChange={(e) => setForm({ ...form, scope: e.target.value as CounterType['scope'] })}
+              className="input text-sm"
+              disabled={!!editingId}
+            >
+              <option value="AIRCRAFT">Aeronave</option>
+              <option value="ENGINE">Motor</option>
+              <option value="BOTH">Ambos</option>
+            </select>
+          </div>
+          {editingId && (
+            <p className="text-[11px] text-slate-500">El código y el alcance no se cambian: los límites ya registrados dependen de ellos.</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={close} className="btn-secondary btn-sm">Cancelar</button>
+            <button type="submit" className="btn-primary btn-sm" disabled={save.isPending || !form.name.trim()}>
+              {save.isPending ? 'Guardando…' : editingId ? 'Guardar' : 'Agregar'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="text-left px-5 py-2 text-xs font-semibold">Código</th>
+              <th className="text-left px-4 py-2 text-xs font-semibold">Nombre</th>
+              <th className="text-left px-4 py-2 text-xs font-semibold">Unidad</th>
+              <th className="text-left px-4 py-2 text-xs font-semibold">Aplica a</th>
+              <th className="text-left px-4 py-2 text-xs font-semibold">Ranura</th>
+              <th className="text-left px-4 py-2 text-xs font-semibold">Estado</th>
+              {canEdit && <th className="px-4 py-2" />}
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading && <tr><td className="px-5 py-3 text-slate-400 text-xs" colSpan={7}>Cargando…</td></tr>}
+            {types.map((t) => (
+              <tr key={t.id} className={`border-t border-slate-100 ${t.isActive ? '' : 'opacity-55'}`}>
+                <td className="px-5 py-2.5 font-mono text-xs font-semibold text-slate-800">{t.code}</td>
+                <td className="px-4 py-2.5 text-slate-700">{t.name}</td>
+                <td className="px-4 py-2.5 text-xs text-slate-500">{t.unit}</td>
+                <td className="px-4 py-2.5 text-xs text-slate-500">{SCOPE_LABEL[t.scope] ?? t.scope}</td>
+                <td className="px-4 py-2.5 text-xs text-slate-500">
+                  {t.slot ? `${t.slot}ª` : '—'}
+                </td>
+                <td className="px-4 py-2.5">
+                  <button
+                    onClick={() => canEdit && toggle.mutate({ id: t.id, isActive: !t.isActive })}
+                    disabled={!canEdit}
+                    className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      t.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    {t.isActive ? 'Activo' : 'Inactivo'}
+                  </button>
+                </td>
+                {canEdit && (
+                  <td className="px-4 py-2.5">
+                    <RowActions
+                      onEdit={() => { setEditingId(t.id); setAdding(false); setForm({ code: t.code, name: t.name, unit: t.unit, scope: t.scope }); }}
+                      onRemove={() => remove.mutate(t.id)}
+                      busy={remove.isPending}
+                    />
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </CatalogShell>
   );
 }
 
