@@ -2,6 +2,16 @@ import { apiClient } from './client';
 
 export type AircraftStatus = 'OPERATIONAL' | 'AOG' | 'IN_MAINTENANCE' | 'GROUNDED' | 'DECOMMISSIONED';
 
+/** Registro de un cambio de estado operacional. */
+export interface AircraftStatusChange {
+  id: string;
+  fromStatus: AircraftStatus | null;
+  toStatus: AircraftStatus;
+  reason: string;
+  changedAt: string;
+  changedBy: { id: string; name: string; role: string } | null;
+}
+
 export interface Aircraft {
   id: string;
   registration: string;
@@ -146,5 +156,21 @@ export const aircraftApi = {
       `/aircraft/${id}/engines`,
     );
     return data.data ?? [];
+  },
+
+  /** Cambia el estado operacional dejando constancia del motivo. */
+  async changeStatus(id: string, status: AircraftStatus, reason: string): Promise<Aircraft> {
+    const { data } = await apiClient.patch<{ status: string; data: Aircraft }>(
+      `/aircraft/${id}/status`,
+      { status, reason },
+    );
+    return data.data;
+  },
+
+  async listStatusChanges(id: string): Promise<AircraftStatusChange[]> {
+    const { data } = await apiClient.get<{ status: string; data: AircraftStatusChange[] }>(
+      `/aircraft/${id}/status-changes`,
+    );
+    return data.data;
   },
 };

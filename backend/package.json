@@ -49,7 +49,8 @@
     "prisma:apply:work-request-flow": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260808_work_request_flow.sql",
     "prisma:apply:work-request-item-unique-task": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_work_request_item_unique_task.sql",
     "prisma:apply:work-request-email-sent": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_work_request_email_sent.sql",
-    "prisma:apply:work-request-whatsapp": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_work_request_whatsapp.sql"
+    "prisma:apply:work-request-whatsapp": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_work_request_whatsapp.sql",
+    "prisma:apply:aircraft-status-changes": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_aircraft_status_changes.sql"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",

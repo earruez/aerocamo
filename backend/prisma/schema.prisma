@@ -295,6 +295,7 @@ model Organization {
   aircraft           Aircraft[]
   aircraftAlterations AircraftAlteration[]
   aircraftTaskNotes   AircraftTaskNote[]
+  aircraftStatusChanges AircraftStatusChange[]
   maintenanceManuals  MaintenanceManual[]
   repairShops         RepairShop[]
   repairShopContacts  RepairShopContact[]
@@ -363,6 +364,7 @@ model User {
   aircraftTaskApplicabilityChanges AircraftTask[] @relation("AircraftTaskApplicability")
   createdAlterations               AircraftAlteration[]
   createdTaskNotes                 AircraftTaskNote[]
+  aircraftStatusChanges            AircraftStatusChange[]
   createdManuals                   MaintenanceManual[]
   createdRepairShops               RepairShop[]
   reviewedWorkRequests             WorkRequest[] @relation("WRReviewer")
@@ -428,6 +430,7 @@ model Aircraft {
   componentHistory   ComponentHistory[]
   usageLogs          AircraftUsageLog[]
   alterations        AircraftAlteration[]
+  statusChanges      AircraftStatusChange[]
   taskNotes          AircraftTaskNote[]
   engines            AircraftEngine[]
   componentInstances ComponentInstance[]
@@ -612,6 +615,27 @@ model RepairShopContact {
 
   @@index([repairShopId, isActive])
   @@map("repair_shop_contacts")
+}
+
+/// Cambio de estado operacional de una aeronave, con su motivo y autor.
+model AircraftStatusChange {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  aircraftId     String   @db.Uuid
+
+  fromStatus AircraftStatus?
+  toStatus   AircraftStatus
+  reason     String
+
+  changedById String?  @db.Uuid
+  changedAt   DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft     Aircraft     @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  changedBy    User?        @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([aircraftId, changedAt])
+  @@map("aircraft_status_changes")
 }
 
 model AircraftUsageLog {

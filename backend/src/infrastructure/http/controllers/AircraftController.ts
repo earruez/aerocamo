@@ -12,7 +12,7 @@ import { aircraftUsageService } from '../../../domain/services/AircraftUsageServ
 import { TemplateCloneService } from '../../../domain/services/TemplateCloneService';
 import { dueEngineService } from '../../../domain/services/DueEngineService';
 import { prisma } from '../../database/prisma.client';
-import { NotFoundError } from '../../../shared/errors/AppError';
+import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
 
 
 const createSchema = z.object({
@@ -160,6 +160,58 @@ export class AircraftController {
       const body = updateSchema.parse(req.body);
       const aircraft = await this.updateUseCase.execute(req.params.id, req.organizationId, body);
       res.status(200).json({ status: 'success', data: aircraft });
+    } catch (err) { next(err); }
+  };
+
+  /**
+   * Cambia el estado operacional dejando constancia. Sacar de servicio o
+   * devolver al servicio es una decisión de aeronavegabilidad: exige motivo y
+   * queda con autor y fecha en el historial.
+   */
+  changeStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const body = z.object({
+        status: z.enum(['OPERATIONAL', 'AOG', 'IN_MAINTENANCE', 'GROUNDED', 'DECOMMISSIONED']),
+        reason: z.string().trim().min(1, 'Indique el motivo del cambio').max(2000),
+      }).parse(req.body);
+
+      const aircraft = await prisma.aircraft.findFirst({
+        where: { id: req.params.id, organizationId: req.organizationId },
+        select: { id: true, status: true, registration: true },
+      });
+      if (!aircraft) throw new NotFoundError('Aircraft', req.params.id);
+
+      if (aircraft.status === body.status) {
+        throw new ValidationError(`La aeronave ya está en estado ${body.status}`);
+      }
+
+      const [updated] = await prisma.$transaction([
+        prisma.aircraft.update({ where: { id: aircraft.id }, data: { status: body.status } }),
+        prisma.aircraftStatusChange.create({
+          data: {
+            organizationId: req.organizationId,
+            aircraftId: aircraft.id,
+            fromStatus: aircraft.status,
+            toStatus: body.status,
+            reason: body.reason,
+            changedById: req.currentUser.id,
+          },
+        }),
+      ]);
+
+      res.status(200).json({ status: 'success', data: updated });
+    } catch (err) { next(err); }
+  };
+
+  listStatusChanges = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await prisma.aircraftStatusChange.findMany({
+        where: { aircraftId: req.params.id, organizationId: req.organizationId },
+        include: { changedBy: { select: { id: true, name: true, role: true } } },
+        orderBy: { changedAt: 'desc' },
+        take: 50,
+      });
+      res.status(200).json({ status: 'success', data });
     } catch (err) { next(err); }
   };
 

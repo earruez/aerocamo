@@ -12,6 +12,8 @@ import {
   FileText, Paperclip, ClipboardList, Activity,
   Calendar, Gauge, RotateCcw, Zap, ExternalLink, Plus,
 } from 'lucide-react';
+import { AircraftStatusControl } from '../components/aircraft/AircraftStatusControl';
+import { useAuthStore } from '../store/authStore';
 import {
   aircraftApi,
   type Aircraft,
@@ -841,6 +843,7 @@ export default function AircraftProfilePage() {
   const [showStatusReport, setShowStatusReport] = useState(false);
   const [showUsageHistoryPanel, setShowUsageHistoryPanel] = useState(false);
   const workRequests = useWorkRequestStore((s) => s.workRequests);
+  const userRole = useAuthStore((s) => s.user?.role);
   const viewDensity = useWorkRequestStore((s) => s.viewDensity);
   const setViewDensity = useWorkRequestStore((s) => s.setViewDensity);
   const selectWorkRequest = useWorkRequestStore((s) => s.selectWorkRequest);
@@ -1042,6 +1045,9 @@ export default function AircraftProfilePage() {
     );
   }
 
+  // Sacar o devolver una aeronave al servicio no es una edición cualquiera.
+  const canChangeStatus = userRole === 'ADMIN' || userRole === 'SUPERVISOR' || userRole === 'INSPECTOR';
+
   const statusCls = STATUS_CLASSES[aircraft.status] ?? 'bg-slate-100 text-slate-600 border-slate-200';
 
   return (
@@ -1122,6 +1128,13 @@ export default function AircraftProfilePage() {
                   {dueSoonCnt} próximas
                 </span>
               )}
+            </div>
+            <div className="mt-1.5">
+              <AircraftStatusControl
+                aircraftId={aircraft.id}
+                currentStatus={aircraft.status}
+                canEdit={canChangeStatus}
+              />
             </div>
             <p className="text-slate-500 mt-1 text-sm">
               {aircraft.manufacturer} · {aircraft.model} · S/N: {aircraft.serialNumber}
