@@ -296,6 +296,8 @@ model Organization {
   aircraftAlterations AircraftAlteration[]
   aircraftTaskNotes   AircraftTaskNote[]
   aircraftStatusChanges AircraftStatusChange[]
+  counterTypes          CounterType[]
+  counterReadings       CounterReading[]
   maintenanceManuals  MaintenanceManual[]
   repairShops         RepairShop[]
   repairShopContacts  RepairShopContact[]
@@ -365,6 +367,7 @@ model User {
   createdAlterations               AircraftAlteration[]
   createdTaskNotes                 AircraftTaskNote[]
   aircraftStatusChanges            AircraftStatusChange[]
+  counterReadings                  CounterReading[]
   createdManuals                   MaintenanceManual[]
   createdRepairShops               RepairShop[]
   reviewedWorkRequests             WorkRequest[] @relation("WRReviewer")
@@ -431,6 +434,7 @@ model Aircraft {
   usageLogs          AircraftUsageLog[]
   alterations        AircraftAlteration[]
   statusChanges      AircraftStatusChange[]
+  counterReadings    CounterReading[]
   taskNotes          AircraftTaskNote[]
   engines            AircraftEngine[]
   componentInstances ComponentInstance[]
@@ -460,6 +464,7 @@ model AircraftEngine {
   organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   aircraft       Aircraft              @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
   usageLogs      AircraftEngineUsageLog[]
+  counterReadings CounterReading[]
 
   @@unique([aircraftId, position])
   @@index([organizationId, aircraftId])
@@ -636,6 +641,61 @@ model AircraftStatusChange {
 
   @@index([aircraftId, changedAt])
   @@map("aircraft_status_changes")
+}
+
+/// Contador configurable (modelo de la tabla TN del Access): la organización
+/// declara los que usa —CNG, CTL, LND, RIN…— en vez de tener dos fijos.
+model CounterType {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+
+  code  String @db.VarChar(20)
+  name  String @db.VarChar(120)
+  unit  String @default("ciclos") @db.VarChar(30)
+  scope String @default("BOTH") @db.VarChar(12)
+
+  /// Contadores que ya existían como campo fijo; evita duplicar la verdad.
+  legacyField String? @db.VarChar(30)
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(100)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  readings     CounterReading[]
+
+  @@index([organizationId, isActive])
+  @@map("counter_types")
+}
+
+/// Lectura de un contador para una aeronave o un motor.
+model CounterReading {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  counterTypeId  String   @db.Uuid
+
+  /// Exactamente uno de los dos
+  aircraftId String? @db.Uuid
+  engineId   String? @db.Uuid
+
+  value       Decimal  @db.Decimal(12, 2)
+  readingDate DateTime @db.Date
+  source      String   @default("manual") @db.VarChar(30)
+  notes       String?
+
+  recordedById String?  @db.Uuid
+  createdAt    DateTime @default(now())
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  counterType  CounterType     @relation(fields: [counterTypeId], references: [id], onDelete: Cascade)
+  aircraft     Aircraft?       @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  engine       AircraftEngine? @relation(fields: [engineId], references: [id], onDelete: Cascade)
+  recordedBy   User?           @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@index([aircraftId, counterTypeId, readingDate])
+  @@index([engineId, counterTypeId, readingDate])
+  @@map("counter_readings")
 }
 
 model AircraftUsageLog {

@@ -23,6 +23,8 @@ const ctrl = new AircraftController(
 
 router.use(authMiddleware, tenantMiddleware);
 router.get('/', ctrl.findAll);
+router.get('/:id/counter-readings', ctrl.listCounterReadings);
+router.post('/:id/counter-readings', ctrl.createCounterReading);
 router.patch('/:id/status', ctrl.changeStatus);
 router.get('/:id/status-changes', ctrl.listStatusChanges);
 router.get('/:id/maintenance-plan', ctrl.getMaintenancePlan);

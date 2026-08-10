@@ -23,4 +23,9 @@ router.post('/repair-shops/:shopId/contacts', requireRoles('ADMIN', 'SUPERVISOR'
 router.patch('/repair-shop-contacts/:id', requireRoles('ADMIN', 'SUPERVISOR'), ctrl.updateContact);
 router.delete('/repair-shop-contacts/:id', requireRoles('ADMIN', 'SUPERVISOR'), ctrl.removeContact);
 
+router.get('/counter-types', ctrl.listCounterTypes);
+router.post('/counter-types', requireRoles('ADMIN', 'SUPERVISOR'), ctrl.createCounterType);
+router.patch('/counter-types/:id', requireRoles('ADMIN', 'SUPERVISOR'), ctrl.updateCounterType);
+router.delete('/counter-types/:id', requireRoles('ADMIN', 'SUPERVISOR'), ctrl.removeCounterType);
+
 export { router as catalogRoutes };

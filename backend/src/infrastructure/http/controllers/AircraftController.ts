@@ -215,6 +215,99 @@ export class AircraftController {
     } catch (err) { next(err); }
   };
 
+  /** Lecturas de contadores de la aeronave y de sus motores, la última primero. */
+  listCounterReadings = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const readings = await prisma.counterReading.findMany({
+        where: {
+          organizationId: req.organizationId,
+          OR: [
+            { aircraftId: req.params.id },
+            { engine: { aircraftId: req.params.id } },
+          ],
+        },
+        include: {
+          counterType: { select: { id: true, code: true, name: true, unit: true, scope: true } },
+          engine: { select: { id: true, position: true, model: true, serialNumber: true } },
+          recordedBy: { select: { id: true, name: true } },
+        },
+        orderBy: [{ readingDate: 'desc' }, { createdAt: 'desc' }],
+        take: 200,
+      });
+      res.status(200).json({ status: 'success', data: readings });
+    } catch (err) { next(err); }
+  };
+
+  /**
+   * Registra una lectura. Los contadores no retroceden: una lectura menor a la
+   * última suele ser un error de tipeo, y aceptarla adelantaría vencimientos.
+   */
+  createCounterReading = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const body = z.object({
+        counterTypeId: z.string().uuid(),
+        engineId: z.string().uuid().nullable().optional(),
+        value: z.coerce.number().min(0),
+        readingDate: z.coerce.date(),
+        notes: z.string().max(1000).nullable().optional(),
+      }).parse(req.body);
+
+      const aircraft = await prisma.aircraft.findFirst({
+        where: { id: req.params.id, organizationId: req.organizationId },
+        select: { id: true },
+      });
+      if (!aircraft) throw new NotFoundError('Aircraft', req.params.id);
+
+      const counterType = await prisma.counterType.findFirst({
+        where: { id: body.counterTypeId, organizationId: req.organizationId, isActive: true },
+      });
+      if (!counterType) throw new NotFoundError('CounterType', body.counterTypeId);
+
+      if (body.engineId) {
+        const engine = await prisma.aircraftEngine.findFirst({
+          where: { id: body.engineId, aircraftId: aircraft.id },
+          select: { id: true },
+        });
+        if (!engine) throw new NotFoundError('AircraftEngine', body.engineId);
+        if (counterType.scope === 'AIRCRAFT') {
+          throw new ValidationError(`${counterType.code} es un contador de aeronave, no de motor`);
+        }
+      } else if (counterType.scope === 'ENGINE') {
+        throw new ValidationError(`${counterType.code} es un contador de motor: indica a cuál pertenece la lectura`);
+      }
+
+      const previous = await prisma.counterReading.findFirst({
+        where: {
+          counterTypeId: counterType.id,
+          ...(body.engineId ? { engineId: body.engineId } : { aircraftId: aircraft.id }),
+        },
+        orderBy: [{ readingDate: 'desc' }, { createdAt: 'desc' }],
+        select: { value: true, readingDate: true },
+      });
+      if (previous && body.value < Number(previous.value)) {
+        throw new ValidationError(
+          `La lectura (${body.value}) es menor que la última registrada (${Number(previous.value)} el ${previous.readingDate.toISOString().slice(0, 10)}).`,
+        );
+      }
+
+      const created = await prisma.counterReading.create({
+        data: {
+          organizationId: req.organizationId,
+          counterTypeId: counterType.id,
+          aircraftId: body.engineId ? null : aircraft.id,
+          engineId: body.engineId ?? null,
+          value: body.value,
+          readingDate: body.readingDate,
+          notes: body.notes ?? null,
+          recordedById: req.currentUser.id,
+        },
+        include: { counterType: { select: { code: true, name: true, unit: true } } },
+      });
+
+      res.status(201).json({ status: 'success', data: created });
+    } catch (err) { next(err); }
+  };
+
   getMaintenancePlan = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const includeNotApplicable = String(req.query.includeNotApplicable ?? '') === 'true';

@@ -8,7 +8,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../database/prisma.client';
-import { NotFoundError, ConflictError } from '../../../shared/errors/AppError';
+import { NotFoundError, ConflictError, ValidationError } from '../../../shared/errors/AppError';
 
 const manualSchema = z.object({
   model: z.string().trim().min(1).max(120),
@@ -34,7 +34,93 @@ const contactSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+const counterTypeSchema = z.object({
+  code: z.string().trim().min(1).max(20),
+  name: z.string().trim().min(1).max(120),
+  unit: z.string().trim().max(30).optional(),
+  scope: z.enum(['AIRCRAFT', 'ENGINE', 'BOTH']).optional(),
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+});
+
 export class CatalogController {
+  // ── Contadores ─────────────────────────────────────────────────────────────
+  listCounterTypes = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await prisma.counterType.findMany({
+        where: { organizationId: req.organizationId },
+        orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
+      });
+      res.status(200).json({ status: 'success', data });
+    } catch (err) { next(err); }
+  };
+
+  createCounterType = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const body = counterTypeSchema.parse(req.body);
+      const duplicate = await prisma.counterType.findFirst({
+        where: { organizationId: req.organizationId, code: { equals: body.code, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (duplicate) throw new ConflictError(`Ya existe un contador con el código ${body.code}`);
+
+      const created = await prisma.counterType.create({
+        data: {
+          organizationId: req.organizationId,
+          code: body.code.toUpperCase(),
+          name: body.name,
+          unit: body.unit?.trim() || 'ciclos',
+          scope: body.scope ?? 'BOTH',
+          isActive: body.isActive ?? true,
+          sortOrder: body.sortOrder ?? 100,
+        },
+      });
+      res.status(201).json({ status: 'success', data: created });
+    } catch (err) { next(err); }
+  };
+
+  updateCounterType = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const existing = await prisma.counterType.findFirst({
+        where: { id: req.params.id, organizationId: req.organizationId },
+        select: { id: true, legacyField: true },
+      });
+      if (!existing) throw new NotFoundError('CounterType', req.params.id);
+
+      const body = counterTypeSchema.partial().parse(req.body);
+      // Los contadores que reflejan un campo fijo no pueden cambiar de alcance
+      // ni de código: son el puente con los datos que ya existían.
+      if (existing.legacyField && (body.code || body.scope)) {
+        throw new ValidationError('Este contador está enlazado a los datos existentes: solo puedes cambiar su nombre o unidad.');
+      }
+
+      const updated = await prisma.counterType.update({
+        where: { id: existing.id },
+        data: { ...body, code: body.code?.toUpperCase() },
+      });
+      res.status(200).json({ status: 'success', data: updated });
+    } catch (err) { next(err); }
+  };
+
+  removeCounterType = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const existing = await prisma.counterType.findFirst({
+        where: { id: req.params.id, organizationId: req.organizationId },
+        select: { id: true, legacyField: true, code: true, _count: { select: { readings: true } } },
+      });
+      if (!existing) throw new NotFoundError('CounterType', req.params.id);
+      if (existing.legacyField) {
+        throw new ValidationError(`${existing.code} está enlazado a los datos existentes y no se puede eliminar. Desactívalo si no lo usas.`);
+      }
+      if (existing._count.readings > 0) {
+        throw new ValidationError(`${existing.code} tiene ${existing._count.readings} lecturas registradas. Desactívalo en vez de eliminarlo.`);
+      }
+
+      await prisma.counterType.delete({ where: { id: existing.id } });
+      res.status(204).send();
+    } catch (err) { next(err); }
+  };
+
   // ── Manuales ───────────────────────────────────────────────────────────────
   listManuals = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
