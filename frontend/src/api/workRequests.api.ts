@@ -181,6 +181,12 @@ export const workRequestsApi = {
     return `/api/v1/work-requests/${id}/pdf`;
   },
 
+  /** Descarga el PDF generado por el servidor (con membrete, tabla y firmas). */
+  async downloadPdf(id: string): Promise<Blob> {
+    const { data } = await apiClient.get(`/work-requests/${id}/pdf`, { responseType: 'blob' });
+    return data as Blob;
+  },
+
   async getStateMachine(): Promise<WorkflowStateMachine<WorkRequestStatus>> {
     const { data } = await apiClient.get<{ status: string; data: WorkflowStateMachine<WorkRequestStatus> }>('/work-requests/state-machine');
     return data.data;

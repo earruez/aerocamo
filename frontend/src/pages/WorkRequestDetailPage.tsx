@@ -213,22 +213,17 @@ export default function WorkRequestDetailPage() {
     }
   };
 
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = async () => {
     if (!workRequest) return;
-    const content = [
-      'Solicitud de Trabajo',
-      '',
-      `N° ST: ${workRequest.folio}`,
-      `Aeronave: ${workRequest.aircraftId}`,
-      `Prioridad: ${workRequest.priority}`,
-      `Estado: ${visibleStatusLabel}`,
-      '',
-      'Items:',
-      ...workRequest.items.map((item) => `- ${item.title} (${item.ataCode})`),
-    ].join('\n');
-
-    const blob = new Blob([content], { type: 'application/pdf' });
-    saveAs(blob, `${workRequest.folio}.pdf`);
+    // El PDF lo arma el servidor: membrete, datos de aeronave, tabla paginada
+    // y bloque de firmas. Antes se generaba aquí un texto plano con extensión
+    // .pdf que ningún lector abría.
+    try {
+      const blob = await workRequestsApi.downloadPdf(workRequest.id);
+      saveAs(blob, `${workRequest.folio}.pdf`);
+    } catch {
+      toast.error('No se pudo generar el PDF');
+    }
   };
 
   const handleBackToMain = () => {
