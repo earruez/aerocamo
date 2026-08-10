@@ -37,3 +37,6 @@ backend/data/
 backend/data-tecnicopters/
 backend/access-import-diagnostic.json
 backend/OPEN
+
+# PDFs temporales que genera el envío por correo
+backend/tmp/

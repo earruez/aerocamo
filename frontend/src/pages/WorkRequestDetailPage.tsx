@@ -201,11 +201,27 @@ export default function WorkRequestDetailPage() {
       const sent = await workRequestsApi.send(workRequest.id, selection);
       syncWorkRequest(sent);
       setShowSendDialog(false);
-      toast.success(
-        selection.dispatchMethod === 'EMAIL'
-          ? 'Solicitud enviada por correo'
-          : 'Solicitud registrada como entregada en mano',
-      );
+
+      if (selection.dispatchMethod !== 'EMAIL') {
+        toast.success('Solicitud registrada como entregada en mano');
+        return;
+      }
+
+      // El despacho ya quedó registrado; el correo puede fallar aparte (sin SMTP,
+      // rechazo del servidor). Se informa lo que realmente ocurrió.
+      try {
+        await workRequestsApi.sendEmail(workRequest.id);
+        toast.success('Solicitud enviada por correo con el PDF adjunto');
+      } catch (err) {
+        const detail = (err as { response?: { data?: { message?: string } } })
+          ?.response?.data?.message;
+        toast.error(
+          detail
+            ? `Quedó registrada como enviada, pero el correo no salió: ${detail}`
+            : 'Quedó registrada como enviada, pero el correo no salió. Descarga el PDF y envíala en mano.',
+          { duration: 8000 },
+        );
+      }
     } catch {
       toast.error('No se pudo enviar la solicitud');
     } finally {

@@ -5,6 +5,9 @@ import { WorkRequestDocumentService } from '../../../domain/services/WorkRequest
 import { EmailService } from '../../../domain/services/EmailService';
 import { FileStorageService } from '../../../domain/services/FileStorageService';
 import { WORK_REQUEST_STATE_MACHINE } from '../../../domain/workflows/stateMachines';
+import { prisma } from '../../database/prisma.client';
+import { env } from '../../../config/env';
+import { ValidationError } from '../../../shared/errors/AppError';
 
 const createSchema = z.object({
   aircraftId: z.string().uuid(),
@@ -238,20 +241,40 @@ export class WorkRequestController {
     try {
       const { email } = emailSchema.parse(req.body);
       const wr = await WorkRequestService.getById(req.params.id, req.organizationId);
+
+      // El destinatario natural es la persona del taller a la que se dirigió la ST.
+      const target = email ?? wr.repairShopContact?.email ?? wr.responsible?.email;
+      if (!target) {
+        throw new ValidationError(
+          'La ST no tiene un destinatario con correo. Elige un contacto del taller que tenga dirección.',
+        );
+      }
+
+      // Sin SMTP no hay envío posible: mejor decirlo que dejar la ST marcada
+      // como enviada por correo sin que el taller reciba nada.
+      if (!env.email.smtpHost && env.email.provider === 'smtp') {
+        throw new ValidationError(
+          'El correo no está configurado en el servidor (falta SMTP_HOST). Descarga el PDF y envíala en mano.',
+        );
+      }
+
       const pdf = await WorkRequestDocumentService.generateSTDocument(wr.id);
       const pdfPath = await WorkRequestDocumentService.savePdfToFile(pdf, `${wr.number}.pdf`);
-
-      const target = email ?? wr.responsible?.email;
-      if (!target) throw new Error('No se encontró email de responsable');
 
       EmailService.initialize();
       await EmailService.sendWorkRequestNotification({
         to: target,
-        responsibleName: wr.responsible?.name ?? 'Responsable',
+        responsibleName: wr.repairShopContact?.name ?? wr.responsible?.name ?? 'Responsable',
         workRequestNumber: wr.number,
         aircraftRegistration: wr.aircraft.registration,
         aircraftModel: wr.aircraft.model,
         pdfAttachmentPath: pdfPath,
+      });
+
+      // Solo se marca una vez que el correo salió de verdad.
+      await prisma.workRequest.update({
+        where: { id: wr.id },
+        data: { emailSentAt: new Date(), emailSentTo: target.slice(0, 255) },
       });
 
       res.json({ status: 'success', message: 'Correo enviado', data: { workRequestId: wr.id } });

@@ -1137,6 +1137,11 @@ model WorkRequest {
   closedAt       DateTime?
   closedById     String?           @db.Uuid
 
+  /// Envío efectivo del correo: distinto de dispatchMethod, que solo dice cómo
+  /// se decidió enviarla. Vacío significa que el correo no llegó a salir.
+  emailSentAt    DateTime?
+  emailSentTo    String?           @db.VarChar(255)
+
   /// Dispatch tracking
   sentAt         DateTime?
   sentById       String?           @db.Uuid

@@ -219,6 +219,7 @@ export const workRequestsApi = {
     await apiClient.delete(`/work-requests/${id}`);
   },
 
+  /** Envía el PDF por correo al contacto del taller. Lanza si no hay SMTP. */
   async sendEmail(id: string, email?: string): Promise<void> {
     await apiClient.post(`/work-requests/${id}/send-email`, { email });
   },
