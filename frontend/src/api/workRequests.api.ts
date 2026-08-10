@@ -219,6 +219,11 @@ export const workRequestsApi = {
     await apiClient.delete(`/work-requests/${id}`);
   },
 
+  /** Avisa por WhatsApp al contacto del taller, con la ST adjunta. */
+  async notifyWhatsApp(id: string, phone?: string): Promise<void> {
+    await apiClient.post(`/work-requests/${id}/notify-whatsapp`, { phone });
+  },
+
   /** Envía el PDF por correo al contacto del taller. Lanza si no hay SMTP. */
   async sendEmail(id: string, email?: string): Promise<void> {
     await apiClient.post(`/work-requests/${id}/send-email`, { email });

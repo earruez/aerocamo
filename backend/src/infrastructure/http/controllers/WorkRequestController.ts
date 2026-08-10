@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { WorkRequestService } from '../../../domain/services/WorkRequestService';
 import { WorkRequestDocumentService } from '../../../domain/services/WorkRequestDocumentService';
 import { EmailService } from '../../../domain/services/EmailService';
+import { WhatsAppService } from '../../../domain/services/WhatsAppService';
 import { FileStorageService } from '../../../domain/services/FileStorageService';
 import { WORK_REQUEST_STATE_MACHINE } from '../../../domain/workflows/stateMachines';
 import { prisma } from '../../database/prisma.client';
@@ -224,6 +225,46 @@ export class WorkRequestController {
         actorId: req.currentUser.id,
       });
       res.status(204).send();
+    } catch (err) { next(err); }
+  }
+
+  /** Avisa por WhatsApp al contacto del taller, con la ST adjunta. */
+  static async notifyWhatsApp(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { phone } = z.object({ phone: z.string().trim().max(40).optional() }).parse(req.body ?? {});
+      const wr = await WorkRequestService.getById(req.params.id, req.organizationId);
+
+      const target = phone ?? wr.repairShopContact?.phone;
+      if (!target) {
+        throw new ValidationError(
+          'El contacto del taller no tiene teléfono registrado. Agrégalo en Configuración → Talleres.',
+        );
+      }
+      if (!WhatsAppService.isConfigured()) {
+        throw new ValidationError(
+          'WhatsApp no está configurado en el servidor. Descarga el PDF y envíalo por tu cuenta.',
+        );
+      }
+
+      const pdf = await WorkRequestDocumentService.generateSTDocument(wr.id);
+      const sentTo = await WhatsAppService.notifyWorkRequestSent({
+        phone: target,
+        contactName: wr.repairShopContact?.name ?? 'Contacto',
+        workRequestNumber: wr.number,
+        aircraftModel: `${wr.aircraft.manufacturer ?? ''} ${wr.aircraft.model ?? ''}`.trim(),
+        aircraftRegistration: wr.aircraft.registration,
+        // Quien revisó la ST es quien responde por su contenido; si no hubo
+        // revisión, responde quien la armó.
+        senderName: wr.reviewer?.name ?? wr.createdBy?.name ?? 'Oficina Técnica',
+        pdf,
+      });
+
+      await prisma.workRequest.update({
+        where: { id: wr.id },
+        data: { whatsappSentAt: new Date(), whatsappSentTo: sentTo.slice(0, 40) },
+      });
+
+      res.json({ status: 'success', message: 'Aviso enviado por WhatsApp', data: { sentTo } });
     } catch (err) { next(err); }
   }
 

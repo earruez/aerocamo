@@ -202,8 +202,23 @@ export default function WorkRequestDetailPage() {
       syncWorkRequest(sent);
       setShowSendDialog(false);
 
+      // El aviso por WhatsApp es independiente de la vía: puede acompañar tanto
+      // al correo como a la entrega en mano.
+      const notifyWhatsApp = async () => {
+        if (!selection.notifyWhatsApp) return;
+        try {
+          await workRequestsApi.notifyWhatsApp(workRequest.id);
+          toast.success('Aviso enviado por WhatsApp');
+        } catch (err) {
+          const detail = (err as { response?: { data?: { message?: string } } })
+            ?.response?.data?.message;
+          toast.error(detail ?? 'El aviso por WhatsApp no se pudo enviar', { duration: 8000 });
+        }
+      };
+
       if (selection.dispatchMethod !== 'EMAIL') {
         toast.success('Solicitud registrada como entregada en mano');
+        await notifyWhatsApp();
         return;
       }
 
@@ -222,6 +237,7 @@ export default function WorkRequestDetailPage() {
           { duration: 8000 },
         );
       }
+      await notifyWhatsApp();
     } catch {
       toast.error('No se pudo enviar la solicitud');
     } finally {

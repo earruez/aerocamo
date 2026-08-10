@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Mail, Printer, X } from 'lucide-react';
+import { Mail, MessageCircle, Printer, X } from 'lucide-react';
 import { catalogsApi } from '@api/catalogs.api';
 
 export interface DispatchSelection {
@@ -8,6 +8,7 @@ export interface DispatchSelection {
   repairShopContactId: string | null;
   dispatchMethod: 'EMAIL' | 'MANUAL';
   dispatchNotes: string | null;
+  notifyWhatsApp: boolean;
 }
 
 /**
@@ -28,6 +29,7 @@ export function SendWorkRequestDialog({
   const [contactId, setContactId] = useState('');
   const [method, setMethod] = useState<'EMAIL' | 'MANUAL'>('EMAIL');
   const [notes, setNotes] = useState('');
+  const [notifyWhatsApp, setNotifyWhatsApp] = useState(false);
 
   const { data: shops = [] } = useQuery({
     queryKey: ['catalog-shops'],
@@ -50,6 +52,9 @@ export function SendWorkRequestDialog({
   useEffect(() => {
     if (contact && !contact.email) setMethod('MANUAL');
   }, [contact]);
+
+  // El aviso por WhatsApp depende del teléfono, no de la vía de envío.
+  useEffect(() => { setNotifyWhatsApp(Boolean(contact?.phone)); }, [contact]);
 
   const emailBlocked = method === 'EMAIL' && !contact?.email;
   const canSend = !!shopId && !!contactId && !emailBlocked && !isSending;
@@ -159,6 +164,28 @@ export function SendWorkRequestDialog({
             )}
           </div>
 
+          <div className="rounded-xl border border-slate-200 px-3 py-2.5">
+            <label className={`flex items-start gap-2 ${contact?.phone ? '' : 'opacity-55'}`}>
+              <input
+                type="checkbox"
+                checked={notifyWhatsApp}
+                disabled={!contact?.phone}
+                onChange={(e) => setNotifyWhatsApp(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                  <MessageCircle size={13} /> Avisar por WhatsApp
+                </span>
+                <span className="mt-0.5 block text-[11px] text-slate-500">
+                  {contact?.phone
+                    ? `Se envía a ${contact.phone} con la ST adjunta.`
+                    : 'El contacto no tiene teléfono registrado.'}
+                </span>
+              </span>
+            </label>
+          </div>
+
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Nota del envío</label>
             <textarea
@@ -179,6 +206,7 @@ export function SendWorkRequestDialog({
               repairShopContactId: contactId || null,
               dispatchMethod: method,
               dispatchNotes: notes.trim() || null,
+              notifyWhatsApp: notifyWhatsApp && Boolean(contact?.phone),
             })}
             className="btn-primary"
             disabled={!canSend}

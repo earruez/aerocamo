@@ -34,6 +34,7 @@ router.post(
 );
 router.post('/:id/send', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.send);
 router.post('/:id/send-email', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.sendEmail);
+router.post('/:id/notify-whatsapp', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.notifyWhatsApp);
 router.post(
 	'/:id/close-and-comply',
 	requireRoles('ADMIN', 'SUPERVISOR', 'INSPECTOR'),

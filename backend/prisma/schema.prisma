@@ -1142,6 +1142,10 @@ model WorkRequest {
   emailSentAt    DateTime?
   emailSentTo    String?           @db.VarChar(255)
 
+  /// Aviso por WhatsApp al contacto del taller
+  whatsappSentAt DateTime?
+  whatsappSentTo String?           @db.VarChar(40)
+
   /// Dispatch tracking
   sentAt         DateTime?
   sentById       String?           @db.Uuid
