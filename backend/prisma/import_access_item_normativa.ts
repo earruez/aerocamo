@@ -81,6 +81,8 @@ interface ItemRecord {
   limh: number | null;
   limt: number | null;
   limn1: number | null;
+  limn2: number | null;
+  n2ult: number | null;
   hsult: number | null;
   fult: Date | null;
   n1ult: number | null;
@@ -132,11 +134,14 @@ function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
-function resolveIntervalType(item: { limh: number | null; limt: number | null; limn1: number | null }): TaskIntervalType {
+function resolveIntervalType(item: { limh: number | null; limt: number | null; limn1: number | null; limn2?: number | null }): TaskIntervalType {
+  // La segunda ranura también es un control por ciclos: sin esto, una pieza
+  // limitada solo en CTL quedaba "según condición", es decir, sin vencimiento.
+  const cycles = item.limn1 ?? item.limn2 ?? null;
   if (item.limh != null && item.limt != null) return 'FLIGHT_HOURS_OR_CALENDAR';
-  if (item.limn1 != null && item.limt != null) return 'CYCLES_OR_CALENDAR';
+  if (cycles != null && item.limt != null) return 'CYCLES_OR_CALENDAR';
   if (item.limh != null) return 'FLIGHT_HOURS';
-  if (item.limn1 != null) return 'CYCLES';
+  if (cycles != null) return 'CYCLES';
   if (item.limt != null) return 'CALENDAR_DAYS';
   return 'ON_CONDITION';
 }
@@ -334,6 +339,8 @@ async function main(): Promise<void> {
       limh: parseNumber(row.LIMH),
       limt: parseNumber(row.LIMT),
       limn1: parseNumber(row.LIMN1),
+      limn2: parseNumber(row.LIMN2),
+      n2ult: parseNumber(row.N2ULT),
       hsult: parseNumber(row.HSULT),
       fult: parseMdbDate(row.FULT),
       n1ult: parseNumber(row.N1ULT),
@@ -435,6 +442,7 @@ async function main(): Promise<void> {
     byDomain: {} as Record<string, number>,
     byScope: { AIRCRAFT: 0, ENGINE: 0 } as Record<string, number>,
     applicabilityNotesLoaded: 0,
+    counterLimitsCreated: 0,
     links: { active: 0, inactive: 0 },
     compliances: { toCreate: 0, skippedNoDate: 0, alreadyImported: 0 },
     components: { linked: 0, baselinesToCreate: 0, unmatched: 0 },
@@ -493,7 +501,9 @@ async function main(): Promise<void> {
       description: descriptionParts.join('\n'),
       intervalType,
       intervalHours: representative.limh != null ? new Prisma.Decimal(representative.limh) : null,
-      intervalCycles: representative.limn1 != null ? Math.round(representative.limn1) : null,
+      intervalCycles: representative.limn1 != null
+        ? Math.round(representative.limn1)
+        : (representative.limn2 != null ? Math.round(representative.limn2) : null),
       intervalCalendarDays: null as number | null,
       intervalCalendarMonths: representative.limt != null ? Math.round(representative.limt) : null,
       referenceType: DOMAIN_REFERENCE_TYPE[group.domain],
@@ -589,6 +599,29 @@ async function main(): Promise<void> {
           },
         });
         summary.applied.linksUpserted += 1;
+      }
+
+      // Cada ranura con límite queda como un control propio contra su contador.
+      if (APPLY && taskId) {
+        for (const [slot, limit, last] of [
+          [1, member.limn1, member.n1ult],
+          [2, member.limn2, member.n2ult],
+        ] as const) {
+          if (limit == null) continue;
+          const existing = await prisma.taskCounterLimit.findUnique({
+            where: { taskId_slot: { taskId, slot } },
+            select: { id: true },
+          });
+          const data = { limitValue: limit, lastValue: last ?? null };
+          if (existing) {
+            await prisma.taskCounterLimit.update({ where: { id: existing.id }, data });
+          } else {
+            await prisma.taskCounterLimit.create({
+              data: { organizationId: ORG_ID, taskId, slot, ...data },
+            });
+            summary.counterLimitsCreated += 1;
+          }
+        }
       }
 
       if (!hasCompliance) {
@@ -779,6 +812,7 @@ async function main(): Promise<void> {
   console.log(`Links aeronave-tarea: activos=${summary.links.active} noAplica=${summary.links.inactive} (con justificación: ${summary.applicabilityNotesLoaded})`);
   console.log(`Cumplimientos: aCrear=${summary.compliances.toCreate} sinFecha=${summary.compliances.skippedNoDate} yaImportados=${summary.compliances.alreadyImported}`);
   console.log(`Componentes: vinculados=${summary.components.linked} iniciosDeControl=${summary.components.baselinesToCreate} sinMatch=${summary.components.unmatched}`);
+  console.log(`Límites por contador creados: ${summary.counterLimitsCreated}`);
   console.log(`Conflictos de intervalo: ${summary.conflicts.length} (ver item-normativa-report.json)`);
   if (APPLY) {
     console.log(`Aplicado: tareas +${summary.applied.tasksCreated} / ~${summary.applied.tasksUpdated}, links ${summary.applied.linksUpserted}, cumplimientos ${summary.applied.compliancesCreated}, iniciosDeControl ${summary.applied.componentBaselinesCreated}, instalacionesRespaldadas ${summary.applied.installationsBackfilled}`);

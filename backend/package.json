@@ -52,7 +52,8 @@
     "prisma:apply:work-request-whatsapp": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_work_request_whatsapp.sql",
     "prisma:apply:aircraft-status-changes": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_aircraft_status_changes.sql",
     "prisma:apply:configurable-counters": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_configurable_counters.sql",
-    "seed:counter-types": "tsx prisma/seed_counter_types.ts"
+    "seed:counter-types": "tsx prisma/seed_counter_types.ts",
+    "prisma:apply:task-counter-limits": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_task_counter_limits.sql"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",

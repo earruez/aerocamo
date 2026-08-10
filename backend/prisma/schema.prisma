@@ -298,6 +298,7 @@ model Organization {
   aircraftStatusChanges AircraftStatusChange[]
   counterTypes          CounterType[]
   counterReadings       CounterReading[]
+  taskCounterLimits     TaskCounterLimit[]
   maintenanceManuals  MaintenanceManual[]
   repairShops         RepairShop[]
   repairShopContacts  RepairShopContact[]
@@ -656,6 +657,9 @@ model CounterType {
 
   /// Contadores que ya existían como campo fijo; evita duplicar la verdad.
   legacyField String? @db.VarChar(30)
+  /// Ranura del Access que representa (1 = LIMN1, 2 = LIMN2) para su alcance.
+  /// Cambiar esto reinterpreta los límites sin volver a importar.
+  slot        Int?    @db.SmallInt
   isActive    Boolean @default(true)
   sortOrder   Int     @default(100)
 
@@ -696,6 +700,28 @@ model CounterReading {
   @@index([aircraftId, counterTypeId, readingDate])
   @@index([engineId, counterTypeId, readingDate])
   @@map("counter_readings")
+}
+
+/// Límite de una tarea contra un contador. Una tarea puede tener varios: el
+/// Access los guarda en dos ranuras cuyo contador depende del equipo.
+model TaskCounterLimit {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  taskId         String @db.Uuid
+
+  slot       Int     @db.SmallInt
+  limitValue Decimal @db.Decimal(12, 2)
+  /// Lectura del contador en el último cumplimiento
+  lastValue  Decimal? @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  task         MaintenanceTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, slot])
+  @@map("task_counter_limits")
 }
 
 model AircraftUsageLog {
@@ -909,6 +935,7 @@ model MaintenanceTask {
   workRequestItems WorkRequestItem[]
   componentApplications ComponentApplication[]
   taskNotes       AircraftTaskNote[]
+  counterLimits   TaskCounterLimit[]
 
   @@unique([code, organizationId])
   @@index([organizationId])
