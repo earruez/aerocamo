@@ -899,13 +899,26 @@ export class WorkRequestService {
         });
       }
 
-      const result = await prisma.workRequestItem.createMany({
-        data: await Promise.all(amber.map(async (item) => {
-          const { payload } = await this.createTaskSnapshot(item.taskId, a.organizationId);
-          return { workRequestId: draft.id, source: 'AUTO', ...payload };
-        })),
-        skipDuplicates: true,
-      });
+      // Lo que el borrador ya trae no se vuelve a agregar. skipDuplicates por sí
+      // solo no bastaba: omite filas que chocan con una restricción única, y no
+      // existía ninguna, así que cada corrida del job repetía las mismas tareas.
+      const existingTaskIds = new Set(
+        (await prisma.workRequestItem.findMany({
+          where: { workRequestId: draft.id, taskId: { not: null } },
+          select: { taskId: true },
+        })).map((row) => row.taskId as string),
+      );
+      const pending = amber.filter((item) => !existingTaskIds.has(item.taskId));
+
+      const result = pending.length === 0
+        ? { count: 0 }
+        : await prisma.workRequestItem.createMany({
+          data: await Promise.all(pending.map(async (item) => {
+            const { payload } = await this.createTaskSnapshot(item.taskId, a.organizationId);
+            return { workRequestId: draft.id, source: 'AUTO', ...payload };
+          })),
+          skipDuplicates: true,
+        });
 
       if (result.count > 0) {
         if (hadDraft) updated += result.count;

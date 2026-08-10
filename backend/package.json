@@ -46,7 +46,8 @@
     "prisma:apply:task-is-component-control": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260808_task_is_component_control.sql",
     "prisma:apply:manuals-and-repair-shops": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260808_manuals_and_repair_shops.sql",
     "import:access:doc-cma": "tsx prisma/import_access_doc_cma.ts",
-    "prisma:apply:work-request-flow": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260808_work_request_flow.sql"
+    "prisma:apply:work-request-flow": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260808_work_request_flow.sql",
+    "prisma:apply:work-request-item-unique-task": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_work_request_item_unique_task.sql"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",

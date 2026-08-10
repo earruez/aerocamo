@@ -1195,6 +1195,9 @@ model WorkRequestItem {
   component     Component?      @relation(fields: [componentId], references: [id])
   discrepancy   Discrepancy?    @relation(fields: [discrepancyId], references: [id])
 
+  /// Una tarea no puede repetirse dentro de la misma solicitud. Es índice
+  /// parcial (solo taskId no nulo), definido en la migración manual porque
+  /// Prisma no expresa índices únicos con condición.
   @@index([workRequestId, category])
   @@index([sourceKind, sourceId])
   @@index([executionType])
