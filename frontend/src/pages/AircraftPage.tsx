@@ -2,7 +2,8 @@ import { useEffect, useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { Plane, X, Loader2, AlertTriangle, ChevronDown, ChevronRight, Clock, TrendingDown, Info, FileText, User } from 'lucide-react';
+import { Plane, X, Loader2, AlertTriangle, ChevronDown, ChevronRight, Clock, TrendingDown, Info, FileText, User, Gauge } from 'lucide-react';
+import { QuickCountersModal } from '../components/aircraft/QuickCountersModal';
 import { aircraftApi, type Aircraft, type CreateAircraftInput } from '@api/aircraft.api';
 import { libraryApi, type AssignedPlanCategory, type MaintenanceTemplate } from '@api/library.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
@@ -660,6 +661,7 @@ function AircraftRow({ aircraft }: { aircraft: Aircraft }) {
 
 export default function AircraftPage() {
   const [showModal, setShowModal] = useState(false);
+  const [showCounters, setShowCounters] = useState(false);
   const { data: aircraft = [], isLoading, isError, error } = useQuery({
     queryKey: ['aircraft'],
     queryFn: aircraftApi.findAll,
@@ -690,11 +692,24 @@ export default function AircraftPage() {
             <TrendingDown size={12} className="text-brand-500" />
             <span>Clic en una fila para ver proyección predictiva</span>
           </div>
+          <button
+            className="btn-secondary flex items-center gap-1.5"
+            onClick={() => setShowCounters(true)}
+            disabled={aircraft.length === 0}
+            title="Registrar horas y ciclos sin entrar a la ficha"
+          >
+            <Gauge size={14} />
+            Registrar contadores
+          </button>
           <button className="btn-primary" onClick={() => setShowModal(true)}>
             + Nueva aeronave
           </button>
         </div>
       </div>
+
+      {showCounters && (
+        <QuickCountersModal aircraft={aircraft} onClose={() => setShowCounters(false)} />
+      )}
 
       {/* Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
