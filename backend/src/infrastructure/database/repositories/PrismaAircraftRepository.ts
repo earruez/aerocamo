@@ -64,6 +64,51 @@ export class PrismaAircraftRepository implements IAircraftRepository {
     const currentHours = aircraft ? Number(aircraft.totalFlightHours) : 0;
     const currentCycles = aircraft ? aircraft.totalCycles : 0;
 
+    // Los ciclos de la célula y los del motor son contadores distintos: en CC-DET
+    // la aeronave lleva 22908 aterrizajes y el motor 13795 ciclos NG. Comparar una
+    // tarea de motor contra el contador de la célula la da por vencida sin estarlo.
+    const engineCycleFallback = await prisma.aircraftEngineUsageLog.findFirst({
+      where: { engine: { aircraftId } },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      select: { cycles: true },
+    });
+
+    // El contador concreto sale del catálogo: la ranura del límite se resuelve
+    // según el equipo (LND/RIN en la célula, CNG/CTL en el motor).
+    const counterTypes = await prisma.counterType.findMany({
+      where: { organizationId, slot: { not: null }, isActive: true },
+      select: { id: true, slot: true, scope: true },
+    });
+    const counterIdBySlot = new Map<string, string>(
+      counterTypes.map((c) => [`${c.scope}|${c.slot}`, c.id]),
+    );
+
+    const counterReadings = counterTypes.length > 0
+      ? await prisma.counterReading.findMany({
+          where: {
+            organizationId,
+            counterTypeId: { in: counterTypes.map((c) => c.id) },
+            OR: [{ aircraftId }, { engine: { aircraftId } }],
+          },
+          orderBy: [{ readingDate: 'desc' }, { createdAt: 'desc' }],
+          select: { counterTypeId: true, value: true },
+        })
+      : [];
+    // La primera de cada contador es la más reciente por el orden de la consulta.
+    const latestByCounter = new Map<string, number>();
+    for (const r of counterReadings) {
+      if (!latestByCounter.has(r.counterTypeId)) latestByCounter.set(r.counterTypeId, Number(r.value));
+    }
+
+    /** Valor vigente del contador que gobierna esta tarea. */
+    const currentCounterFor = (scope: 'AIRCRAFT' | 'ENGINE', slot: number | null): number => {
+      const counterId = slot != null ? counterIdBySlot.get(`${scope}|${slot}`) : undefined;
+      const reading = counterId != null ? latestByCounter.get(counterId) : undefined;
+      if (reading != null) return reading;
+      // Sin lectura del contador propio, al menos el del equipo correcto.
+      return scope === 'ENGINE' ? (engineCycleFallback?.cycles ?? 0) : currentCycles;
+    };
+
     // All tasks assigned to this aircraft with their latest compliance
     const links = await prisma.aircraftTask.findMany({
       where: { aircraftId, ...(options?.includeNotApplicable ? {} : { isActive: true }) },
@@ -75,6 +120,7 @@ export class PrismaAircraftRepository implements IAircraftRepository {
               select: { componentId: true },
               take: 1,
             },
+            counterLimits: { select: { slot: true, limitValue: true, lastValue: true } },
           },
         },
         aircraft: { select: { totalFlightHours: true, totalCycles: true } },
@@ -257,6 +303,18 @@ export class PrismaAircraftRepository implements IAircraftRepository {
               ? 'CALENDAR'
               : null;
 
+      // Cada límite se mide contra su propio contador, no contra el de la célula.
+      const scopeForCounters = ((task as unknown as { equipmentScope?: 'AIRCRAFT' | 'ENGINE' })
+        .equipmentScope ?? 'AIRCRAFT');
+      const counterLimits = (task as unknown as {
+        counterLimits?: Array<{ slot: number }>;
+      }).counterLimits ?? [];
+      // Sin límites por ranura, la tarea usa el contador del equipo que le toca.
+      const primarySlot = counterLimits.length > 0
+        ? counterLimits.map((l) => l.slot).sort((a, b) => a - b)[0]
+        : null;
+      const cyclesCounter = currentCounterFor(scopeForCounters, primarySlot);
+
       let status: PlanItemStatus = 'NEVER_PERFORMED';
       if (comp) {
         const hasHourLimit = task.intervalHours != null && Number(task.intervalHours) > 0;
@@ -270,7 +328,7 @@ export class PrismaAircraftRepository implements IAircraftRepository {
           ?? (calendarMonths > 0 ? calendarMonths * 30 : null);
 
         const overdueH  = nextDueHours  != null && currentHours  > nextDueHours;
-        const overdueC  = nextDueCycles != null && currentCycles > nextDueCycles;
+        const overdueC  = nextDueCycles != null && cyclesCounter > nextDueCycles;
         const overdueD  = nextDueDate   != null && nextDueDate   < now;
 
         const dueSoonH  = nextDueHours  != null && (
@@ -278,7 +336,7 @@ export class PrismaAircraftRepository implements IAircraftRepository {
             ? (nextDueHours - currentHours) <= Number(task.intervalHours) * 0.1
             : (nextDueHours - currentHours) <= 50
         );
-        const dueSoonC  = nextDueCycles != null && (nextDueCycles - currentCycles) <= 25;
+        const dueSoonC  = nextDueCycles != null && (nextDueCycles - cyclesCounter) <= 25;
         const dueSoonD  = nextDueDate   != null && (
           isMixed && calendarIntervalDays != null
             ? (nextDueDate.getTime() - now.getTime()) <= calendarIntervalDays * 0.1 * 864e5
@@ -324,7 +382,7 @@ export class PrismaAircraftRepository implements IAircraftRepository {
         nextDueCycles,
         nextDueDate,
         hoursRemaining:  effectiveHoursRemaining != null ? Math.round(effectiveHoursRemaining) : null,
-        cyclesRemaining: nextDueCycles != null ? Math.round(nextDueCycles - currentCycles) : null,
+        cyclesRemaining: nextDueCycles != null ? Math.round(nextDueCycles - cyclesCounter) : null,
         daysRemaining:   rawDaysRemaining != null ? Math.ceil(rawDaysRemaining) : null,
         dueBy,
         status,
