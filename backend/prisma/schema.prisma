@@ -299,6 +299,7 @@ model Organization {
   counterTypes          CounterType[]
   counterReadings       CounterReading[]
   taskCounterLimits     TaskCounterLimit[]
+  equipmentCounterSlots EquipmentCounterSlot[]
   maintenanceManuals  MaintenanceManual[]
   repairShops         RepairShop[]
   repairShopContacts  RepairShopContact[]
@@ -436,6 +437,7 @@ model Aircraft {
   alterations        AircraftAlteration[]
   statusChanges      AircraftStatusChange[]
   counterReadings    CounterReading[]
+  counterSlots       EquipmentCounterSlot[]
   taskNotes          AircraftTaskNote[]
   engines            AircraftEngine[]
   componentInstances ComponentInstance[]
@@ -466,6 +468,7 @@ model AircraftEngine {
   aircraft       Aircraft              @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
   usageLogs      AircraftEngineUsageLog[]
   counterReadings CounterReading[]
+  counterSlots    EquipmentCounterSlot[]
 
   @@unique([aircraftId, position])
   @@index([organizationId, aircraftId])
@@ -668,6 +671,7 @@ model CounterType {
 
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   readings     CounterReading[]
+  equipmentSlots EquipmentCounterSlot[]
 
   @@index([organizationId, isActive])
   @@map("counter_types")
@@ -722,6 +726,29 @@ model TaskCounterLimit {
 
   @@unique([taskId, slot])
   @@map("task_counter_limits")
+}
+
+/// Qué contador ocupa cada ranura en un equipo concreto. El Access lo declara
+/// por equipo (EQ.TN1 / EQ.TN2) y varía entre aeronaves y entre motores.
+model EquipmentCounterSlot {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+
+  aircraftId String? @db.Uuid
+  engineId   String? @db.Uuid
+
+  slot          Int    @db.SmallInt
+  counterTypeId String @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft     Aircraft?       @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  engine       AircraftEngine? @relation(fields: [engineId], references: [id], onDelete: Cascade)
+  counterType  CounterType     @relation(fields: [counterTypeId], references: [id], onDelete: Cascade)
+
+  @@map("equipment_counter_slots")
 }
 
 model AircraftUsageLog {

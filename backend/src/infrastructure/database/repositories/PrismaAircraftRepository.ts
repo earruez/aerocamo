@@ -73,21 +73,22 @@ export class PrismaAircraftRepository implements IAircraftRepository {
       select: { cycles: true },
     });
 
-    // El contador concreto sale del catálogo: la ranura del límite se resuelve
-    // según el equipo (LND/RIN en la célula, CNG/CTL en el motor).
-    const counterTypes = await prisma.counterType.findMany({
-      where: { organizationId, slot: { not: null }, isActive: true },
-      select: { id: true, slot: true, scope: true },
+    // Qué contador ocupa cada ranura lo declara el equipo, no la organización:
+    // la ranura 1 de la célula es LND en unas aeronaves y CY en otras, y la
+    // ranura 2 del motor es CTL en unas y CNF en otras.
+    const equipmentSlots = await prisma.equipmentCounterSlot.findMany({
+      where: { organizationId, OR: [{ aircraftId }, { engine: { aircraftId } }] },
+      select: { slot: true, counterTypeId: true, aircraftId: true, engineId: true },
     });
     const counterIdBySlot = new Map<string, string>(
-      counterTypes.map((c) => [`${c.scope}|${c.slot}`, c.id]),
+      equipmentSlots.map((s) => [`${s.engineId ? 'ENGINE' : 'AIRCRAFT'}|${s.slot}`, s.counterTypeId]),
     );
 
-    const counterReadings = counterTypes.length > 0
+    const counterReadings = equipmentSlots.length > 0
       ? await prisma.counterReading.findMany({
           where: {
             organizationId,
-            counterTypeId: { in: counterTypes.map((c) => c.id) },
+            counterTypeId: { in: equipmentSlots.map((s) => s.counterTypeId) },
             OR: [{ aircraftId }, { engine: { aircraftId } }],
           },
           orderBy: [{ readingDate: 'desc' }, { createdAt: 'desc' }],
