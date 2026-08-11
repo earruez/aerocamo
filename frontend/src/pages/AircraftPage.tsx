@@ -107,8 +107,13 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
         .filter(([, templateId]) => Boolean(templateId))
         .map(([category, templateId]) => ({ category, templateId }));
 
+      // Un campo vacío es "sin dato", no una cadena vacía: el backend rechaza
+      // un año o una fecha en blanco.
       const aircraft = await aircraftApi.create({
         ...form,
+        owner: form.owner?.toString().trim() || null,
+        yearManufactured: form.yearManufactured ? Number(form.yearManufactured) : null,
+        coaExpiryDate: form.coaExpiryDate || null,
         assignedPlans: assignments,
       });
 
@@ -246,6 +251,39 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
                 placeholder="CFM56-7B"
               />
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="form-label">Propietario</label>
+              <input
+                value={form.owner ?? ''}
+                onChange={e => set('owner', e.target.value)}
+                className="filter-input w-full"
+                placeholder="Ej: PUBLI G"
+                maxLength={180}
+              />
+            </div>
+            <div>
+              <label className="form-label">Año de fabricación</label>
+              <input
+                value={form.yearManufactured ?? ''}
+                onChange={e => set('yearManufactured', e.target.value ? parseInt(e.target.value) : '')}
+                className="filter-input w-full"
+                placeholder="2017"
+                inputMode="numeric"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="form-label">Vencimiento del certificado de aeronavegabilidad</label>
+            <input
+              type="date"
+              value={(form.coaExpiryDate as string | undefined) ?? ''}
+              onChange={e => set('coaExpiryDate', e.target.value)}
+              className="filter-input w-full"
+            />
           </div>
 
           <div className="space-y-3">

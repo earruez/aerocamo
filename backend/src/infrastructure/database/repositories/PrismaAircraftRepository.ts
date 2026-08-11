@@ -413,6 +413,8 @@ export class PrismaAircraftRepository implements IAircraftRepository {
       status: r.status as Aircraft['status'],
       manufactureDate: r.manufactureDate as Date | null,
       registrationDate: r.registrationDate as Date | null,
+      owner: (r.owner as string | null) ?? null,
+      yearManufactured: (r.yearManufactured as number | null) ?? null,
       coaExpiryDate: r.coaExpiryDate as Date | null,
       insuranceExpiryDate: r.insuranceExpiryDate as Date | null,
       isActive: r.isActive as boolean,

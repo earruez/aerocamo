@@ -27,6 +27,8 @@ const createSchema = z.object({
   manufactureDate: z.coerce.date().optional().nullable(),
   registrationDate: z.coerce.date().optional().nullable(),
   coaExpiryDate: z.coerce.date().optional().nullable(),
+  owner: z.string().trim().max(180).optional().nullable(),
+  yearManufactured: z.coerce.number().int().min(1900).max(2200).optional().nullable(),
   insuranceExpiryDate: z.coerce.date().optional().nullable(),
   assignedPlans: z.array(z.object({
     category: z.enum(['manufacturer', 'national_dgac', 'engine_components', 'origin_country']),
@@ -42,6 +44,8 @@ const updateSchema = z.object({
   totalFlightHours: z.number().nonnegative().optional(),
   totalCycles: z.number().int().nonnegative().optional(),
   status: z.enum(['OPERATIONAL', 'AOG', 'IN_MAINTENANCE', 'GROUNDED', 'DECOMMISSIONED']).optional(),
+  owner: z.string().trim().max(180).optional().nullable(),
+  yearManufactured: z.coerce.number().int().min(1900).max(2200).optional().nullable(),
   coaExpiryDate: z.coerce.date().optional().nullable(),
   insuranceExpiryDate: z.coerce.date().optional().nullable(),
 });
@@ -97,6 +101,8 @@ export class AircraftController {
         totalCycles:          aircraftPayload.totalCycles          ?? 0,
         manufactureDate:      aircraftPayload.manufactureDate      ?? null,
         registrationDate:     aircraftPayload.registrationDate     ?? null,
+        owner:                aircraftPayload.owner                ?? null,
+        yearManufactured:     aircraftPayload.yearManufactured     ?? null,
         coaExpiryDate:        aircraftPayload.coaExpiryDate        ?? null,
         insuranceExpiryDate:  aircraftPayload.insuranceExpiryDate  ?? null,
         organizationId:       req.organizationId,

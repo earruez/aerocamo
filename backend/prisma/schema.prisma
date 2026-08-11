@@ -410,6 +410,10 @@ model Aircraft {
   /// Current status — AOG triggers alerts across all open orders
   status             AircraftStatus @default(OPERATIONAL)
 
+  /// Propietario registrado de la aeronave
+  owner              String?       @db.VarChar(180)
+  /// Año de fabricación. El Access solo guarda el año, no la fecha completa.
+  yearManufactured   Int?          @db.SmallInt
   manufactureDate    DateTime?     @db.Date
   registrationDate   DateTime?     @db.Date
 

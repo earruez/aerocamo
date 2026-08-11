@@ -57,7 +57,9 @@
     "prisma:apply:equipment-counter-slots": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_equipment_counter_slots.sql",
     "import:access:eq-counters": "tsx prisma/import_access_eq_counters.ts",
     "prisma:apply:work-order-access-fields": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260811_work_order_access_fields.sql",
-    "import:access:ot": "tsx prisma/import_access_ot.ts"
+    "import:access:ot": "tsx prisma/import_access_ot.ts",
+    "prisma:apply:aircraft-owner-year": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260811_aircraft_owner_year.sql",
+    "import:access:aeronaves": "tsx prisma/import_access_aeronaves.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",
