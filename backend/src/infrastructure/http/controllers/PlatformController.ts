@@ -52,6 +52,8 @@ const createUserSchema = z.object({
 });
 
 const updateUserSchema = z.object({
+  name: z.string().trim().min(1).max(255).optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
   role: z.enum(['ADMIN', 'SUPERVISOR', 'TECHNICIAN', 'INSPECTOR', 'READONLY']).optional(),
   isActive: z.boolean().optional(),
   password: z.string().min(8).max(200).optional(),
@@ -223,7 +225,25 @@ export class PlatformController {
       }
 
       const body = updateUserSchema.parse(req.body);
-      const data: Record<string, unknown> = { role: body.role, isActive: body.isActive };
+
+      if (body.email && body.email !== existing.email) {
+        const existingEmail = await prisma.user.findFirst({
+          where: { email: { equals: body.email, mode: 'insensitive' }, id: { not: existing.id } },
+          select: { id: true },
+        });
+        if (existingEmail) throw new ConflictError('Ya existe un usuario con ese correo');
+      }
+
+      if (body.role && body.role !== 'ADMIN' && existing.role === 'ADMIN') {
+        await this.assertNotLastAdmin(existing.organizationId, existing.id, 'cambiar de rol al último administrador');
+      }
+      if (body.isActive === false && existing.role === 'ADMIN' && existing.isActive) {
+        await this.assertNotLastAdmin(existing.organizationId, existing.id, 'desactivar al último administrador');
+      }
+
+      const data: Record<string, unknown> = {
+        name: body.name, email: body.email, role: body.role, isActive: body.isActive,
+      };
       if (body.password) data.passwordHash = await bcrypt.hash(body.password, BCRYPT_ROUNDS);
 
       const updated = await prisma.user.update({
@@ -237,8 +257,8 @@ export class PlatformController {
         entityType: 'User',
         entityId: existing.id,
         action: 'UPDATE',
-        previousValue: { role: existing.role, isActive: existing.isActive },
-        newValue: { role: updated.role, isActive: updated.isActive, passwordReset: Boolean(body.password) },
+        previousValue: { name: existing.name, email: existing.email, role: existing.role, isActive: existing.isActive },
+        newValue: { name: updated.name, email: updated.email, role: updated.role, isActive: updated.isActive, passwordReset: Boolean(body.password) },
         userId: req.currentUser.id,
         userEmail: req.currentUser.email,
         userRole: req.currentUser.role,
@@ -246,5 +266,42 @@ export class PlatformController {
 
       res.status(200).json({ status: 'success', data: updated });
     } catch (err) { next(err); }
+  };
+
+  deleteUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const existing = await prisma.user.findUnique({ where: { id: req.params.userId } });
+      if (!existing) throw new NotFoundError('User', req.params.userId);
+      if (existing.role === 'SUPER_ADMIN') {
+        throw new ValidationError('Las cuentas de plataforma no se administran desde aquí');
+      }
+      if (existing.role === 'ADMIN') {
+        await this.assertNotLastAdmin(existing.organizationId, existing.id, 'eliminar al último administrador');
+      }
+
+      await prisma.user.delete({ where: { id: existing.id } });
+
+      await auditLog.log({
+        organizationId: existing.organizationId,
+        entityType: 'User',
+        entityId: existing.id,
+        action: 'DELETE',
+        previousValue: { name: existing.name, email: existing.email, role: existing.role },
+        userId: req.currentUser.id,
+        userEmail: req.currentUser.email,
+        userRole: req.currentUser.role,
+      });
+
+      res.status(204).send();
+    } catch (err) { next(err); }
+  };
+
+  private assertNotLastAdmin = async (organizationId: string, excludingUserId: string, action: string): Promise<void> => {
+    const otherActiveAdmins = await prisma.user.count({
+      where: { organizationId, role: 'ADMIN', isActive: true, id: { not: excludingUserId } },
+    });
+    if (otherActiveAdmins === 0) {
+      throw new ValidationError(`No se puede ${action}: la empresa se quedaría sin administrador activo`);
+    }
   };
 }

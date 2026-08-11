@@ -56,6 +56,13 @@ export const platformApi = {
   createUser: async (orgId: string, input: CreateUserInput): Promise<PlatformUser> =>
     unwrap((await apiClient.post<{ status: string; data: PlatformUser }>(`/platform/organizations/${orgId}/users`, input)).data),
 
-  updateUser: async (userId: string, input: { role?: PlatformUser['role']; isActive?: boolean; password?: string }): Promise<PlatformUser> =>
+  updateUser: async (
+    userId: string,
+    input: { name?: string; email?: string; role?: PlatformUser['role']; isActive?: boolean; password?: string },
+  ): Promise<PlatformUser> =>
     unwrap((await apiClient.patch<{ status: string; data: PlatformUser }>(`/platform/users/${userId}`, input)).data),
+
+  deleteUser: async (userId: string): Promise<void> => {
+    await apiClient.delete(`/platform/users/${userId}`);
+  },
 };

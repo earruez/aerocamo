@@ -16,5 +16,6 @@ router.patch('/organizations/:id', ctrl.updateOrganization);
 router.get('/organizations/:id/users', ctrl.listOrganizationUsers);
 router.post('/organizations/:id/users', ctrl.createUser);
 router.patch('/users/:userId', ctrl.updateUser);
+router.delete('/users/:userId', ctrl.deleteUser);
 
 export { router as platformRoutes };

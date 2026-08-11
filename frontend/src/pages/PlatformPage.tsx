@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Building2, ChevronDown, ChevronRight, Plus, ShieldCheck, X } from 'lucide-react';
+import { Building2, ChevronDown, ChevronRight, Pencil, Plane, Plus, ShieldCheck, Trash2, Users as UsersIcon, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   platformApi,
@@ -157,6 +157,128 @@ function NewOrganizationModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ─── Fila de usuario, con edición inline ───────────────────────────────────
+function UserRow({ user, invalidate }: { user: PlatformUser; invalidate: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ name: user.name, email: user.email, role: user.role, password: '' });
+
+  const toggle = useMutation({
+    mutationFn: ({ isActive }: { isActive: boolean }) => platformApi.updateUser(user.id, { isActive }),
+    onSuccess: invalidate,
+    onError: (err) => {
+      const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(detail ?? 'No se pudo cambiar el estado');
+    },
+  });
+
+  const save = useMutation({
+    mutationFn: () => platformApi.updateUser(user.id, {
+      name: form.name.trim(),
+      email: form.email.trim(),
+      role: form.role,
+      ...(form.password ? { password: form.password } : {}),
+    }),
+    onSuccess: () => {
+      invalidate();
+      setEditing(false);
+      toast.success('Usuario actualizado');
+    },
+    onError: (err) => {
+      const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(detail ?? 'No se pudo actualizar el usuario');
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: () => platformApi.deleteUser(user.id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Usuario eliminado');
+    },
+    onError: (err) => {
+      const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(detail ?? 'No se pudo eliminar el usuario');
+    },
+  });
+
+  if (editing) {
+    return (
+      <li className="rounded-lg bg-white border border-brand-200 px-3 py-2">
+        <form
+          onSubmit={(e) => { e.preventDefault(); if (form.name.trim() && form.email.trim()) save.mutate(); }}
+          className="grid grid-cols-1 sm:grid-cols-5 gap-2 items-center"
+        >
+          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input text-xs" placeholder="Nombre" autoFocus />
+          <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="input text-xs" placeholder="Correo" type="email" />
+          <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as PlatformUser['role'] })} className="input text-xs">
+            {(Object.keys(ROLE_LABEL) as PlatformUser['role'][]).map((r) => (
+              <option key={r} value={r}>{ROLE_LABEL[r]}</option>
+            ))}
+          </select>
+          <input
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            className="input text-xs"
+            placeholder="Nueva contraseña (opcional)"
+          />
+          <span className="flex gap-1">
+            <button
+              type="submit"
+              className="flex-1 inline-flex items-center justify-center rounded-lg bg-brand-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-brand-700 disabled:opacity-50 transition-colors"
+              disabled={save.isPending}
+            >
+              {save.isPending ? '…' : 'Guardar'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+            >
+              ✕
+            </button>
+          </span>
+        </form>
+      </li>
+    );
+  }
+
+  return (
+    <li className={`flex items-center justify-between gap-2 rounded-lg bg-white border border-slate-200 px-3 py-1.5 ${user.isActive ? '' : 'opacity-55'}`}>
+      <span className="min-w-0 flex-1 text-xs">
+        <span className="font-semibold text-slate-800">{user.name}</span>
+        <span className="text-slate-500"> · {ROLE_LABEL[user.role]}</span>
+        <span className="ml-2 text-slate-500">{user.email}</span>
+      </span>
+      <span className="shrink-0 flex items-center gap-1.5">
+        <button
+          onClick={() => toggle.mutate({ isActive: !user.isActive })}
+          disabled={toggle.isPending}
+          className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+            user.isActive ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+          }`}
+        >
+          {user.isActive ? 'Activo' : 'Inactivo'}
+        </button>
+        <button
+          onClick={() => setEditing(true)}
+          className="p-1 rounded-md text-slate-400 hover:text-brand-700 hover:bg-brand-50"
+          title="Editar usuario"
+        >
+          <Pencil size={12} />
+        </button>
+        <button
+          onClick={() => { if (window.confirm(`¿Eliminar a ${user.name}? Esta acción no se puede deshacer.`)) remove.mutate(); }}
+          disabled={remove.isPending}
+          className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+          title="Eliminar usuario"
+        >
+          <Trash2 size={12} />
+        </button>
+      </span>
+    </li>
+  );
+}
+
 // ─── Usuarios de una empresa ────────────────────────────────────────────────
 function OrganizationUsers({ orgId }: { orgId: string }) {
   const qc = useQueryClient();
@@ -185,12 +307,6 @@ function OrganizationUsers({ orgId }: { orgId: string }) {
       const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
       toast.error(detail ?? 'No se pudo agregar el usuario');
     },
-  });
-
-  const toggle = useMutation({
-    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) => platformApi.updateUser(id, { isActive }),
-    onSuccess: invalidate,
-    onError: () => toast.error('No se pudo cambiar el estado'),
   });
 
   const canSubmit = form.name.trim() && form.email.trim() && form.password.length >= 8;
@@ -247,22 +363,7 @@ function OrganizationUsers({ orgId }: { orgId: string }) {
       ) : (
         <ul className="space-y-1">
           {users.map((u) => (
-            <li key={u.id} className={`flex items-center justify-between gap-2 rounded-lg bg-white border border-slate-200 px-3 py-1.5 ${u.isActive ? '' : 'opacity-55'}`}>
-              <span className="min-w-0 flex-1 text-xs">
-                <span className="font-semibold text-slate-800">{u.name}</span>
-                <span className="text-slate-500"> · {ROLE_LABEL[u.role]}</span>
-                <span className="ml-2 text-slate-500">{u.email}</span>
-              </span>
-              <button
-                onClick={() => toggle.mutate({ id: u.id, isActive: !u.isActive })}
-                disabled={toggle.isPending}
-                className={`shrink-0 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                  u.isActive ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                }`}
-              >
-                {u.isActive ? 'Activo' : 'Inactivo'}
-              </button>
-            </li>
+            <UserRow key={u.id} user={u} invalidate={invalidate} />
           ))}
         </ul>
       )}
@@ -313,18 +414,15 @@ export default function PlatformPage() {
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="text-left px-5 py-2.5 text-xs font-semibold">Empresa</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold">País</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold">Plan</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold">Estado</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold">Usuarios</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold">Aeronaves</th>
-                <th className="px-4 py-2.5" />
+                <th className="text-left px-4 py-2.5 text-xs font-semibold">Suscripción</th>
+                <th className="text-right px-5 py-2.5 text-xs font-semibold">Activa</th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td className="px-5 py-4 text-slate-400 text-xs" colSpan={7}>Cargando…</td></tr>}
+              {isLoading && <tr><td className="px-5 py-4 text-slate-400 text-xs" colSpan={4}>Cargando…</td></tr>}
               {!isLoading && orgs.length === 0 && (
-                <tr><td className="px-5 py-4 text-slate-400 text-xs" colSpan={7}>Sin empresas registradas.</td></tr>
+                <tr><td className="px-5 py-4 text-slate-400 text-xs" colSpan={4}>Sin empresas registradas.</td></tr>
               )}
               {orgs.map((o) => (
                 <Fragment key={o.id}>
@@ -337,18 +435,21 @@ export default function PlatformPage() {
                         {expandedId === o.id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                         {o.name}
                       </button>
-                      <p className="pl-[18px] text-[11px] text-slate-400">{o.slug}</p>
+                      <div className="pl-[18px] flex items-center gap-2.5 text-[11px] text-slate-400">
+                        <span>{o.slug}</span>
+                        <span>·</span>
+                        <span>{o.country}</span>
+                        <span className="inline-flex items-center gap-0.5"><UsersIcon size={10} /> {o.userCount}</span>
+                        <span className="inline-flex items-center gap-0.5"><Plane size={10} /> {o.aircraftCount}</span>
+                      </div>
                     </td>
-                    <td className="px-4 py-2.5 text-xs text-slate-600">{o.country}</td>
                     <td className="px-4 py-2.5 text-xs text-slate-600">{PLAN_LABEL[o.subscriptionPlan]}</td>
                     <td className="px-4 py-2.5">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_TONE[o.subscriptionStatus]}`}>
                         {STATUS_LABEL[o.subscriptionStatus]}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-xs text-slate-600 tabular-nums">{o.userCount}</td>
-                    <td className="px-4 py-2.5 text-xs text-slate-600 tabular-nums">{o.aircraftCount}</td>
-                    <td className="px-4 py-2.5 text-right">
+                    <td className="px-5 py-2.5 text-right">
                       <button
                         onClick={() => toggleOrgActive.mutate({ id: o.id, isActive: !o.isActive })}
                         disabled={toggleOrgActive.isPending}
@@ -362,7 +463,7 @@ export default function PlatformPage() {
                   </tr>
                   {expandedId === o.id && (
                     <tr>
-                      <td colSpan={7} className="p-0">
+                      <td colSpan={4} className="p-0">
                         <OrganizationUsers orgId={o.id} />
                       </td>
                     </tr>
