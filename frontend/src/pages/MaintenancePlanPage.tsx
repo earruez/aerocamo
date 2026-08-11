@@ -9,6 +9,8 @@ import type { MaintenancePlanItem, PlanItemStatus } from '@api/maintenancePlan.a
 import { tasksApi } from '@api/tasks.api';
 import type { TaskDefinition, CreateTaskInput } from '@api/tasks.api';
 import { complianceApi } from '@api/compliance.api';
+import { taskNotesApi } from '@api/taskNotes.api';
+import { useAuthStore } from '../store/authStore';
 import type { RecordComplianceInput } from '@api/compliance.api';
 import { workRequestsApi } from '@api/workRequests.api';
 import { useWorkRequestStore } from '../store/workRequestStore';
@@ -18,11 +20,15 @@ import {
   ClipboardCheck, AlertTriangle, Clock, CheckCircle2,
   ChevronRight, Search, BookOpen, Calendar, Gauge, RefreshCw,
   Plus, Pencil, Trash2, X, Check,
+  StickyNote,
 } from 'lucide-react';
 
 type MaintenanceType = 'HORARIO' | 'CALENDARIO' | 'MIXTO';
 type MaintenanceTypeTab = 'ALL' | MaintenanceType;
-type NormativeTab = 'ALL' | 'FABRICANTE' | 'DGAC' | 'MOTOR' | 'EASA';
+type NormativeTab = 'PROGRAMA' | 'AD' | 'SB' | 'MIM' | 'INSPECCIONES' | 'COMPONENTES';
+type EquipmentTab = 'ALL' | 'AIRCRAFT' | 'ENGINE';
+type RecurrenceTab = 'ALL' | 'REPETITIVE' | 'ONE_TIME';
+type ApplicabilityTab = 'APPLIES' | 'NOT_APPLIES' | 'ALL';
 
 const MAINTENANCE_TYPE_META: Record<MaintenanceType, { label: string; badge: string }> = {
   HORARIO: {
@@ -59,16 +65,20 @@ function classifyMaintenanceType(task: {
   return 'HORARIO';
 }
 
-function isMotorNormativeTask(item: MaintenancePlanItem): boolean {
-  const code = (item.taskCode || '').toUpperCase();
-  const title = (item.taskTitle || '').toUpperCase();
-  const ref = (item.referenceNumber || '').toUpperCase();
-
-  if (/^72\d{2}(-\d+)?$/.test(code)) return true;
-  if (code.startsWith('05-20-10')) return true;
-  if (ref.includes('70BM')) return true;
-
-  return /(ENGINE|MOTOR|TURBINE|COMPRESSOR|GEARBOX|HMU|ACCESSORIES|INJECTION WHEEL|FREE TURBINE|REDUCTION GEAR)/.test(title);
+/**
+ * Categoría normativa de la tarea, en el vocabulario del Access:
+ * AD y SB vienen del tipo de referencia; MIM es la normativa nacional (INTERNAL);
+ * el resto son manual de fabricante, separados por isComponentControl entre
+ * inspecciones y control de vida de componentes.
+ *
+ * El equipo (aeronave o motor) es un eje aparte: vive en equipmentScope, que
+ * viene del equipo al que el Access asoció el ítem (AN / EN1).
+ */
+function classifyTaskCategory(item: MaintenancePlanItem): 'AD' | 'SB' | 'MIM' | 'INSPECCIONES' | 'COMPONENTES' {
+  if (item.referenceType === 'AD') return 'AD';
+  if (item.referenceType === 'SB') return 'SB';
+  if (item.referenceType === 'INTERNAL') return 'MIM';
+  return item.isComponentControl ? 'COMPONENTES' : 'INSPECCIONES';
 }
 
 // ─── Status helpers ────────────────────────────────────────────────────────────
@@ -860,6 +870,8 @@ interface TaskRowProps {
   onToggleSelect: (item: MaintenancePlanItem, checked: boolean) => void;
   onSetApplicability: (item: MaintenancePlanItem, applies: boolean) => void;
   onRecord: (item: MaintenancePlanItem) => void;
+  onViewHistory: (item: MaintenancePlanItem) => void;
+  noteCount: number;
   onEdit:   (item: MaintenancePlanItem) => void;
   onRemove: (item: MaintenancePlanItem) => void;
   onGenerateST: (item: MaintenancePlanItem) => void;
@@ -876,6 +888,8 @@ function TaskRow({
   onToggleSelect,
   onSetApplicability,
   onRecord,
+  onViewHistory,
+  noteCount,
   onEdit,
   onRemove,
   onGenerateST,
@@ -952,18 +966,41 @@ function TaskRow({
           </p>
         )}
       </td>
-      <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">{intervalLabel()}</td>
+      <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">
+        {!item.isApplicable && item.applicabilityNotes ? (
+          <span className="block max-w-[220px] truncate text-[11px] text-amber-800" title={item.applicabilityNotes}>
+            No aplica: {item.applicabilityNotes}
+          </span>
+        ) : intervalLabel()}
+      </td>
       <td className="px-4 py-3.5 whitespace-nowrap text-xs">
         <span className={item.status === 'OVERDUE' ? 'text-rose-700 font-semibold' : item.status === 'DUE_SOON' ? 'text-amber-700 font-semibold' : 'text-slate-600'}>
           {nextDueLabel()}
         </span>
       </td>
       <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">
-        {item.lastPerformedAt
-          ? `${new Date(item.lastPerformedAt).toLocaleDateString('es-MX')}${item.lastHoursAtCompliance != null ? ` · ${item.lastHoursAtCompliance.toFixed(0)}h` : ''}`
-          : item.controlStartAt
-            ? `Inicio de control: ${new Date(item.controlStartAt).toLocaleDateString('es-MX')}${item.controlStartHours != null ? ` · ${item.controlStartHours.toFixed(0)}h` : ''}`
-            : 'Sin dato histórico'}
+        <button
+          type="button"
+          onClick={() => onViewHistory(item)}
+          className="text-left underline-offset-2 hover:text-brand-700 hover:underline"
+          title="Ver historial de cumplimientos y notas de revisión"
+        >
+          {item.lastPerformedAt
+            ? `${new Date(item.lastPerformedAt).toLocaleDateString('es-MX')}${item.lastHoursAtCompliance != null ? ` · ${item.lastHoursAtCompliance.toFixed(0)}h` : ''}`
+            : item.controlStartAt
+              ? `Inicio de control: ${new Date(item.controlStartAt).toLocaleDateString('es-MX')}${item.controlStartHours != null ? ` · ${item.controlStartHours.toFixed(0)}h` : ''}`
+              : 'Sin dato histórico'}
+        </button>
+        {noteCount > 0 && (
+          <button
+            type="button"
+            onClick={() => onViewHistory(item)}
+            className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 hover:bg-sky-100"
+            title={`${noteCount} nota${noteCount !== 1 ? 's' : ''} de revisión`}
+          >
+            <StickyNote size={10} /> {noteCount}
+          </button>
+        )}
       </td>
       <td className="px-4 py-3.5 whitespace-nowrap">
         <div className="flex items-center gap-1.5">
@@ -1008,12 +1045,10 @@ function TaskRow({
       <td className="px-4 py-3.5 whitespace-nowrap">
         <div className="flex items-center gap-2">
           <select
-            className="filter-input h-7 min-w-[108px] py-0 px-2 text-xs"
-            value="applies"
+            className={`filter-input h-7 min-w-[108px] py-0 px-2 text-xs ${item.isApplicable ? '' : 'border-amber-300 bg-amber-50 text-amber-800'}`}
+            value={item.isApplicable ? 'applies' : 'not_applies'}
             disabled={applicabilityPending}
-            onChange={(e) => {
-              if (e.target.value === 'not_applies') onSetApplicability(item, false);
-            }}
+            onChange={(e) => onSetApplicability(item, e.target.value === 'applies')}
           >
             <option value="applies">Aplica</option>
             <option value="not_applies">No aplica</option>
@@ -1038,6 +1073,296 @@ function TaskRow({
   );
 }
 
+// ─── Panel: historial de cumplimientos de una tarea ───────────────────────────
+function TaskComplianceHistoryPanel({
+  item, aircraftId, onClose,
+}: {
+  item: MaintenancePlanItem;
+  aircraftId: string;
+  onClose: () => void;
+}) {
+  const { data: history = [], isLoading } = useQuery({
+    queryKey: ['task-compliance-history', aircraftId, item.taskId],
+    queryFn: () => complianceApi.historyForTask(aircraftId, item.taskId),
+  });
+
+  const isBaseline = (record: { applicationType?: string; notes?: string | null }) =>
+    record.applicationType === 'baseline'
+    || (record.notes ?? '').trim().toLowerCase() === 'inicio de control';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-slate-200 px-6 py-4">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Historial y notas</h2>
+            <p className="mt-0.5 text-xs text-slate-500">{item.taskCode} · {item.taskTitle}</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-auto px-6 py-4">
+          {isLoading ? (
+            <p className="py-8 text-center text-sm text-slate-400">Cargando historial…</p>
+          ) : history.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-400">Esta tarea aún no tiene cumplimientos registrados.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-100 text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="table-header">Fecha</th>
+                    <th className="table-header">Tipo</th>
+                    <th className="table-header text-right">Horas</th>
+                    <th className="table-header text-right">Ciclos</th>
+                    <th className="table-header">Próximo vencimiento</th>
+                    <th className="table-header">OT</th>
+                    <th className="table-header">Observación</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {history.map((record) => {
+                    const baseline = isBaseline(record);
+                    const nextDue = [
+                      record.nextDueHours != null ? `${Number(record.nextDueHours).toFixed(1)} FH` : null,
+                      record.nextDueCycles != null ? `${record.nextDueCycles} CYC` : null,
+                      record.nextDueDate ? new Date(record.nextDueDate).toLocaleDateString('es-MX') : null,
+                    ].filter(Boolean).join(' · ');
+                    return (
+                      <tr key={record.id} className="hover:bg-slate-50">
+                        <td className="table-cell text-xs text-slate-700">
+                          {new Date(record.performedAt).toLocaleDateString('es-MX')}
+                        </td>
+                        <td className="table-cell text-xs">
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                            baseline ? 'badge-state-neutral' : 'badge-state-success'
+                          }`}>
+                            {baseline ? 'Inicio de control' : record.applicationType === 'replacement_start' ? 'Reemplazo' : 'Cumplimiento'}
+                          </span>
+                        </td>
+                        <td className="table-cell text-xs tabular-nums text-slate-700 text-right">
+                          {Number(record.aircraftHoursAtCompliance).toFixed(1)}
+                        </td>
+                        <td className="table-cell text-xs tabular-nums text-slate-700 text-right">
+                          {record.aircraftCyclesAtCompliance}
+                        </td>
+                        <td className="table-cell text-xs text-slate-600">{nextDue || '—'}</td>
+                        <td className="table-cell text-xs text-slate-600">
+                          {record.workOrderNumber
+                            ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-progress">{record.workOrderNumber}</span>
+                            : <span className="text-slate-400">—</span>}
+                        </td>
+                        <td className="table-cell max-w-[260px] text-xs text-slate-500">{record.notes ?? '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-slate-200 px-6 py-4">
+          <TaskNotesSection aircraftId={aircraftId} taskId={item.taskId} />
+        </div>
+
+        <div className="flex justify-end border-t border-slate-200 px-6 py-3">
+          <button onClick={onClose} className="btn-secondary">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Notas de revisión sobre la tarea ─────────────────────────────────────────
+// Bitácora libre: dejar constancia de una revisión sin registrar cumplimiento
+// (que exigiría ST vigente y OT firmada).
+function TaskNotesSection({ aircraftId, taskId }: { aircraftId: string; taskId: string }) {
+  const qc = useQueryClient();
+  const currentUserId = useAuthStore((state) => state.user?.id);
+  const currentRole = useAuthStore((state) => state.user?.role);
+  const [draft, setDraft] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+
+  const { data: notes = [], isLoading } = useQuery({
+    queryKey: ['task-notes', aircraftId, taskId],
+    queryFn: () => taskNotesApi.listForTask(aircraftId, taskId),
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['task-notes', aircraftId, taskId] });
+    qc.invalidateQueries({ queryKey: ['task-note-counts', aircraftId] });
+  };
+
+  const createMutation = useMutation({
+    mutationFn: (note: string) => taskNotesApi.create(aircraftId, taskId, note),
+    onSuccess: () => { invalidate(); setDraft(''); toast.success('Nota registrada'); },
+    onError: () => toast.error('No se pudo registrar la nota'),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, note }: { id: string; note: string }) => taskNotesApi.update(id, note),
+    onSuccess: () => { invalidate(); setEditingId(null); toast.success('Nota actualizada'); },
+    onError: () => toast.error('No se pudo actualizar la nota'),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (id: string) => taskNotesApi.remove(id),
+    onSuccess: () => { invalidate(); toast.success('Nota eliminada'); },
+    onError: () => toast.error('No se pudo eliminar la nota'),
+  });
+
+  const canModify = (authorId: string | undefined) =>
+    currentRole === 'ADMIN' || currentRole === 'SUPERVISOR' || (!!authorId && authorId === currentUserId);
+
+  return (
+    <div>
+      <div className="mb-2 flex items-baseline justify-between">
+        <h3 className="text-sm font-bold text-slate-900">Notas de revisión</h3>
+        <span className="text-[11px] text-slate-500">No registran cumplimiento ni mueven vencimientos</span>
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const value = draft.trim();
+          if (value) createMutation.mutate(value);
+        }}
+        className="mb-3 flex items-start gap-2"
+      >
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={2}
+          className="input flex-1 text-xs"
+          placeholder="Ej: revisada la AD, sigue vigente; se solicitó aclaración al fabricante…"
+        />
+        <button type="submit" className="btn-primary btn-sm shrink-0" disabled={createMutation.isPending || !draft.trim()}>
+          {createMutation.isPending ? 'Guardando…' : 'Agregar nota'}
+        </button>
+      </form>
+
+      {isLoading ? (
+        <p className="py-3 text-center text-xs text-slate-400">Cargando notas…</p>
+      ) : notes.length === 0 ? (
+        <p className="py-3 text-center text-xs text-slate-400">Sin notas registradas para esta tarea.</p>
+      ) : (
+        <ul className="max-h-48 space-y-2 overflow-auto">
+          {notes.map((entry) => (
+            <li key={entry.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[11px] font-semibold text-slate-600">
+                  {entry.createdBy?.name ?? 'Usuario eliminado'}
+                  <span className="ml-2 font-normal text-slate-400">
+                    {new Date(entry.createdAt).toLocaleString('es-CL')}
+                    {entry.updatedAt !== entry.createdAt ? ' · editada' : ''}
+                  </span>
+                </span>
+                {canModify(entry.createdBy?.id) && editingId !== entry.id && (
+                  <span className="flex shrink-0 gap-1">
+                    <button
+                      onClick={() => { setEditingId(entry.id); setEditDraft(entry.note); }}
+                      className="text-[11px] font-semibold text-slate-500 hover:text-slate-700"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      onClick={() => removeMutation.mutate(entry.id)}
+                      className="text-[11px] font-semibold text-rose-500 hover:text-rose-700"
+                      disabled={removeMutation.isPending}
+                    >
+                      Eliminar
+                    </button>
+                  </span>
+                )}
+              </div>
+              {editingId === entry.id ? (
+                <div className="mt-1.5 flex items-start gap-2">
+                  <textarea
+                    value={editDraft}
+                    onChange={(e) => setEditDraft(e.target.value)}
+                    rows={2}
+                    className="input flex-1 text-xs"
+                  />
+                  <span className="flex shrink-0 flex-col gap-1">
+                    <button
+                      onClick={() => editDraft.trim() && updateMutation.mutate({ id: entry.id, note: editDraft.trim() })}
+                      className="btn-primary btn-xs"
+                      disabled={updateMutation.isPending || !editDraft.trim()}
+                    >
+                      Guardar
+                    </button>
+                    <button onClick={() => setEditingId(null)} className="btn-secondary btn-xs">Cancelar</button>
+                  </span>
+                </div>
+              ) : (
+                <p className="mt-0.5 whitespace-pre-wrap text-xs text-slate-700">{entry.note}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ─── Modal: justificar la no aplicabilidad ────────────────────────────────────
+function NotApplicableModal({
+  item, currentNotes, onCancel, onConfirm, isPending,
+}: {
+  item: MaintenancePlanItem;
+  currentNotes: string | null;
+  onCancel: () => void;
+  onConfirm: (notes: string) => void;
+  isPending: boolean;
+}) {
+  const [notes, setNotes] = useState(currentNotes ?? '');
+
+  return (
+    <Modal title="Marcar como no aplica" onClose={onCancel}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!notes.trim()) return;
+          onConfirm(notes.trim());
+        }}
+        className="space-y-4"
+      >
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <p className="font-mono text-xs text-slate-500">{item.taskCode}</p>
+          <p className="text-sm font-medium text-slate-800">{item.taskTitle}</p>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-slate-600">
+            ¿Por qué no aplica? <span className="text-rose-500">*</span>
+          </label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={3}
+            autoFocus
+            className="input"
+            placeholder="Ej: no aplica por ambiente salino; aeronave nueva; superseded por AD posterior…"
+          />
+          <p className="mt-1.5 text-[11px] text-slate-500">
+            La tarea seguirá visible en el plan y podrás volver a marcarla como aplica
+            si cambian las condiciones de operación.
+          </p>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" onClick={onCancel} className="btn-secondary">Cancelar</button>
+          <button type="submit" className="btn-primary" disabled={isPending || !notes.trim()}>
+            {isPending ? 'Guardando…' : 'Marcar como no aplica'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 type ModalState =
   | null
@@ -1057,6 +1382,7 @@ type ApplicabilityUndoAction = {
   taskId: string;
   taskCode: string;
   appliesAfterChange: boolean;
+  previousNotes: string | null;
 };
 
 export default function MaintenancePlanPage() {
@@ -1065,7 +1391,12 @@ export default function MaintenancePlanPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<PlanItemStatus | ''>(searchParams.get('status') as PlanItemStatus | '' ?? '');
-  const [normativeTab, setNormativeTab] = useState<NormativeTab>('ALL');
+  const [normativeTab, setNormativeTab] = useState<NormativeTab>('PROGRAMA');
+  const [equipmentTab, setEquipmentTab] = useState<EquipmentTab>('ALL');
+  const [recurrenceTab, setRecurrenceTab] = useState<RecurrenceTab>('ALL');
+  const [applicabilityTab, setApplicabilityTab] = useState<ApplicabilityTab>('APPLIES');
+  const [historyTask, setHistoryTask] = useState<MaintenancePlanItem | null>(null);
+  const [notApplicableTask, setNotApplicableTask] = useState<MaintenancePlanItem | null>(null);
   const [maintenanceTab, setMaintenanceTab] = useState<MaintenanceTypeTab>('ALL');
   const [onlyPendingAction, setOnlyPendingAction] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
@@ -1101,7 +1432,7 @@ export default function MaintenancePlanPage() {
     error: planErrorDetails,
   } = useQuery({
     queryKey: ['maintenance-plan', selectedId],
-    queryFn: () => maintenancePlanApi.getForAircraft(selectedId!),
+    queryFn: () => maintenancePlanApi.getForAircraft(selectedId!, { includeNotApplicable: true }),
     enabled: !!selectedId,
     staleTime: 0,
     refetchOnMount: 'always',
@@ -1139,6 +1470,12 @@ export default function MaintenancePlanPage() {
   const { data: allTasks = [] } = useQuery({ queryKey: ['tasks'], queryFn: tasksApi.listAll });
 
   const selectedAircraft = allAircraft.find(a => a.id === selectedId) ?? null;
+
+  const { data: noteCounts = {} } = useQuery({
+    queryKey: ['task-note-counts', selectedId],
+    queryFn: () => taskNotesApi.countsByAircraft(selectedId!),
+    enabled: !!selectedId,
+  });
 
   const invalidatePlan = () => qc.invalidateQueries({ queryKey: ['maintenance-plan', selectedId] });
 
@@ -1198,7 +1535,7 @@ export default function MaintenancePlanPage() {
   const setTaskApplicability = async (
     item: MaintenancePlanItem,
     applies: boolean,
-    options?: { trackUndo?: boolean; aircraftIdOverride?: string },
+    options?: { trackUndo?: boolean; aircraftIdOverride?: string; notes?: string | null },
   ) => {
     const aircraftId = options?.aircraftIdOverride ?? selectedId;
     if (!aircraftId) {
@@ -1208,11 +1545,10 @@ export default function MaintenancePlanPage() {
 
     setApplicabilityBusyTaskId(item.taskId);
     try {
-      if (applies) {
-        await tasksApi.assignToAircraft(aircraftId, item.taskId);
-      } else {
-        await tasksApi.removeFromAircraft(aircraftId, item.taskId);
-      }
+      await tasksApi.setApplicability(aircraftId, item.taskId, {
+        applies,
+        notes: options?.notes ?? null,
+      });
 
       qc.invalidateQueries({ queryKey: ['maintenance-plan', aircraftId] });
 
@@ -1222,6 +1558,7 @@ export default function MaintenancePlanPage() {
           taskId: item.taskId,
           taskCode: item.taskCode,
           appliesAfterChange: applies,
+          previousNotes: item.applicabilityNotes,
         });
         toast.success(applies ? 'Marcada como aplica' : 'Marcada como no aplica');
         toast('Presiona Ctrl+Z o Cmd+Z para deshacer', { icon: '↩️' });
@@ -1240,11 +1577,14 @@ export default function MaintenancePlanPage() {
     setApplicabilityBusyTaskId(lastApplicabilityAction.taskId);
 
     try {
-      if (reverseApplies) {
-        await tasksApi.assignToAircraft(lastApplicabilityAction.aircraftId, lastApplicabilityAction.taskId);
-      } else {
-        await tasksApi.removeFromAircraft(lastApplicabilityAction.aircraftId, lastApplicabilityAction.taskId);
-      }
+      await tasksApi.setApplicability(
+        lastApplicabilityAction.aircraftId,
+        lastApplicabilityAction.taskId,
+        {
+          applies: reverseApplies,
+          notes: reverseApplies ? null : lastApplicabilityAction.previousNotes ?? 'Restaurado por deshacer',
+        },
+      );
 
       qc.invalidateQueries({ queryKey: ['maintenance-plan', lastApplicabilityAction.aircraftId] });
       toast.success(`Deshecho: ${lastApplicabilityAction.taskCode}`);
@@ -1354,13 +1694,14 @@ export default function MaintenancePlanPage() {
   const filteredPlan = useMemo(() => {
     return planItems
       .filter(i => {
-        if (normativeTab === 'DGAC' && i.referenceType !== 'INTERNAL') return false;
-        if (normativeTab === 'EASA' && i.referenceType !== 'AD') return false;
-        if (normativeTab === 'MOTOR' && !isMotorNormativeTask(i)) return false;
-        if (normativeTab === 'FABRICANTE') {
-          if (i.referenceType !== 'AMM') return false;
-          if (isMotorNormativeTask(i)) return false;
-        }
+        // El control de vida de componentes vive en la página de Componentes:
+        // el plan solo lo muestra si se pide su pestaña explícitamente.
+        if (normativeTab === 'PROGRAMA' ? i.isComponentControl : classifyTaskCategory(i) !== normativeTab) return false;
+        if (equipmentTab !== 'ALL' && i.equipmentScope !== equipmentTab) return false;
+        if (applicabilityTab === 'APPLIES' && !i.isApplicable) return false;
+        if (applicabilityTab === 'NOT_APPLIES' && i.isApplicable) return false;
+        if (recurrenceTab === 'REPETITIVE' && i.complianceRecurrence !== 'REPETITIVE') return false;
+        if (recurrenceTab === 'ONE_TIME' && i.complianceRecurrence !== 'ONE_TIME') return false;
         if (maintenanceTab !== 'ALL' && classifyMaintenanceType(i) !== maintenanceTab) return false;
         if (filterStatus && i.status !== filterStatus) return false;
         if (onlyPendingAction && i.status === 'OK') return false;
@@ -1383,19 +1724,63 @@ export default function MaintenancePlanPage() {
 
         return STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
       });
-  }, [planItems, filterStatus, normativeTab, maintenanceTab, search, smartPriorityByTaskId, onlyPendingAction, priorityContext]);
+  }, [planItems, filterStatus, normativeTab, equipmentTab, recurrenceTab, applicabilityTab, maintenanceTab, search, smartPriorityByTaskId, onlyPendingAction, priorityContext]);
+
+  // Las tareas marcadas "no aplica" siguen en el plan, pero no deben contar como
+  // pendientes ni disparar alertas de aeronavegabilidad.
+  const activePlanItems = useMemo(() => planItems.filter((i) => i.isApplicable), [planItems]);
 
   const normativeCounts = useMemo(() => {
-    const dgac = planItems.filter(i => i.referenceType === 'INTERNAL').length;
-    const easa = planItems.filter(i => i.referenceType === 'AD').length;
-    const motor = planItems.filter(i => isMotorNormativeTask(i)).length;
-    const fabricante = planItems.filter(i => i.referenceType === 'AMM' && !isMotorNormativeTask(i)).length;
-    return { dgac, easa, motor, fabricante };
-  }, [planItems]);
+    // El conteo de categorías respeta el equipo elegido, y viceversa: así las
+    // cifras acompañan al filtro en vez de contradecirlo.
+    const scopedByEquipment = equipmentTab === 'ALL'
+      ? activePlanItems
+      : activePlanItems.filter(i => i.equipmentScope === equipmentTab);
+    const ad = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'AD').length;
+    const sb = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'SB').length;
+    const mim = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'MIM').length;
+    const inspecciones = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'INSPECCIONES').length;
+    const componentes = scopedByEquipment.filter(i => classifyTaskCategory(i) === 'COMPONENTES').length;
+    const total = scopedByEquipment.filter(i => !i.isComponentControl).length;
+    return { ad, sb, mim, inspecciones, componentes, total };
+  }, [activePlanItems, equipmentTab]);
+
+  /** Conteo por equipo, respetando la categoría normativa ya elegida. */
+  const equipmentCounts = useMemo(() => {
+    const scopedByCategory = normativeTab === 'PROGRAMA'
+      ? activePlanItems.filter(i => !i.isComponentControl)
+      : activePlanItems.filter(i => classifyTaskCategory(i) === normativeTab);
+    return {
+      ALL: scopedByCategory.length,
+      AIRCRAFT: scopedByCategory.filter(i => i.equipmentScope === 'AIRCRAFT').length,
+      ENGINE: scopedByCategory.filter(i => i.equipmentScope === 'ENGINE').length,
+    };
+  }, [activePlanItems, normativeTab]);
+
+  const applicabilityCounts = useMemo(() => ({
+    applies: planItems.filter((i) => i.isApplicable).length,
+    notApplies: planItems.filter((i) => !i.isApplicable).length,
+  }), [planItems]);
+
+  /** Conteo de recurrencia sobre el origen ya elegido, para que las cifras acompañen al filtro. */
+  const recurrenceCounts = useMemo(() => {
+    const byEquipment = equipmentTab === 'ALL'
+      ? activePlanItems
+      : activePlanItems.filter((i) => i.equipmentScope === equipmentTab);
+    const scoped = normativeTab === 'PROGRAMA'
+      ? byEquipment.filter((i) => !i.isComponentControl)
+      : byEquipment.filter((i) => {
+          return classifyTaskCategory(i) === normativeTab;
+        });
+    return {
+      repetitive: scoped.filter((i) => i.complianceRecurrence === 'REPETITIVE').length,
+      oneTime: scoped.filter((i) => i.complianceRecurrence === 'ONE_TIME').length,
+    };
+  }, [activePlanItems, normativeTab, equipmentTab]);
 
   const pendingActionCount = useMemo(() => (
-    planItems.filter((item) => item.status !== 'OK').length
-  ), [planItems]);
+    activePlanItems.filter((item) => item.status !== 'OK').length
+  ), [activePlanItems]);
 
   const smartSummary = useMemo(() => {
     const criticalItems = filteredPlan.filter((item) => {
@@ -1437,7 +1822,7 @@ export default function MaintenancePlanPage() {
     let inWorkRequestCount = 0;
     let dueSoonCount = 0;
 
-    for (const item of planItems) {
+    for (const item of activePlanItems) {
       const priority = smartPriorityByTaskId.get(item.taskId) ?? getSmartPriority(item, priorityContext);
       const maintenanceType = classifyMaintenanceType(item);
       const inRequest = isItemInRequest(item);
@@ -1487,21 +1872,30 @@ export default function MaintenancePlanPage() {
       rawScore,
       mitigation,
     };
-  }, [planItems, smartPriorityByTaskId, inlineStByTaskId, priorityContext]);
+  }, [activePlanItems, smartPriorityByTaskId, inlineStByTaskId, priorityContext]);
 
   const aircraftAlert = useMemo(() => {
-    const overdueCount = planItems.filter((item) => item.status === 'OVERDUE').length;
-    const dueSoonCount = planItems.filter((item) => item.status === 'DUE_SOON').length;
+    const overdueCount = activePlanItems.filter((item) => item.status === 'OVERDUE').length;
+    const dueSoonCount = activePlanItems.filter((item) => item.status === 'DUE_SOON').length;
 
-    const mixedCriticalSoonCount = planItems.filter((item) => {
+    const mixedCriticalSoonCount = activePlanItems.filter((item) => {
       if (classifyMaintenanceType(item) !== 'MIXTO') return false;
       const priority = smartPriorityByTaskId.get(item.taskId) ?? getSmartPriority(item, priorityContext);
       return priority.visual === 'critical' || priority.visual === 'attention';
     }).length;
 
-    const pendingWithoutSTCount = planItems.filter((item) => (
+    const pendingWithoutSTCount = activePlanItems.filter((item) => (
       item.status !== 'OK' && !isItemInRequest(item)
     )).length;
+
+    // Las filas de componentes salen del plan por defecto, pero su vencimiento
+    // debe seguir avisando aquí: una batería vencida no puede dejar de verse.
+    const componentOverdueCount = activePlanItems.filter(
+      (item) => item.isComponentControl && item.status === 'OVERDUE',
+    ).length;
+    const componentDueSoonCount = activePlanItems.filter(
+      (item) => item.isComponentControl && item.status === 'DUE_SOON',
+    ).length;
 
     const draftItemsCount = draftForAircraft?.items.length ?? 0;
     const hasAccumulatedDraft = draftItemsCount >= 3;
@@ -1518,6 +1912,8 @@ export default function MaintenancePlanPage() {
       dueSoonCount,
       mixedCriticalSoonCount,
       pendingWithoutSTCount,
+      componentOverdueCount,
+      componentDueSoonCount,
       hasAccumulatedDraft,
       draftItemsCount,
     };
@@ -1769,7 +2165,7 @@ export default function MaintenancePlanPage() {
             <div className="flex items-start justify-end gap-2.5 flex-wrap lg:flex-nowrap">
               <div className="text-right rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 min-w-[112px]">
                 <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Tareas asignadas</p>
-                <p className="text-3xl font-bold text-slate-900 tabular-nums leading-none mt-1">{planItems.length}</p>
+                <p className="text-3xl font-bold text-slate-900 tabular-nums leading-none mt-1">{activePlanItems.length}</p>
               </div>
 
               {selectedAircraft && (
@@ -1862,6 +2258,30 @@ export default function MaintenancePlanPage() {
                     {(aircraftAlert.overdueCount > 0 || aircraftAlert.dueSoonCount > 0 || aircraftAlert.mixedCriticalSoonCount > 0 || aircraftAlert.pendingWithoutSTCount > 0) && aircraftAlert.hasAccumulatedDraft && ' · '}
                     {aircraftAlert.hasAccumulatedDraft && `Borrador ST con ${aircraftAlert.draftItemsCount} ítems acumulados`}
                   </p>
+                  {(aircraftAlert.componentOverdueCount > 0 || aircraftAlert.componentDueSoonCount > 0) && (
+                    <p className="text-xs text-slate-600 mt-1">
+                      Incluye{' '}
+                      {aircraftAlert.componentOverdueCount > 0 && `${aircraftAlert.componentOverdueCount} vencida${aircraftAlert.componentOverdueCount !== 1 ? 's' : ''}`}
+                      {aircraftAlert.componentOverdueCount > 0 && aircraftAlert.componentDueSoonCount > 0 && ' y '}
+                      {aircraftAlert.componentDueSoonCount > 0 && `${aircraftAlert.componentDueSoonCount} próxima${aircraftAlert.componentDueSoonCount !== 1 ? 's' : ''}`}
+                      {' '}de control de componentes ·{' '}
+                      <button
+                        type="button"
+                        onClick={() => setNormativeTab('COMPONENTES')}
+                        className="font-semibold text-brand-700 underline-offset-2 hover:underline"
+                      >
+                        ver en el plan
+                      </button>
+                      {' · '}
+                      <button
+                        type="button"
+                        onClick={() => navigate('/components')}
+                        className="font-semibold text-brand-700 underline-offset-2 hover:underline"
+                      >
+                        ir a Componentes
+                      </button>
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -1896,19 +2316,83 @@ export default function MaintenancePlanPage() {
           {/* Filters */}
           <div className="bg-white rounded-2xl border border-slate-200 px-6 py-4 shadow-sm">
               <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Origen</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Categoría</span>
                 {([
-                  { key: 'ALL', label: `Todas (${planItems.length})` },
-                  { key: 'FABRICANTE', label: `Fabricante (${normativeCounts.fabricante})` },
-                  { key: 'DGAC', label: `DGAC (${normativeCounts.dgac})` },
-                  { key: 'MOTOR', label: `Motor (${normativeCounts.motor})` },
-                  { key: 'EASA', label: `EASA (${normativeCounts.easa})` },
+                  { key: 'PROGRAMA', label: `Programa (${normativeCounts.total})` },
+                  { key: 'AD', label: `AD (${normativeCounts.ad})` },
+                  { key: 'SB', label: `SB (${normativeCounts.sb})` },
+                  { key: 'MIM', label: `MIM (${normativeCounts.mim})` },
+                  { key: 'INSPECCIONES', label: `Inspecciones (${normativeCounts.inspecciones})` },
+                  { key: 'COMPONENTES', label: `Componentes (${normativeCounts.componentes})` },
                 ] as const).map(tab => (
                   <button
                     key={tab.key}
                     onClick={() => setNormativeTab(tab.key)}
                     className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
                       normativeTab === tab.key
+                        ? 'bg-brand-600 text-white border-brand-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Equipo</span>
+                {([
+                  { key: 'ALL', label: `Todas (${equipmentCounts.ALL})` },
+                  { key: 'AIRCRAFT', label: `Aeronave (${equipmentCounts.AIRCRAFT})` },
+                  { key: 'ENGINE', label: `Motor (${equipmentCounts.ENGINE})` },
+                ] as const).map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setEquipmentTab(tab.key)}
+                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
+                      equipmentTab === tab.key
+                        ? 'bg-brand-600 text-white border-brand-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Aplicabilidad</span>
+                {([
+                  { key: 'APPLIES', label: `Aplica (${applicabilityCounts.applies})` },
+                  { key: 'NOT_APPLIES', label: `No aplica (${applicabilityCounts.notApplies})` },
+                  { key: 'ALL', label: 'Todas' },
+                ] as const).map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setApplicabilityTab(tab.key)}
+                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
+                      applicabilityTab === tab.key
+                        ? 'bg-brand-600 text-white border-brand-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Recurrencia</span>
+                {([
+                  { key: 'ALL', label: 'Todas' },
+                  { key: 'REPETITIVE', label: `Repetitivas (${recurrenceCounts.repetitive})` },
+                  { key: 'ONE_TIME', label: `Cumplimiento único (${recurrenceCounts.oneTime})` },
+                ] as const).map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setRecurrenceTab(tab.key)}
+                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
+                      recurrenceTab === tab.key
                         ? 'bg-brand-600 text-white border-brand-600'
                         : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                     }`}
@@ -1976,9 +2460,9 @@ export default function MaintenancePlanPage() {
                   />
                   Solo pendientes de acción
                 </label>
-                {(search || filterStatus || normativeTab !== 'ALL' || maintenanceTab !== 'ALL') && (
+                {(search || filterStatus || normativeTab !== 'PROGRAMA' || equipmentTab !== 'ALL' || recurrenceTab !== 'ALL' || applicabilityTab !== 'APPLIES' || maintenanceTab !== 'ALL') && (
                   <button
-                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('ALL'); setMaintenanceTab('ALL'); }}
+                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('PROGRAMA'); setEquipmentTab('ALL'); setRecurrenceTab('ALL'); setApplicabilityTab('APPLIES'); setMaintenanceTab('ALL'); }}
                     className="text-xs text-brand-600 hover:text-brand-700 font-semibold transition-colors"
                   >
                     Limpiar
@@ -2003,7 +2487,7 @@ export default function MaintenancePlanPage() {
               {smartSummary.critical} tareas críticas · {smartSummary.byHours} por horas · {smartSummary.byDate} por fecha
             </p>
             <p className="text-sm text-slate-700">
-              {pendingActionCount} tarea{pendingActionCount !== 1 ? 's' : ''} requieren atención · {planItems.filter((item) => isItemInRequest(item)).length} ya están en solicitud
+              {pendingActionCount} tarea{pendingActionCount !== 1 ? 's' : ''} requieren atención · {activePlanItems.filter((item) => isItemInRequest(item)).length} ya están en solicitud
             </p>
           </div>
 
@@ -2095,13 +2579,16 @@ export default function MaintenancePlanPage() {
                             toast.error('No puedes marcar como no aplica una tarea con ST activa');
                             return;
                           }
-                          void setTaskApplicability(taskItem, false, { trackUndo: true });
+                          // La no aplicabilidad exige justificación auditable.
+                          setNotApplicableTask(taskItem);
                           return;
                         }
 
                         void setTaskApplicability(taskItem, true, { trackUndo: true });
                       }}
                       onRecord={handleRecord}
+                      onViewHistory={(taskItem) => setHistoryTask(taskItem)}
+                      noteCount={noteCounts[item.taskId] ?? 0}
                       onEdit={handleEdit}
                       onRemove={handleRemove}
                       onGenerateST={handleGenerateSTFromPlan}
@@ -2155,6 +2642,28 @@ export default function MaintenancePlanPage() {
         isPending={removeMutation.isPending}
       />
     )}
+    {notApplicableTask && (
+      <NotApplicableModal
+        item={notApplicableTask}
+        currentNotes={notApplicableTask.applicabilityNotes}
+        isPending={applicabilityBusyTaskId === notApplicableTask.taskId}
+        onCancel={() => setNotApplicableTask(null)}
+        onConfirm={(notes) => {
+          const target = notApplicableTask;
+          setNotApplicableTask(null);
+          void setTaskApplicability(target, false, { trackUndo: true, notes });
+        }}
+      />
+    )}
+
+    {historyTask && selectedId && (
+      <TaskComplianceHistoryPanel
+        item={historyTask}
+        aircraftId={selectedId}
+        onClose={() => setHistoryTask(null)}
+      />
+    )}
+
     {pendingSTSelection && (
       <SelectWorkRequestTargetModal
         items={pendingSTSelection.items}

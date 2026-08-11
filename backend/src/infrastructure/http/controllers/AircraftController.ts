@@ -12,7 +12,7 @@ import { aircraftUsageService } from '../../../domain/services/AircraftUsageServ
 import { TemplateCloneService } from '../../../domain/services/TemplateCloneService';
 import { dueEngineService } from '../../../domain/services/DueEngineService';
 import { prisma } from '../../database/prisma.client';
-import { NotFoundError } from '../../../shared/errors/AppError';
+import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
 
 
 const createSchema = z.object({
@@ -163,9 +163,207 @@ export class AircraftController {
     } catch (err) { next(err); }
   };
 
+  /**
+   * Cambia el estado operacional dejando constancia. Sacar de servicio o
+   * devolver al servicio es una decisión de aeronavegabilidad: exige motivo y
+   * queda con autor y fecha en el historial.
+   */
+  changeStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const body = z.object({
+        status: z.enum(['OPERATIONAL', 'AOG', 'IN_MAINTENANCE', 'GROUNDED', 'DECOMMISSIONED']),
+        reason: z.string().trim().min(1, 'Indique el motivo del cambio').max(2000),
+      }).parse(req.body);
+
+      const aircraft = await prisma.aircraft.findFirst({
+        where: { id: req.params.id, organizationId: req.organizationId },
+        select: { id: true, status: true, registration: true },
+      });
+      if (!aircraft) throw new NotFoundError('Aircraft', req.params.id);
+
+      if (aircraft.status === body.status) {
+        throw new ValidationError(`La aeronave ya está en estado ${body.status}`);
+      }
+
+      const [updated] = await prisma.$transaction([
+        prisma.aircraft.update({ where: { id: aircraft.id }, data: { status: body.status } }),
+        prisma.aircraftStatusChange.create({
+          data: {
+            organizationId: req.organizationId,
+            aircraftId: aircraft.id,
+            fromStatus: aircraft.status,
+            toStatus: body.status,
+            reason: body.reason,
+            changedById: req.currentUser.id,
+          },
+        }),
+      ]);
+
+      res.status(200).json({ status: 'success', data: updated });
+    } catch (err) { next(err); }
+  };
+
+  listStatusChanges = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await prisma.aircraftStatusChange.findMany({
+        where: { aircraftId: req.params.id, organizationId: req.organizationId },
+        include: { changedBy: { select: { id: true, name: true, role: true } } },
+        orderBy: { changedAt: 'desc' },
+        take: 50,
+      });
+      res.status(200).json({ status: 'success', data });
+    } catch (err) { next(err); }
+  };
+
+  /** Lecturas de contadores de la aeronave y de sus motores, la última primero. */
+  listCounterReadings = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const readings = await prisma.counterReading.findMany({
+        where: {
+          organizationId: req.organizationId,
+          OR: [
+            { aircraftId: req.params.id },
+            { engine: { aircraftId: req.params.id } },
+          ],
+        },
+        include: {
+          counterType: { select: { id: true, code: true, name: true, unit: true, scope: true } },
+          engine: { select: { id: true, position: true, model: true, serialNumber: true } },
+          recordedBy: { select: { id: true, name: true } },
+        },
+        orderBy: [{ readingDate: 'desc' }, { createdAt: 'desc' }],
+        take: 200,
+      });
+      res.status(200).json({ status: 'success', data: readings });
+    } catch (err) { next(err); }
+  };
+
+  /**
+   * Registra una lectura. Los contadores no retroceden: una lectura menor a la
+   * última suele ser un error de tipeo, y aceptarla adelantaría vencimientos.
+   */
+  createCounterReading = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const body = z.object({
+        counterTypeId: z.string().uuid(),
+        engineId: z.string().uuid().nullable().optional(),
+        value: z.coerce.number().min(0),
+        readingDate: z.coerce.date(),
+        notes: z.string().max(1000).nullable().optional(),
+      }).parse(req.body);
+
+      const aircraft = await prisma.aircraft.findFirst({
+        where: { id: req.params.id, organizationId: req.organizationId },
+        select: { id: true },
+      });
+      if (!aircraft) throw new NotFoundError('Aircraft', req.params.id);
+
+      const counterType = await prisma.counterType.findFirst({
+        where: { id: body.counterTypeId, organizationId: req.organizationId, isActive: true },
+      });
+      if (!counterType) throw new NotFoundError('CounterType', body.counterTypeId);
+
+      if (body.engineId) {
+        const engine = await prisma.aircraftEngine.findFirst({
+          where: { id: body.engineId, aircraftId: aircraft.id },
+          select: { id: true },
+        });
+        if (!engine) throw new NotFoundError('AircraftEngine', body.engineId);
+        if (counterType.scope === 'AIRCRAFT') {
+          throw new ValidationError(`${counterType.code} es un contador de aeronave, no de motor`);
+        }
+      } else if (counterType.scope === 'ENGINE') {
+        throw new ValidationError(`${counterType.code} es un contador de motor: indica a cuál pertenece la lectura`);
+      }
+
+      const previous = await prisma.counterReading.findFirst({
+        where: {
+          counterTypeId: counterType.id,
+          ...(body.engineId ? { engineId: body.engineId } : { aircraftId: aircraft.id }),
+        },
+        orderBy: [{ readingDate: 'desc' }, { createdAt: 'desc' }],
+        select: { value: true, readingDate: true },
+      });
+      if (previous && body.value < Number(previous.value)) {
+        throw new ValidationError(
+          `La lectura (${body.value}) es menor que la última registrada (${Number(previous.value)} el ${previous.readingDate.toISOString().slice(0, 10)}).`,
+        );
+      }
+
+      const created = await prisma.$transaction(async (tx) => {
+        const reading = await tx.counterReading.create({
+          data: {
+            organizationId: req.organizationId,
+            counterTypeId: counterType.id,
+            aircraftId: body.engineId ? null : aircraft.id,
+            engineId: body.engineId ?? null,
+            value: body.value,
+            readingDate: body.readingDate,
+            notes: body.notes ?? null,
+            recordedById: req.currentUser.id,
+          },
+          include: { counterType: { select: { code: true, name: true, unit: true } } },
+        });
+
+        // Los contadores que reflejan un campo previo lo actualizan también: el
+        // plan calcula horas contra ese campo, y dos verdades para el mismo
+        // número es peor que una sola en el lugar equivocado.
+        if (counterType.legacyField === 'aircraftHours' || counterType.legacyField === 'aircraftCycles') {
+          const last = await tx.aircraftUsageLog.findFirst({
+            where: { aircraftId: aircraft.id },
+            orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+          });
+          const hours = counterType.legacyField === 'aircraftHours'
+            ? body.value
+            : Number(last?.totalHours ?? 0);
+          const cycles = counterType.legacyField === 'aircraftCycles'
+            ? Math.round(body.value)
+            : Number(last?.totalCycles ?? 0);
+
+          await tx.aircraftUsageLog.create({
+            data: {
+              organizationId: req.organizationId,
+              aircraftId: aircraft.id,
+              date: body.readingDate,
+              totalHours: hours,
+              totalCycles: cycles,
+              source: 'manual',
+              notes: `Registrado desde el contador ${counterType.code}`,
+            },
+          });
+          await tx.aircraft.update({
+            where: { id: aircraft.id },
+            data: { totalFlightHours: hours, totalCycles: cycles },
+          });
+        }
+
+        if ((counterType.legacyField === 'engineHours' || counterType.legacyField === 'engineCycles') && body.engineId) {
+          const last = await tx.aircraftEngineUsageLog.findFirst({
+            where: { engineId: body.engineId },
+            orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+          });
+          await tx.aircraftEngineUsageLog.create({
+            data: {
+              organizationId: req.organizationId,
+              engineId: body.engineId,
+              date: body.readingDate,
+              hours: counterType.legacyField === 'engineHours' ? body.value : Number(last?.hours ?? 0),
+              cycles: counterType.legacyField === 'engineCycles' ? Math.round(body.value) : Number(last?.cycles ?? 0),
+            },
+          });
+        }
+
+        return reading;
+      });
+
+      res.status(201).json({ status: 'success', data: created });
+    } catch (err) { next(err); }
+  };
+
   getMaintenancePlan = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const plan = await this.planUseCase.execute(req.params.id, req.organizationId);
+      const includeNotApplicable = String(req.query.includeNotApplicable ?? '') === 'true';
+      const plan = await this.planUseCase.execute(req.params.id, req.organizationId, { includeNotApplicable });
       res.status(200).json({ status: 'success', data: plan });
     } catch (err) { next(err); }
   };

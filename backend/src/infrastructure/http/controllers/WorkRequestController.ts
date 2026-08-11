@@ -3,8 +3,12 @@ import { z } from 'zod';
 import { WorkRequestService } from '../../../domain/services/WorkRequestService';
 import { WorkRequestDocumentService } from '../../../domain/services/WorkRequestDocumentService';
 import { EmailService } from '../../../domain/services/EmailService';
+import { WhatsAppService } from '../../../domain/services/WhatsAppService';
 import { FileStorageService } from '../../../domain/services/FileStorageService';
 import { WORK_REQUEST_STATE_MACHINE } from '../../../domain/workflows/stateMachines';
+import { prisma } from '../../database/prisma.client';
+import { env } from '../../../config/env';
+import { ValidationError } from '../../../shared/errors/AppError';
 
 const createSchema = z.object({
   aircraftId: z.string().uuid(),
@@ -58,7 +62,15 @@ export class WorkRequestController {
 
   static async send(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const data = await WorkRequestService.send(req.params.id, req.organizationId, req.currentUser.id);
+      const dispatch = z.object({
+        repairShopId: z.string().uuid().nullable().optional(),
+        repairShopContactId: z.string().uuid().nullable().optional(),
+        dispatchMethod: z.enum(['EMAIL', 'MANUAL']).nullable().optional(),
+        dispatchNotes: z.string().max(2000).nullable().optional(),
+      }).parse(req.body ?? {});
+      const data = await WorkRequestService.send(
+        req.params.id, req.organizationId, req.currentUser.id, dispatch,
+      );
       res.json({ status: 'success', data });
     } catch (err) { next(err); }
   }
@@ -143,6 +155,119 @@ export class WorkRequestController {
     } catch (err) { next(err); }
   }
 
+  static async submitForReview(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { reviewerId } = z.object({ reviewerId: z.string().uuid() }).parse(req.body);
+      const data = await WorkRequestService.submitForReview({
+        workRequestId: req.params.id,
+        organizationId: req.organizationId,
+        reviewerId,
+        actorId: req.currentUser.id,
+      });
+      res.json({ status: 'success', data });
+    } catch (err) { next(err); }
+  }
+
+  static async reviewDecision(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const body = z.object({
+        approved: z.boolean(),
+        reviewNotes: z.string().max(2000).optional().nullable(),
+      }).parse(req.body);
+      const data = await WorkRequestService.approveReview({
+        workRequestId: req.params.id,
+        organizationId: req.organizationId,
+        actorId: req.currentUser.id,
+        approved: body.approved,
+        reviewNotes: body.reviewNotes ?? null,
+      });
+      res.json({ status: 'success', data });
+    } catch (err) { next(err); }
+  }
+
+  static async registerReceivedOt(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const body = z.object({
+        otNumber: z.string().trim().min(1).max(80),
+        otReceivedAt: z.coerce.date().optional().nullable(),
+        otDocumentUrl: z.string().max(1000).optional().nullable(),
+      }).parse(req.body);
+      const data = await WorkRequestService.registerReceivedOt({
+        workRequestId: req.params.id,
+        organizationId: req.organizationId,
+        actorId: req.currentUser.id,
+        otNumber: body.otNumber,
+        otReceivedAt: body.otReceivedAt ?? null,
+        otDocumentUrl: body.otDocumentUrl ?? (req.file ? `/uploads/${req.file.filename}` : null),
+      });
+      res.json({ status: 'success', data });
+    } catch (err) { next(err); }
+  }
+
+  static async cancel(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { reason } = z.object({ reason: z.string().trim().min(1).max(2000) }).parse(req.body);
+      const data = await WorkRequestService.cancel({
+        workRequestId: req.params.id,
+        organizationId: req.organizationId,
+        actorId: req.currentUser.id,
+        reason,
+      });
+      res.json({ status: 'success', data });
+    } catch (err) { next(err); }
+  }
+
+  static async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await WorkRequestService.remove({
+        workRequestId: req.params.id,
+        organizationId: req.organizationId,
+        actorId: req.currentUser.id,
+      });
+      res.status(204).send();
+    } catch (err) { next(err); }
+  }
+
+  /** Avisa por WhatsApp al contacto del taller, con la ST adjunta. */
+  static async notifyWhatsApp(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { phone } = z.object({ phone: z.string().trim().max(40).optional() }).parse(req.body ?? {});
+      const wr = await WorkRequestService.getById(req.params.id, req.organizationId);
+
+      const target = phone ?? wr.repairShopContact?.phone;
+      if (!target) {
+        throw new ValidationError(
+          'El contacto del taller no tiene teléfono registrado. Agrégalo en Configuración → Talleres.',
+        );
+      }
+      if (!WhatsAppService.isConfigured()) {
+        throw new ValidationError(
+          'WhatsApp no está configurado en el servidor. Descarga el PDF y envíalo por tu cuenta.',
+        );
+      }
+
+      const pdf = await WorkRequestDocumentService.generateSTDocument(wr.id);
+      const sentTo = await WhatsAppService.notifyWorkRequestSent({
+        phone: target,
+        contactName: wr.repairShopContact?.name ?? 'Contacto',
+        workRequestNumber: wr.number,
+        aircraftModel: `${wr.aircraft.manufacturer ?? ''} ${wr.aircraft.model ?? ''}`.trim(),
+        aircraftRegistration: wr.aircraft.registration,
+        // Quien revisó la ST es quien responde por su contenido; si no hubo
+        // revisión, responde quien la armó.
+        senderName: wr.reviewer?.name ?? wr.createdBy?.name ?? 'Oficina Técnica',
+        pdf,
+      });
+
+      await prisma.workRequest.update({
+        where: { id: wr.id },
+        data: { whatsappSentAt: new Date(), whatsappSentTo: sentTo.slice(0, 40) },
+      });
+
+      res.json({ status: 'success', message: 'Aviso enviado por WhatsApp', data: { sentTo } });
+    } catch (err) { next(err); }
+  }
+
   static async generatePdf(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const wr = await WorkRequestService.getById(req.params.id, req.organizationId);
@@ -157,20 +282,40 @@ export class WorkRequestController {
     try {
       const { email } = emailSchema.parse(req.body);
       const wr = await WorkRequestService.getById(req.params.id, req.organizationId);
+
+      // El destinatario natural es la persona del taller a la que se dirigió la ST.
+      const target = email ?? wr.repairShopContact?.email ?? wr.responsible?.email;
+      if (!target) {
+        throw new ValidationError(
+          'La ST no tiene un destinatario con correo. Elige un contacto del taller que tenga dirección.',
+        );
+      }
+
+      // Sin SMTP no hay envío posible: mejor decirlo que dejar la ST marcada
+      // como enviada por correo sin que el taller reciba nada.
+      if (!env.email.smtpHost && env.email.provider === 'smtp') {
+        throw new ValidationError(
+          'El correo no está configurado en el servidor (falta SMTP_HOST). Descarga el PDF y envíala en mano.',
+        );
+      }
+
       const pdf = await WorkRequestDocumentService.generateSTDocument(wr.id);
       const pdfPath = await WorkRequestDocumentService.savePdfToFile(pdf, `${wr.number}.pdf`);
-
-      const target = email ?? wr.responsible?.email;
-      if (!target) throw new Error('No se encontró email de responsable');
 
       EmailService.initialize();
       await EmailService.sendWorkRequestNotification({
         to: target,
-        responsibleName: wr.responsible?.name ?? 'Responsable',
+        responsibleName: wr.repairShopContact?.name ?? wr.responsible?.name ?? 'Responsable',
         workRequestNumber: wr.number,
         aircraftRegistration: wr.aircraft.registration,
         aircraftModel: wr.aircraft.model,
         pdfAttachmentPath: pdfPath,
+      });
+
+      // Solo se marca una vez que el correo salió de verdad.
+      await prisma.workRequest.update({
+        where: { id: wr.id },
+        data: { emailSentAt: new Date(), emailSentTo: target.slice(0, 255) },
       });
 
       res.json({ status: 'success', message: 'Correo enviado', data: { workRequestId: wr.id } });
@@ -202,11 +347,23 @@ export class WorkRequestController {
         evidenceFileName = uploaded.originalName;
       }
 
+      // Si la OT firmada ya se cargó al registrarla como recibida, sirve como
+      // evidencia del cierre: pedirla dos veces es fricción sin respaldo extra.
+      if (!evidenceFileUrl || !evidenceFileName) {
+        const registered = await WorkRequestService.getById(req.params.id, req.organizationId);
+        if (registered.otDocumentUrl) {
+          evidenceFileUrl = registered.otDocumentUrl;
+          evidenceFileName = registered.otNumber
+            ? `OT ${registered.otNumber}`
+            : 'OT recibida';
+        }
+      }
+
       if (!evidenceFileUrl || !evidenceFileName) {
         res.status(400).json({
           status: 'error',
           code: 'VALIDATION_ERROR',
-          message: 'Debe adjuntar evidencia documental (foto/PDF de OT firmada)',
+          message: 'Debe adjuntar la OT firmada, o registrarla primero como OT recibida',
         });
         return;
       }

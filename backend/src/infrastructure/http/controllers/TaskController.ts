@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../database/prisma.client';
-import { NotFoundError, ConflictError } from '../../../shared/errors/AppError';
+import { NotFoundError, ConflictError, ValidationError } from '../../../shared/errors/AppError';
 import { BaselineComplianceService } from '../../../domain/services/BaselineComplianceService';
 
 const INTERVAL_TYPES = ['FLIGHT_HOURS','CYCLES','CALENDAR_DAYS','FLIGHT_HOURS_OR_CALENDAR','CYCLES_OR_CALENDAR','ON_CONDITION'] as const;
@@ -32,6 +32,11 @@ const updateSchema = createSchema.partial().omit({ code: true });
 
 const assignSchema = z.object({
   taskId: z.string().uuid(),
+});
+
+const applicabilitySchema = z.object({
+  applies: z.boolean(),
+  notes: z.string().max(2000).optional().nullable(),
 });
 
 export class TaskController {
@@ -108,6 +113,41 @@ export class TaskController {
   };
 
   // ── Remove task from aircraft plan ─────────────────────────────────────────
+  /**
+   * Cambia la aplicabilidad de una tarea en una aeronave conservando el vínculo.
+   * Marcar "no aplica" exige justificación: es una decisión de aeronavegabilidad
+   * auditable y reversible (p. ej. descartada por ambiente salino, que vuelve a
+   * aplicar si la aeronave cambia de base).
+   */
+  setApplicability = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { aircraftId, taskId } = req.params;
+      const { applies, notes } = applicabilitySchema.parse(req.body);
+
+      const link = await prisma.aircraftTask.findFirst({
+        where: { aircraftId, taskId, aircraft: { organizationId: req.organizationId } },
+      });
+      if (!link) throw new NotFoundError('AircraftTask');
+
+      const trimmedNotes = notes?.trim() || null;
+      if (!applies && !trimmedNotes) {
+        throw new ValidationError('Debe indicar por qué la tarea no aplica a esta aeronave');
+      }
+
+      const updated = await prisma.aircraftTask.update({
+        where: { aircraftId_taskId: { aircraftId, taskId } },
+        data: {
+          isActive: applies,
+          applicabilityNotes: trimmedNotes ?? link.applicabilityNotes,
+          applicabilityChangedAt: new Date(),
+          applicabilityChangedById: req.currentUser.id,
+        },
+      });
+
+      res.status(200).json({ status: 'success', data: updated });
+    } catch (err) { next(err); }
+  };
+
   removeFromAircraft = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { aircraftId, taskId } = req.params;

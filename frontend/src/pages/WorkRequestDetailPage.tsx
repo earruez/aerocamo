@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { RegisterOTModal } from '../components/workRequests/RegisterOTModal';
+import { SendWorkRequestDialog, type DispatchSelection } from '../components/workRequests/SendWorkRequestDialog';
 import { useNavigate } from 'react-router-dom';
 import { saveAs } from 'file-saver';
-import { ArrowLeft, FileDown, History, MessageSquareText, Paperclip, Save, Send, Wrench } from 'lucide-react';
+import { ArrowLeft, Ban, FileDown, History, MessageSquareText, Paperclip, Save, Send, Trash2, Wrench } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useWorkRequestStore } from '../store/workRequestStore';
 import { WorkRequestBadge } from '../components/workRequests/WorkRequestBadges';
@@ -52,6 +53,10 @@ export default function WorkRequestDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [showRegisterOT, setShowRegisterOT] = useState(false);
   const [showAddItemForm, setShowAddItemForm] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [notesDraft, setNotesDraft] = useState<string | null>(null);
+  const [showSendDialog, setShowSendDialog] = useState(false);
+  const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [pendingOtData, setPendingOtData] = useState<{ otNumber: string; receivedAt: string; file?: File | null; notes: string } | null>(null);
 
   const syncWorkRequest = (nextApiWorkRequest: Awaited<ReturnType<typeof workRequestsApi.getById>>) => {
@@ -83,6 +88,44 @@ export default function WorkRequestDetailPage() {
     if (!workRequestStateMachine) return false;
     return canTransitionTo(workRequestStateMachine, workRequest.status, 'SENT');
   }, [workRequest, workRequestStateMachine]);
+
+  // Borrar solo el borrador: una vez enviada, la ST existe fuera de la
+  // plataforma y debe cancelarse para conservar el registro.
+  const canDeleteCurrent = canEditCurrent;
+  const canCancelCurrent = useMemo(() => {
+    if (!workRequest || !workRequestStateMachine) return false;
+    return canTransitionTo(workRequestStateMachine, workRequest.status, 'CANCELLED');
+  }, [workRequest, workRequestStateMachine]);
+
+  const handleDelete = async () => {
+    if (!workRequest) return;
+    const { id, folio } = workRequest;
+    try {
+      await workRequestsApi.remove(id);
+      // El detalle se muestra según la ST seleccionada en el store, no por ruta:
+      // hay que soltar la selección y sacarla de la caché, o el listado la sigue mostrando.
+      setConfirmDelete(false);
+      selectWorkRequest(null, 'general');
+      setWorkRequests(
+        useWorkRequestStore.getState().workRequests.filter((wr) => wr.id !== id),
+      );
+      toast.success(`${folio} eliminada`);
+    } catch {
+      toast.error('No se pudo eliminar la solicitud');
+    }
+  };
+
+  const handleCancel = async (reason: string) => {
+    if (!workRequest) return;
+    try {
+      const updated = await workRequestsApi.cancel(workRequest.id, reason);
+      syncWorkRequest(updated);
+      setCancelReason(null);
+      toast.success('Solicitud cancelada');
+    } catch {
+      toast.error('No se pudo cancelar la solicitud');
+    }
+  };
 
   const visibleStatusLabel = useMemo(() => {
     if (!workRequest) return '';
@@ -128,46 +171,91 @@ export default function WorkRequestDetailPage() {
   const handleSaveDraft = async () => {
     if (!workRequest || !canEditCurrent) return;
     try {
-      const updated = await workRequestsApi.updateDraft(workRequest.id, { notes: workRequest.generalNotes ?? null });
+      const updated = await workRequestsApi.updateDraft(workRequest.id, {
+        notes: notesDraft ?? workRequest.generalNotes ?? null,
+      });
       syncWorkRequest(updated);
-      setNotice('Borrador guardado.');
+      setNotesDraft(null);
+      toast.success('Borrador guardado');
     } catch {
       toast.error('No se pudo guardar el borrador');
     }
   };
 
-  const handleSend = async () => {
+  const handleSend = () => {
     if (!workRequest || !canSendCurrent) return;
     if (workRequest.items.length === 0) {
       setNotice('Agrega al menos un item antes de enviar.');
       return;
     }
+    // La ST va a una persona de un taller: hay que elegir destino y vía.
+    setShowSendDialog(true);
+  };
 
+  const [isSending, setIsSending] = useState(false);
+
+  const handleConfirmSend = async (selection: DispatchSelection) => {
+    if (!workRequest) return;
+    setIsSending(true);
     try {
-      const sent = await workRequestsApi.send(workRequest.id);
+      const sent = await workRequestsApi.send(workRequest.id, selection);
       syncWorkRequest(sent);
-      setNotice('Solicitud enviada a Oficina Tecnica.');
+      setShowSendDialog(false);
+
+      // El aviso por WhatsApp es independiente de la vía: puede acompañar tanto
+      // al correo como a la entrega en mano.
+      const notifyWhatsApp = async () => {
+        if (!selection.notifyWhatsApp) return;
+        try {
+          await workRequestsApi.notifyWhatsApp(workRequest.id);
+          toast.success('Aviso enviado por WhatsApp');
+        } catch (err) {
+          const detail = (err as { response?: { data?: { message?: string } } })
+            ?.response?.data?.message;
+          toast.error(detail ?? 'El aviso por WhatsApp no se pudo enviar', { duration: 8000 });
+        }
+      };
+
+      if (selection.dispatchMethod !== 'EMAIL') {
+        toast.success('Solicitud registrada como entregada en mano');
+        await notifyWhatsApp();
+        return;
+      }
+
+      // El despacho ya quedó registrado; el correo puede fallar aparte (sin SMTP,
+      // rechazo del servidor). Se informa lo que realmente ocurrió.
+      try {
+        await workRequestsApi.sendEmail(workRequest.id);
+        toast.success('Solicitud enviada por correo con el PDF adjunto');
+      } catch (err) {
+        const detail = (err as { response?: { data?: { message?: string } } })
+          ?.response?.data?.message;
+        toast.error(
+          detail
+            ? `Quedó registrada como enviada, pero el correo no salió: ${detail}`
+            : 'Quedó registrada como enviada, pero el correo no salió. Descarga el PDF y envíala en mano.',
+          { duration: 8000 },
+        );
+      }
+      await notifyWhatsApp();
     } catch {
       toast.error('No se pudo enviar la solicitud');
+    } finally {
+      setIsSending(false);
     }
   };
 
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = async () => {
     if (!workRequest) return;
-    const content = [
-      'Solicitud de Trabajo',
-      '',
-      `N° ST: ${workRequest.folio}`,
-      `Aeronave: ${workRequest.aircraftId}`,
-      `Prioridad: ${workRequest.priority}`,
-      `Estado: ${visibleStatusLabel}`,
-      '',
-      'Items:',
-      ...workRequest.items.map((item) => `- ${item.title} (${item.ataCode})`),
-    ].join('\n');
-
-    const blob = new Blob([content], { type: 'application/pdf' });
-    saveAs(blob, `${workRequest.folio}.pdf`);
+    // El PDF lo arma el servidor: membrete, datos de aeronave, tabla paginada
+    // y bloque de firmas. Antes se generaba aquí un texto plano con extensión
+    // .pdf que ningún lector abría.
+    try {
+      const blob = await workRequestsApi.downloadPdf(workRequest.id);
+      saveAs(blob, `${workRequest.folio}.pdf`);
+    } catch {
+      toast.error('No se pudo generar el PDF');
+    }
   };
 
   const handleBackToMain = () => {
@@ -327,6 +415,18 @@ export default function WorkRequestDetailPage() {
               <FileDown size={14} />
               Descargar PDF
             </button>
+            {canCancelCurrent && !canDeleteCurrent && (
+              <button className="btn-secondary text-amber-700" onClick={() => setCancelReason('')}>
+                <Ban size={14} />
+                Cancelar solicitud
+              </button>
+            )}
+            {canDeleteCurrent && (
+              <button className="btn-secondary text-rose-600" onClick={() => setConfirmDelete(true)}>
+                <Trash2 size={14} />
+                Eliminar
+              </button>
+            )}
             {/* Registrar OT recibida solo si está en proceso y no tiene OT */}
             {visibleStatus === 'en_proceso' && !hasOT && (
               <button className="btn-primary" onClick={() => setShowRegisterOT(true)}>
@@ -361,6 +461,70 @@ export default function WorkRequestDetailPage() {
             </div>
           )}
         </div>
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-sm font-bold text-slate-900">Eliminar solicitud</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Se eliminará <b>{workRequest.folio}</b> y sus {workRequest.items.length} ítem
+              {workRequest.items.length !== 1 ? 's' : ''}. Esta acción no se puede deshacer.
+            </p>
+            <p className="mt-1.5 text-[11px] text-slate-500">
+              Solo se puede eliminar mientras está en borrador, porque nunca salió de la oficina.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setConfirmDelete(false)} className="btn-secondary">Volver</button>
+              <button onClick={handleDelete} className="btn-primary bg-rose-600 hover:bg-rose-700 border-rose-600">
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelReason !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <form
+            onSubmit={(e) => { e.preventDefault(); if (cancelReason.trim()) void handleCancel(cancelReason.trim()); }}
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
+          >
+            <h2 className="text-sm font-bold text-slate-900">Cancelar solicitud</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              <b>{workRequest.folio}</b> quedará anulada pero se conserva en el expediente,
+              porque ya salió de la oficina.
+            </p>
+            <label className="mt-3 block text-xs font-semibold text-slate-600">
+              Motivo <span className="text-rose-500">*</span>
+            </label>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={3}
+              autoFocus
+              className="input mt-1"
+              placeholder="Ej: el taller no tiene disponibilidad; se reemplaza por otra ST…"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setCancelReason(null)} className="btn-secondary">Volver</button>
+              <button type="submit" className="btn-primary" disabled={!cancelReason.trim()}>
+                Cancelar solicitud
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showSendDialog && (
+        <SendWorkRequestDialog
+          folio={workRequest.folio}
+          itemsCount={workRequest.items.length}
+          isSending={isSending}
+          onClose={() => setShowSendDialog(false)}
+          onConfirm={handleConfirmSend}
+          onDownloadPdf={handleDownloadPdf}
+        />
+      )}
+
       {/* Modal para registrar OT */}
       <RegisterOTModal
         open={showRegisterOT}
@@ -444,7 +608,20 @@ export default function WorkRequestDetailPage() {
               <MessageSquareText size={14} className="text-slate-600" />
               Observaciones
             </h3>
-            <p className="text-sm text-slate-600 leading-relaxed">{workRequest.generalNotes || 'Sin observaciones registradas.'}</p>
+            {canEditCurrent ? (
+              <textarea
+                value={notesDraft ?? workRequest.generalNotes ?? ''}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                rows={3}
+                className="input text-sm"
+                placeholder="Observaciones para el taller: acceso, disponibilidad, materiales…"
+              />
+            ) : (
+              <p className="text-sm text-slate-600 leading-relaxed">{workRequest.generalNotes || 'Sin observaciones registradas.'}</p>
+            )}
+            {canEditCurrent && notesDraft !== null && notesDraft !== (workRequest.generalNotes ?? '') && (
+              <p className="mt-1.5 text-[11px] text-amber-700">Cambios sin guardar — usa «Guardar borrador».</p>
+            )}
           </div>
 
           <div ref={historyRef} className="scroll-mt-20 rounded-xl border border-slate-200 bg-slate-50/60 p-3">

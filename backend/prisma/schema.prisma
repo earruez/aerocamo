@@ -107,6 +107,24 @@ enum ComplianceStatus {
   @@map("compliance_status")
 }
 
+enum ComplianceRecurrence {
+  REPETITIVE        // Vuelve a vencer tras cumplirse (Access REP)
+  ONE_TIME          // Cumplimiento único (Access UNA VEZ / UNICA VEZ)
+  ON_CONDITION      // Según condición (Access COND / A REQ.)
+  ON_EVENT          // Ante un evento (Access AL EVENTO)
+  PERMANENT         // Permanente / abierta (Access PERM / OPEN)
+  UNSPECIFIED       // Sin recurrencia declarada en el origen
+
+  @@map("compliance_recurrence")
+}
+
+enum EquipmentScope {
+  AIRCRAFT          // Célula / estructura de la aeronave
+  ENGINE            // Motor y sus accesorios
+
+  @@map("equipment_scope")
+}
+
 enum ComplianceApplicationType {
   baseline
   application
@@ -150,7 +168,10 @@ enum WorkOrderEvidenceType {
 /// Work request (Solicitud de Trabajo / ST) lifecycle
 enum WorkRequestStatus {
   DRAFT       // Borrador editable
-  SENT        // Enviada al responsable CMA/OT
+  IN_REVIEW   // En revisión antes de salir
+  SENT        // Enviada al taller
+  OT_RECEIVED // El taller devolvió la OT
+  CLOSED      // Cerrada con cumplimientos registrados
   CANCELLED   // Cancelada
 
   @@map("work_request_status")
@@ -272,6 +293,16 @@ model Organization {
   // Relations
   users              User[]
   aircraft           Aircraft[]
+  aircraftAlterations AircraftAlteration[]
+  aircraftTaskNotes   AircraftTaskNote[]
+  aircraftStatusChanges AircraftStatusChange[]
+  counterTypes          CounterType[]
+  counterReadings       CounterReading[]
+  taskCounterLimits     TaskCounterLimit[]
+  equipmentCounterSlots EquipmentCounterSlot[]
+  maintenanceManuals  MaintenanceManual[]
+  repairShops         RepairShop[]
+  repairShopContacts  RepairShopContact[]
   components         Component[]
   maintenanceTasks   MaintenanceTask[]
   compliances        Compliance[]
@@ -334,6 +365,16 @@ model User {
   discrepanciesResolved    Discrepancy[]  @relation("DiscrepancyResolvedBy")
   componentMovements       ComponentHistory[] @relation("ComponentMovedBy")
   componentTrackingMovements ComponentMovement[] @relation("ComponentTrackingMovedBy")
+  aircraftTaskApplicabilityChanges AircraftTask[] @relation("AircraftTaskApplicability")
+  createdAlterations               AircraftAlteration[]
+  createdTaskNotes                 AircraftTaskNote[]
+  aircraftStatusChanges            AircraftStatusChange[]
+  counterReadings                  CounterReading[]
+  createdManuals                   MaintenanceManual[]
+  createdRepairShops               RepairShop[]
+  reviewedWorkRequests             WorkRequest[] @relation("WRReviewer")
+  otRegisteredWorkRequests         WorkRequest[] @relation("WROtRegisteredBy")
+  closedWorkRequests               WorkRequest[] @relation("WRClosedBy")
   assignedPlans            AircraftAssignedPlan[]
 
   @@unique([email, organizationId])
@@ -393,6 +434,11 @@ model Aircraft {
   workRequests       WorkRequest[]
   componentHistory   ComponentHistory[]
   usageLogs          AircraftUsageLog[]
+  alterations        AircraftAlteration[]
+  statusChanges      AircraftStatusChange[]
+  counterReadings    CounterReading[]
+  counterSlots       EquipmentCounterSlot[]
+  taskNotes          AircraftTaskNote[]
   engines            AircraftEngine[]
   componentInstances ComponentInstance[]
   componentApplications ComponentApplication[]
@@ -421,6 +467,8 @@ model AircraftEngine {
   organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   aircraft       Aircraft              @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
   usageLogs      AircraftEngineUsageLog[]
+  counterReadings CounterReading[]
+  counterSlots    EquipmentCounterSlot[]
 
   @@unique([aircraftId, position])
   @@index([organizationId, aircraftId])
@@ -444,7 +492,266 @@ model AircraftEngineUsageLog {
   @@map("aircraft_engine_usage_logs")
 }
 
-  model AircraftUsageLog {
+  /// Alteración aprobada a la configuración de la aeronave (STC / Formulario DGAC 337)
+model AircraftAlteration {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  aircraftId     String   @db.Uuid
+
+  /// Documento que aprueba la alteración
+  documentNumber String   @db.VarChar(255)
+  description    String
+  approvalDate   DateTime? @db.Date
+
+  /// Suplemento del manual de vuelo asociado
+  hasFlightManualSupplement Boolean @default(false)
+  flightManualReference     String? @db.VarChar(255)
+
+  /// Instrucciones de aeronavegabilidad continuada asociadas
+  hasIca       Boolean  @default(false)
+  icaReference String?  @db.VarChar(255)
+
+  /// OT / taller donde se ejecutó
+  reference    String?  @db.VarChar(255)
+  notes        String?
+
+  createdById  String?  @db.Uuid
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft     Aircraft     @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  /// La unicidad real es (aircraftId, documentNumber, md5(description)): un mismo
+  /// formulario puede amparar varias alteraciones. Se define como índice por
+  /// expresión en la migración manual, que Prisma no puede representar.
+  @@index([aircraftId])
+  @@index([organizationId])
+  @@map("aircraft_alterations")
+}
+
+/// Nota libre sobre una tarea en una aeronave: bitácora de revisión, sin
+/// cumplimiento asociado. No altera vencimientos ni estado de la tarea.
+model AircraftTaskNote {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  aircraftId     String   @db.Uuid
+  taskId         String   @db.Uuid
+
+  note           String
+
+  createdById    String?  @db.Uuid
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft     Aircraft        @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  task         MaintenanceTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdBy    User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([aircraftId, taskId, createdAt])
+  @@index([organizationId])
+  @@map("aircraft_task_notes")
+}
+
+/// Manual de referencia vigente por modelo (tabla DOC del Access).
+model MaintenanceManual {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+
+  model     String  @db.VarChar(120)
+  /// Documento y revisión, tal como se cita en la OT
+  reference String
+  kind      String  @default("ENGINE") @db.VarChar(20)
+  notes     String?
+
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@map("maintenance_manuals")
+}
+
+/// Taller aeronáutico habilitado (tabla CMA del Access).
+model RepairShop {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+
+  /// Código CMA de la autoridad; puede faltar en talleres extranjeros
+  code     String? @db.VarChar(40)
+  name     String  @db.VarChar(180)
+  country  String? @db.VarChar(80)
+  notes    String?
+  isActive Boolean @default(true)
+
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  contacts     RepairShopContact[]
+  workRequests WorkRequest[]
+
+  @@index([organizationId])
+  @@map("repair_shops")
+}
+
+/// Persona de contacto en un taller: a quién se le envía la ST.
+model RepairShopContact {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  repairShopId   String   @db.Uuid
+
+  name      String  @db.VarChar(180)
+  role      String? @db.VarChar(120)
+  email     String? @db.VarChar(255)
+  phone     String? @db.VarChar(60)
+  isPrimary Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repairShop   RepairShop   @relation(fields: [repairShopId], references: [id], onDelete: Cascade)
+  workRequests WorkRequest[]
+
+  @@index([repairShopId, isActive])
+  @@map("repair_shop_contacts")
+}
+
+/// Cambio de estado operacional de una aeronave, con su motivo y autor.
+model AircraftStatusChange {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  aircraftId     String   @db.Uuid
+
+  fromStatus AircraftStatus?
+  toStatus   AircraftStatus
+  reason     String
+
+  changedById String?  @db.Uuid
+  changedAt   DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft     Aircraft     @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  changedBy    User?        @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([aircraftId, changedAt])
+  @@map("aircraft_status_changes")
+}
+
+/// Contador configurable (modelo de la tabla TN del Access): la organización
+/// declara los que usa —CNG, CTL, LND, RIN…— en vez de tener dos fijos.
+model CounterType {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+
+  code  String @db.VarChar(20)
+  name  String @db.VarChar(120)
+  unit  String @default("ciclos") @db.VarChar(30)
+  scope String @default("BOTH") @db.VarChar(12)
+
+  /// Contadores que ya existían como campo fijo; evita duplicar la verdad.
+  legacyField String? @db.VarChar(30)
+  /// Ranura del Access que representa (1 = LIMN1, 2 = LIMN2) para su alcance.
+  /// Cambiar esto reinterpreta los límites sin volver a importar.
+  slot        Int?    @db.SmallInt
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(100)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  readings     CounterReading[]
+  equipmentSlots EquipmentCounterSlot[]
+
+  @@index([organizationId, isActive])
+  @@map("counter_types")
+}
+
+/// Lectura de un contador para una aeronave o un motor.
+model CounterReading {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  counterTypeId  String   @db.Uuid
+
+  /// Exactamente uno de los dos
+  aircraftId String? @db.Uuid
+  engineId   String? @db.Uuid
+
+  value       Decimal  @db.Decimal(12, 2)
+  readingDate DateTime @db.Date
+  source      String   @default("manual") @db.VarChar(30)
+  notes       String?
+
+  recordedById String?  @db.Uuid
+  createdAt    DateTime @default(now())
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  counterType  CounterType     @relation(fields: [counterTypeId], references: [id], onDelete: Cascade)
+  aircraft     Aircraft?       @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  engine       AircraftEngine? @relation(fields: [engineId], references: [id], onDelete: Cascade)
+  recordedBy   User?           @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@index([aircraftId, counterTypeId, readingDate])
+  @@index([engineId, counterTypeId, readingDate])
+  @@map("counter_readings")
+}
+
+/// Límite de una tarea contra un contador. Una tarea puede tener varios: el
+/// Access los guarda en dos ranuras cuyo contador depende del equipo.
+model TaskCounterLimit {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  taskId         String @db.Uuid
+
+  slot       Int     @db.SmallInt
+  limitValue Decimal @db.Decimal(12, 2)
+  /// Lectura del contador en el último cumplimiento
+  lastValue  Decimal? @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  task         MaintenanceTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, slot])
+  @@map("task_counter_limits")
+}
+
+/// Qué contador ocupa cada ranura en un equipo concreto. El Access lo declara
+/// por equipo (EQ.TN1 / EQ.TN2) y varía entre aeronaves y entre motores.
+model EquipmentCounterSlot {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+
+  aircraftId String? @db.Uuid
+  engineId   String? @db.Uuid
+
+  slot          Int    @db.SmallInt
+  counterTypeId String @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft     Aircraft?       @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  engine       AircraftEngine? @relation(fields: [engineId], references: [id], onDelete: Cascade)
+  counterType  CounterType     @relation(fields: [counterTypeId], references: [id], onDelete: Cascade)
+
+  @@map("equipment_counter_slots")
+}
+
+model AircraftUsageLog {
     id             String              @id @default(uuid()) @db.Uuid
     organizationId String              @db.Uuid
     aircraftId     String              @db.Uuid
@@ -580,6 +887,14 @@ model MaintenanceTask {
   /// Human-readable task code (e.g. "50H-INSP", "A-CHECK", "AD-2024-15-01")
   code           String          @db.VarChar(100)
 
+  /// Célula de la aeronave vs motor: separa los controles que en Access viven en
+  /// las vistas COMP (motor) y COMP1 (aeronave).
+  equipmentScope EquipmentScope  @default(AIRCRAFT)
+
+  /// Recurrencia declarada en el origen: separa las AD repetitivas de las de
+  /// cumplimiento único.
+  complianceRecurrence ComplianceRecurrence @default(UNSPECIFIED)
+
   title          String          @db.VarChar(255)
   description    String
 
@@ -619,6 +934,9 @@ model MaintenanceTask {
 
   /// Whether an independent inspection (RII) is required after this task
   requiresInspection Boolean     @default(false)
+  /// Control de vida de un componente (dominio COMP del Access). Se gestiona
+  /// en la página de Componentes; el plan lo excluye salvo que se pida.
+  isComponentControl Boolean  @default(false)
 
   /// Specific aircraft model this task applies to (null = all models)
   applicableModel String?        @db.VarChar(150)
@@ -643,6 +961,8 @@ model MaintenanceTask {
   workOrderTasks  WorkOrderTask[]
   workRequestItems WorkRequestItem[]
   componentApplications ComponentApplication[]
+  taskNotes       AircraftTaskNote[]
+  counterLimits   TaskCounterLimit[]
 
   @@unique([code, organizationId])
   @@index([organizationId])
@@ -665,11 +985,20 @@ model AircraftTask {
   overrideIntervalHours  Decimal? @db.Decimal(10, 2)
   overrideIntervalCycles Int?
 
+  /// isActive=false significa "no aplica a esta aeronave". El vínculo se conserva
+  /// siempre: la no aplicabilidad puede revertirse (p. ej. una tarea descartada por
+  /// ambiente salino vuelve a aplicar si la aeronave cambia de base).
   isActive   Boolean  @default(true)
   assignedAt DateTime @default(now())
 
+  /// Justificación de la última decisión de aplicabilidad
+  applicabilityNotes       String?
+  applicabilityChangedAt   DateTime?
+  applicabilityChangedById String?  @db.Uuid
+
   aircraft   Aircraft        @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
   task       MaintenanceTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  applicabilityChangedBy User? @relation("AircraftTaskApplicability", fields: [applicabilityChangedById], references: [id], onDelete: SetNull)
 
   @@unique([aircraftId, taskId])
   @@index([aircraftId])
@@ -925,6 +1254,36 @@ model WorkRequest {
   aircraftCyclesN1       Int?
   aircraftCyclesN2       Int?
 
+  /// Revisión previa al envío
+  reviewerId     String?           @db.Uuid
+  reviewedAt     DateTime?
+  reviewNotes    String?
+
+  /// Destino: taller y persona a quien se envió, y por qué vía
+  repairShopId        String?      @db.Uuid
+  repairShopContactId String?      @db.Uuid
+  /// EMAIL cuando se envía con el PDF adjunto; MANUAL cuando se imprime y entrega
+  dispatchMethod      String?      @db.VarChar(20)
+  dispatchNotes       String?
+
+  /// OT que devuelve el taller
+  otNumber         String?         @db.VarChar(80)
+  otReceivedAt     DateTime?
+  otDocumentUrl    String?
+  otRegisteredById String?         @db.Uuid
+
+  closedAt       DateTime?
+  closedById     String?           @db.Uuid
+
+  /// Envío efectivo del correo: distinto de dispatchMethod, que solo dice cómo
+  /// se decidió enviarla. Vacío significa que el correo no llegó a salir.
+  emailSentAt    DateTime?
+  emailSentTo    String?           @db.VarChar(255)
+
+  /// Aviso por WhatsApp al contacto del taller
+  whatsappSentAt DateTime?
+  whatsappSentTo String?           @db.VarChar(40)
+
   /// Dispatch tracking
   sentAt         DateTime?
   sentById       String?           @db.Uuid
@@ -938,6 +1297,11 @@ model WorkRequest {
   createdBy      User              @relation("WRCreatedBy", fields: [createdById], references: [id])
   responsible    User?             @relation("WRResponsible", fields: [responsibleId], references: [id])
   sentBy         User?             @relation("WRSentBy", fields: [sentById], references: [id])
+  reviewer       User?             @relation("WRReviewer", fields: [reviewerId], references: [id])
+  otRegisteredBy User?             @relation("WROtRegisteredBy", fields: [otRegisteredById], references: [id])
+  closedBy       User?             @relation("WRClosedBy", fields: [closedById], references: [id])
+  repairShop     RepairShop?       @relation(fields: [repairShopId], references: [id], onDelete: SetNull)
+  repairShopContact RepairShopContact? @relation(fields: [repairShopContactId], references: [id], onDelete: SetNull)
 
   items          WorkRequestItem[]
   componentApplications ComponentApplication[]
@@ -978,6 +1342,9 @@ model WorkRequestItem {
   component     Component?      @relation(fields: [componentId], references: [id])
   discrepancy   Discrepancy?    @relation(fields: [discrepancyId], references: [id])
 
+  /// Una tarea no puede repetirse dentro de la misma solicitud. Es índice
+  /// parcial (solo taskId no nulo), definido en la migración manual porque
+  /// Prisma no expresa índices únicos con condición.
   @@index([workRequestId, category])
   @@index([sourceKind, sourceId])
   @@index([executionType])

@@ -75,6 +75,39 @@ export interface ComponentComplianceRecord {
   };
 }
 
+export type ComponentMovementType = 'INSTALLED' | 'REMOVED';
+
+export interface ComponentHistoryEntry {
+  id: string;
+  componentId: string;
+  aircraftId: string;
+  movementType: ComponentMovementType;
+  aircraftHoursAtMovement: number | string;
+  aircraftCyclesAtMovement: number;
+  componentHoursAtMovement: number | string;
+  componentCyclesAtMovement: number;
+  position: string | null;
+  notes: string | null;
+  movedAt: string;
+  createdAt: string;
+  component?: { id: string; partNumber: string; serialNumber: string; description: string };
+  performedBy?: { id: string; name: string; role: string };
+  workOrder?: { id: string; number: string } | null;
+}
+
+export interface RecordComponentMovementInput {
+  aircraftId: string;
+  movementType: ComponentMovementType;
+  aircraftHoursAtMovement: number;
+  aircraftCyclesAtMovement: number;
+  componentHoursAtMovement: number;
+  componentCyclesAtMovement: number;
+  position?: string | null;
+  workOrderId?: string | null;
+  notes?: string | null;
+  movedAt: string;
+}
+
 export interface RegisterInitialComponentInput {
   aircraftId: string;
   taskId: string;
@@ -109,6 +142,30 @@ export const componentApi = {
 
   getComplianceHistory: async (componentId: string): Promise<ComponentComplianceRecord[]> => {
     const { data } = await apiClient.get<{ status: string; data: ComponentComplianceRecord[] }>(`/components/${componentId}/compliances`);
+    return data.data;
+  },
+
+  /** Historial de instalación/remoción de todos los componentes de una aeronave. */
+  getMovementHistoryByAircraft: async (aircraftId: string): Promise<ComponentHistoryEntry[]> => {
+    const { data } = await apiClient.get<{ status: string; data: { history: ComponentHistoryEntry[] } }>(
+      `/aircraft/${aircraftId}/component-history`,
+    );
+    return data.data?.history ?? [];
+  },
+
+  /** Registra un movimiento (instalación o remoción) de un componente. */
+  recordMovement: async (componentId: string, input: RecordComponentMovementInput): Promise<ComponentHistoryEntry> => {
+    const { data } = await apiClient.post<{ status: string; data: ComponentHistoryEntry }>(
+      `/components/${componentId}/history`,
+      input,
+    );
+    return data.data;
+  },
+
+  getComplianceHistoryByAircraft: async (aircraftId: string): Promise<Array<ComponentComplianceRecord & { componentId: string }>> => {
+    const { data } = await apiClient.get<{ status: string; data: Array<ComponentComplianceRecord & { componentId: string }> }>(
+      `/components/aircraft/${aircraftId}/compliances`,
+    );
     return data.data;
   },
 

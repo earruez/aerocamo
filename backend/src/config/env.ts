@@ -21,6 +21,17 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SENDGRID_API_KEY: z.string().optional(),
+
+  // WhatsApp Business (Meta Cloud API)
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  WHATSAPP_ACCESS_TOKEN: z.string().optional(),
+  WHATSAPP_TEMPLATE_NAME: z.string().default('nueva_solicitud_trabajo'),
+  WHATSAPP_TEMPLATE_LANG: z.string().default('es'),
+  WHATSAPP_API_VERSION: z.string().default('v21.0'),
+  /// Solo para pruebas locales: apunta la API a otro host
+  WHATSAPP_API_BASE_URL: z.string().optional(),
+  /// Prefijo que se antepone a los teléfonos guardados sin código de país
+  WHATSAPP_DEFAULT_COUNTRY_CODE: z.string().default('56'),
   
   // AWS S3 configuration
   AWS_ACCESS_KEY_ID: z.string().optional(),
@@ -67,6 +78,16 @@ export const env = {
     smtpUser: rawEnv.SMTP_USER,
     smtpPass: rawEnv.SMTP_PASS,
     sendgridApiKey: rawEnv.SENDGRID_API_KEY,
+  },
+
+  whatsapp: {
+    phoneNumberId: rawEnv.WHATSAPP_PHONE_NUMBER_ID,
+    accessToken: rawEnv.WHATSAPP_ACCESS_TOKEN,
+    templateName: rawEnv.WHATSAPP_TEMPLATE_NAME,
+    templateLang: rawEnv.WHATSAPP_TEMPLATE_LANG,
+    apiVersion: rawEnv.WHATSAPP_API_VERSION,
+    apiBaseUrl: rawEnv.WHATSAPP_API_BASE_URL,
+    defaultCountryCode: rawEnv.WHATSAPP_DEFAULT_COUNTRY_CODE,
   },
   
   // AWS S3 configuration

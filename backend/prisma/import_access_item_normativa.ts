@@ -81,6 +81,8 @@ interface ItemRecord {
   limh: number | null;
   limt: number | null;
   limn1: number | null;
+  limn2: number | null;
+  n2ult: number | null;
   hsult: number | null;
   fult: Date | null;
   n1ult: number | null;
@@ -132,13 +134,29 @@ function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
-function resolveIntervalType(item: { limh: number | null; limt: number | null; limn1: number | null }): TaskIntervalType {
+function resolveIntervalType(item: { limh: number | null; limt: number | null; limn1: number | null; limn2?: number | null }): TaskIntervalType {
+  // La segunda ranura también es un control por ciclos: sin esto, una pieza
+  // limitada solo en CTL quedaba "según condición", es decir, sin vencimiento.
+  const cycles = item.limn1 ?? item.limn2 ?? null;
   if (item.limh != null && item.limt != null) return 'FLIGHT_HOURS_OR_CALENDAR';
-  if (item.limn1 != null && item.limt != null) return 'CYCLES_OR_CALENDAR';
+  if (cycles != null && item.limt != null) return 'CYCLES_OR_CALENDAR';
   if (item.limh != null) return 'FLIGHT_HOURS';
-  if (item.limn1 != null) return 'CYCLES';
+  if (cycles != null) return 'CYCLES';
   if (item.limt != null) return 'CALENDAR_DAYS';
   return 'ON_CONDITION';
+}
+
+type ComplianceRecurrenceValue = 'REPETITIVE' | 'ONE_TIME' | 'ON_CONDITION' | 'ON_EVENT' | 'PERMANENT' | 'UNSPECIFIED';
+
+/** Traduce la columna REP del Access a la recurrencia del modelo. */
+function mapRecurrence(rep: string): ComplianceRecurrenceValue {
+  const value = rep.trim().toUpperCase();
+  if (value === 'REP') return 'REPETITIVE';
+  if (value === 'UNA VEZ' || value === 'UNICA VEZ') return 'ONE_TIME';
+  if (value === 'COND' || value === 'A REQ.' || value === 'A REQ') return 'ON_CONDITION';
+  if (value === 'AL EVENTO') return 'ON_EVENT';
+  if (value === 'PERM' || value === 'PERMANENTE' || value === 'OPEN') return 'PERMANENT';
+  return 'UNSPECIFIED';
 }
 
 function slugModel(modelo: string): string {
@@ -152,23 +170,43 @@ function addMonthsUtc(date: Date, months: number): Date {
 }
 
 /**
- * El Access no almacena el "PROXIMO" (lo calcula en consultas), así que cuando
- * HSCOMP/FCOMP/N1COMP vienen vacíos lo derivamos de último cumplimiento + límite.
+ * Muchas observaciones del Access llevan la referencia de la OT que sustentó el
+ * cumplimiento ("OT DET/05-2026", "OT ABU/17-03"): la extraemos para que quede
+ * visible como N° de OT del cumplimiento, sin perder el texto completo en notas.
+ */
+function extractWorkOrderRef(obs: string): string | null {
+  // Formatos vistos: "OT DET/05-2026", "OT ABU/17-03", "OT DET 11/2025", "OT ANQ/23-06."
+  const match = obs.match(/\bOT[\s.:]+([A-ZÑ0-9]+(?:[/\-.][A-ZÑ0-9/.\-]*)?(?:\s[0-9][0-9/.\-]*)?)/i);
+  if (!match) return null;
+  const ref = match[1].replace(/[.,;]+$/, '').trim();
+  return ref ? `OT ${ref}`.slice(0, 50) : null;
+}
+
+/**
+ * El Access no almacena el "PROXIMO": lo calcula como último + límite. En dominio
+ * COMP, HSCOMP/N1COMP/FCOMP describen el estado del COMPONENTE al registrarlo
+ * (horas/ciclos que ya traía y fecha FAB-OVH-INST), así que se descuentan:
+ *   PROXIMO_H = HSULT + LIMH - HSCOMP   (palas CC-DET: 5430.8 + 20000 - 3630.2 = 21800.6 ✓)
+ *   PROXIMO_F = FULT + LIMT meses       (battery: 12-nov-25 + 72M = nov-31 ✓)
  */
 function computeNextDue(member: ItemRecord): {
   nextDueHours: number | null;
   nextDueDate: Date | null;
   nextDueCycles: number | null;
 } {
-  const nextDueHours = member.hscomp
-    ?? (member.hsult != null && member.limh != null ? member.hsult + member.limh : null);
-  const nextDueDate = member.fcomp
-    ?? (member.fult != null && member.limt != null ? addMonthsUtc(member.fult, Math.round(member.limt)) : null);
-  const nextDueCycles = member.n1comp != null
-    ? Math.round(member.n1comp)
-    : member.n1ult != null && member.limn1 != null
-      ? Math.round(member.n1ult + member.limn1)
-      : null;
+  const isComponent = member.domain === 'COMP';
+  const consumedHours = isComponent ? (member.hscomp ?? 0) : 0;
+  const consumedCycles = isComponent ? (member.n1comp ?? 0) : 0;
+
+  const nextDueHours = member.hsult != null && member.limh != null
+    ? member.hsult + member.limh - consumedHours
+    : null;
+  const nextDueDate = member.fult != null && member.limt != null
+    ? addMonthsUtc(member.fult, Math.round(member.limt))
+    : null;
+  const nextDueCycles = member.n1ult != null && member.limn1 != null
+    ? Math.round(member.n1ult + member.limn1 - consumedCycles)
+    : null;
   return { nextDueHours, nextDueDate, nextDueCycles };
 }
 
@@ -207,9 +245,61 @@ async function main(): Promise<void> {
 
   const aircraftRows = await prisma.aircraft.findMany({
     where: { organizationId: ORG_ID },
-    select: { id: true, registration: true },
+    select: { id: true, registration: true, createdAt: true, totalFlightHours: true, totalCycles: true },
   });
   const aircraftByRegistration = new Map(aircraftRows.map((a) => [a.registration.toUpperCase(), a.id]));
+  const aircraftById = new Map(aircraftRows.map((a) => [a.id, a]));
+
+  // Componentes ya importados (import_access_csv --only componentes): clave aeronave|PN|SN
+  const componentRows = await prisma.component.findMany({
+    where: { organizationId: ORG_ID },
+    select: { id: true, aircraftId: true, partNumber: true, serialNumber: true },
+  });
+  const componentByKey = new Map<string, string>();
+  const componentsByAircraft = new Map<string, Array<{ id: string; pnN: string; snN: string }>>();
+  const normAlnum = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]+/g, '');
+  for (const component of componentRows) {
+    if (!component.aircraftId) continue;
+    const key = `${component.aircraftId}|${component.partNumber.toUpperCase().trim()}|${component.serialNumber.toUpperCase().trim()}`;
+    componentByKey.set(key, component.id);
+    const list = componentsByAircraft.get(component.aircraftId) ?? [];
+    list.push({ id: component.id, pnN: normAlnum(component.partNumber), snN: normAlnum(component.serialNumber) });
+    componentsByAircraft.set(component.aircraftId, list);
+  }
+
+  const MEANINGLESS_SN = new Set(['', 'SS', 'NA', 'SN', 'VARIOS']);
+
+  /**
+   * Match tolerante: el transform generó componentes "KIT ..." con PN/SN compuestos
+   * (p. ej. "KIT S1820516-99 BATTERY (S1820506-01)"), así que si el match exacto
+   * falla buscamos por contención de PN (y SN cuando es significativo); solo
+   * vinculamos si hay exactamente un candidato.
+   */
+  const resolveComponentId = (aircraftId: string, pn: string, sn: string): string | null => {
+    const exact = componentByKey.get(`${aircraftId}|${pn.toUpperCase().trim()}|${sn.toUpperCase().trim()}`);
+    if (exact) return exact;
+
+    const pnN = normAlnum(pn);
+    if (!pnN) return null;
+    const snN = normAlnum(sn);
+    const snMeaningful = !MEANINGLESS_SN.has(snN);
+
+    const candidates = (componentsByAircraft.get(aircraftId) ?? []).filter((c) => {
+      const pnMatches = c.pnN.includes(pnN) || pnN.includes(c.pnN);
+      if (!pnMatches) return false;
+      if (!snMeaningful) return true;
+      return c.snN.includes(snN) || snN.includes(c.snN);
+    });
+
+    return candidates.length === 1 ? candidates[0].id : null;
+  };
+
+  // Asociaciones tarea↔componente ya existentes (cualquier compliance con componentId)
+  const existingAssociations = await prisma.compliance.findMany({
+    where: { organizationId: ORG_ID, componentId: { not: null } },
+    select: { taskId: true, aircraftId: true },
+  });
+  const associationKeys = new Set(existingAssociations.map((c) => `${c.taskId}|${c.aircraftId}`));
 
   // ── ITEM ──────────────────────────────────────────────────────────────────
   const rawItems = await readCsv(itemPath);
@@ -249,6 +339,8 @@ async function main(): Promise<void> {
       limh: parseNumber(row.LIMH),
       limt: parseNumber(row.LIMT),
       limn1: parseNumber(row.LIMN1),
+      limn2: parseNumber(row.LIMN2),
+      n2ult: parseNumber(row.N2ULT),
       hsult: parseNumber(row.HSULT),
       fult: parseMdbDate(row.FULT),
       n1ult: parseNumber(row.N1ULT),
@@ -276,8 +368,27 @@ async function main(): Promise<void> {
   const codeOwners = new Map<string, string>(); // code -> group key
 
   for (const item of items) {
-    const codeBase = item.ata || `ID${item.id}`;
-    const key = `${item.domain}|${codeBase}|${item.eq.modelo.toUpperCase()}`;
+    // COMP: un mismo capítulo ATA agrupa componentes físicos distintos (swashplate,
+    // tornillos, eje...) y un mismo P/N puede tener varias instancias instaladas
+    // (3 palas de rotor, 6 flanges) cada una con su propio control en Access —
+    // P/N y S/N forman parte de la identidad de la tarea.
+    const pnSlug = item.pn ? item.pn.replace(/[^A-Za-z0-9]+/g, '').toUpperCase().slice(0, 16) : '';
+    const snSlugRaw = item.sn ? item.sn.replace(/[^A-Za-z0-9]+/g, '').toUpperCase().slice(0, 16) : '';
+    const snSlug = MEANINGLESS_SN.has(snSlugRaw) ? '' : snSlugRaw;
+    const codeBase = item.domain === 'COMP' && item.ata && pnSlug
+      ? `${item.ata}-${pnSlug}${snSlug ? `-${snSlug}` : ''}`
+      : (item.ata || `ID${item.id}`);
+
+    // Fuera de COMP, el capítulo ATA NO identifica la tarea: un mismo capítulo
+    // agrupa requisitos distintos (bajo "05-25-00" conviven la inspección de
+    // 1200FH, la de 750HC y la de 10FH/7D; bajo "DAN 135/137" el ELT, el pesaje
+    // y el transponder). Sin la descripción en la clave esas filas se fundían en
+    // una sola y el Access perdía controles. Se normaliza para que diferencias de
+    // puntuación o espaciado no partan en dos la misma tarea.
+    const objetoSlug = item.domain === 'COMP'
+      ? ''
+      : item.objeto.replace(/[^A-Za-z0-9]+/g, '').toUpperCase();
+    const key = `${item.domain}|${codeBase}|${objetoSlug}|${item.eq.modelo.toUpperCase()}`;
 
     let group = groups.get(key);
     if (!group) {
@@ -291,13 +402,14 @@ async function main(): Promise<void> {
         attempt += 1;
       }
       codeOwners.set(code, key);
+      const baseTitle = item.objeto || `${item.domain} ${codeBase}`;
       group = {
         key,
         code,
         domain: item.domain,
         ata: item.ata,
         modelo: item.eq.modelo,
-        title: item.objeto || `${item.domain} ${codeBase}`,
+        title: item.domain === 'COMP' && snSlug ? `${baseTitle} (S/N ${item.sn})` : baseTitle,
         members: [],
         intervalConflicts: [],
       };
@@ -328,14 +440,20 @@ async function main(): Promise<void> {
     skipped: skipped.length,
     taskGroups: groups.size,
     byDomain: {} as Record<string, number>,
+    byScope: { AIRCRAFT: 0, ENGINE: 0 } as Record<string, number>,
+    applicabilityNotesLoaded: 0,
+    counterLimitsCreated: 0,
     links: { active: 0, inactive: 0 },
     compliances: { toCreate: 0, skippedNoDate: 0, alreadyImported: 0 },
+    components: { linked: 0, baselinesToCreate: 0, unmatched: 0 },
     conflicts: [] as Array<{ code: string; detail: string[] }>,
-    applied: { tasksCreated: 0, tasksUpdated: 0, linksUpserted: 0, compliancesCreated: 0 },
+    unmatchedComponents: [] as Array<{ mat: string; code: string; pn: string; sn: string }>,
+    applied: { tasksCreated: 0, tasksUpdated: 0, linksUpserted: 0, compliancesCreated: 0, componentBaselinesCreated: 0, installationsBackfilled: 0 },
   };
 
   for (const item of items) {
     summary.byDomain[item.domain] = (summary.byDomain[item.domain] ?? 0) + 1;
+    summary.byScope[item.eq.tip.startsWith('EN') ? 'ENGINE' : 'AIRCRAFT'] += 1;
   }
   for (const group of groups.values()) {
     if (group.intervalConflicts.length > 0) {
@@ -375,17 +493,24 @@ async function main(): Promise<void> {
     ].filter(Boolean);
 
     const taskData = {
+      // EQ.TIP distingue célula (AN) de motor (EN1/EN2): es el criterio del propio
+      // Access para separar sus vistas COMP1 / COMP.
+      equipmentScope: representative.eq.tip.startsWith('EN') ? 'ENGINE' as const : 'AIRCRAFT' as const,
+      complianceRecurrence: mapRecurrence(representative.rep),
       title: truncate(group.title, 255),
       description: descriptionParts.join('\n'),
       intervalType,
       intervalHours: representative.limh != null ? new Prisma.Decimal(representative.limh) : null,
-      intervalCycles: representative.limn1 != null ? Math.round(representative.limn1) : null,
+      intervalCycles: representative.limn1 != null
+        ? Math.round(representative.limn1)
+        : (representative.limn2 != null ? Math.round(representative.limn2) : null),
       intervalCalendarDays: null as number | null,
       intervalCalendarMonths: representative.limt != null ? Math.round(representative.limt) : null,
       referenceType: DOMAIN_REFERENCE_TYPE[group.domain],
       referenceNumber: group.ata ? truncate(group.ata, 100) : null,
       isMandatory,
       requiresInspection,
+      isComponentControl: group.domain === 'COMP',
       applicableModel: group.modelo ? truncate(group.modelo, 150) : null,
       applicablePartNumber: group.domain === 'COMP' && representative.pn ? truncate(representative.pn, 100) : null,
       isActive: true,
@@ -430,19 +555,124 @@ async function main(): Promise<void> {
       if (isApplicable) summary.links.active += 1;
       else summary.links.inactive += 1;
 
+      // Vincular con el componente físico importado (dominio COMP, match por PN+SN)
+      let componentId: string | null = null;
+      if (group.domain === 'COMP' && member.pn) {
+        componentId = resolveComponentId(aircraftId, member.pn, member.sn);
+        if (componentId) {
+          summary.components.linked += 1;
+        } else {
+          summary.components.unmatched += 1;
+          summary.unmatchedComponents.push({ mat, code: group.code, pn: member.pn, sn: member.sn });
+        }
+      }
+
       const hasCompliance = member.fult != null;
       if (member.hsult != null && member.fult == null) summary.compliances.skippedNoDate += 1;
+
+      // La observación del Access es la justificación de la no aplicabilidad
+      // ("N/A, aeronave nueva", "SUPERSEDED BY EASA AD 2006-0095"): se conserva en
+      // el vínculo para que la decisión quede auditable y sea reversible.
+      const applicabilityNotes = !isApplicable && member.obs ? member.obs : null;
+      if (applicabilityNotes) summary.applicabilityNotesLoaded += 1;
 
       if (APPLY && taskId) {
         await prisma.aircraftTask.upsert({
           where: { aircraftId_taskId: { aircraftId, taskId } },
-          create: { aircraftId, taskId, isActive: isApplicable },
-          update: { isActive: isApplicable },
+          create: {
+            aircraftId,
+            taskId,
+            isActive: isApplicable,
+            applicabilityNotes,
+            applicabilityChangedAt: applicabilityNotes ? new Date() : null,
+            applicabilityChangedById: applicabilityNotes ? performedById : null,
+          },
+          update: {
+            isActive: isApplicable,
+            ...(applicabilityNotes
+              ? {
+                  applicabilityNotes,
+                  applicabilityChangedAt: new Date(),
+                  applicabilityChangedById: performedById,
+                }
+              : {}),
+          },
         });
         summary.applied.linksUpserted += 1;
       }
 
-      if (!hasCompliance) continue;
+      // Cada ranura con límite queda como un control propio contra su contador.
+      if (APPLY && taskId) {
+        for (const [slot, limit, last] of [
+          [1, member.limn1, member.n1ult],
+          [2, member.limn2, member.n2ult],
+        ] as const) {
+          if (limit == null) continue;
+          const existing = await prisma.taskCounterLimit.findUnique({
+            where: { taskId_slot: { taskId, slot } },
+            select: { id: true },
+          });
+          const data = { limitValue: limit, lastValue: last ?? null };
+          if (existing) {
+            await prisma.taskCounterLimit.update({ where: { id: existing.id }, data });
+          } else {
+            await prisma.taskCounterLimit.create({
+              data: { organizationId: ORG_ID, taskId, slot, ...data },
+            });
+            summary.counterLimitsCreated += 1;
+          }
+        }
+      }
+
+      if (!hasCompliance) {
+        // Sin historial de cumplimiento: si el componente físico matchea, creamos el
+        // "Inicio de control" con componente asociado (equivalente a /components/initial-registration)
+        if (componentId && !(taskId && associationKeys.has(`${taskId}|${aircraftId}`))) {
+          summary.components.baselinesToCreate += 1;
+          if (APPLY && taskId) {
+            const aircraft = aircraftById.get(aircraftId)!;
+            const baseHours = Number(aircraft.totalFlightHours);
+            const baseCycles = aircraft.totalCycles;
+            const baseDate = aircraft.createdAt;
+            // Con HSULT del Access (control por horas sin fecha) se usa ese punto real
+            // de partida y se descuentan las horas/ciclos que el componente ya traía
+            // (HSCOMP/N1COMP). Sin ningún dato, se parte de los contadores actuales.
+            const hoursAt = member.hsult ?? baseHours;
+            const cyclesAt = member.n1ult != null ? Math.round(member.n1ult) : baseCycles;
+            const hasAccessControlData = member.hsult != null || member.n1ult != null;
+            await prisma.compliance.create({
+              data: {
+                organizationId: ORG_ID,
+                aircraftId,
+                taskId,
+                componentId,
+                performedById: performedById!,
+                inspectedById: null,
+                performedAt: baseDate,
+                aircraftHoursAtCompliance: new Prisma.Decimal(hoursAt),
+                aircraftCyclesAtCompliance: cyclesAt,
+                nextDueHours: member.limh != null
+                  ? new Prisma.Decimal(hoursAt + member.limh - (member.hscomp ?? 0))
+                  : null,
+                nextDueCycles: member.limn1 != null
+                  ? Math.round(cyclesAt + member.limn1 - (member.n1comp ?? 0))
+                  : null,
+                nextDueDate: member.limt != null && !hasAccessControlData
+                  ? addMonthsUtc(baseDate, Math.round(member.limt))
+                  : null,
+                workOrderNumber: null,
+                applicationType: 'baseline',
+                isInitial: true,
+                status: 'COMPLETED',
+                notes: 'Inicio de control',
+              },
+            });
+            associationKeys.add(`${taskId}|${aircraftId}`);
+            summary.applied.componentBaselinesCreated += 1;
+          }
+        }
+        continue;
+      }
 
       const nextDue = computeNextDue(member);
       const existingComplianceId = taskId ? importedComplianceIdByKey.get(`${taskId}|${aircraftId}`) : undefined;
@@ -450,12 +680,15 @@ async function main(): Promise<void> {
       if (existingComplianceId) {
         summary.compliances.alreadyImported += 1;
         if (APPLY) {
+          const workOrderRef = extractWorkOrderRef(member.obs);
           await prisma.compliance.update({
             where: { id: existingComplianceId },
             data: {
               nextDueHours: nextDue.nextDueHours != null ? new Prisma.Decimal(nextDue.nextDueHours) : null,
               nextDueCycles: nextDue.nextDueCycles,
               nextDueDate: nextDue.nextDueDate,
+              ...(componentId ? { componentId } : {}),
+              ...(workOrderRef ? { workOrderNumber: workOrderRef } : {}),
             },
           });
         }
@@ -474,7 +707,7 @@ async function main(): Promise<void> {
             organizationId: ORG_ID,
             aircraftId,
             taskId,
-            componentId: null,
+            componentId,
             performedById: performedById!,
             inspectedById: null,
             performedAt: member.fult!,
@@ -483,7 +716,7 @@ async function main(): Promise<void> {
             nextDueHours: nextDue.nextDueHours != null ? new Prisma.Decimal(nextDue.nextDueHours) : null,
             nextDueCycles: nextDue.nextDueCycles,
             nextDueDate: nextDue.nextDueDate,
-            workOrderNumber: null,
+            workOrderNumber: extractWorkOrderRef(member.obs),
             applicationType: 'application',
             isInitial: true,
             status: 'COMPLETED',
@@ -492,6 +725,68 @@ async function main(): Promise<void> {
         });
         summary.applied.compliancesCreated += 1;
       }
+    }
+  }
+
+  // ── Respaldo de instalación ───────────────────────────────────────────────
+  // El historial de movimientos exige un INSTALLED previo para poder registrar una
+  // remoción. Los componentes importados llegan sin instalación registrada, así que
+  // la derivamos del primer cumplimiento conocido (o de la línea base de la aeronave).
+  if (APPLY) {
+    const linkedComponents = await prisma.component.findMany({
+      where: {
+        organizationId: ORG_ID,
+        aircraftId: { not: null },
+        history: { none: {} },
+      },
+      select: { id: true, aircraftId: true, installationDate: true },
+    });
+
+    for (const component of linkedComponents) {
+      const firstCompliance = await prisma.compliance.findFirst({
+        where: { organizationId: ORG_ID, componentId: component.id },
+        orderBy: { performedAt: 'asc' },
+        select: { performedAt: true, aircraftHoursAtCompliance: true, aircraftCyclesAtCompliance: true },
+      });
+
+      const aircraft = aircraftById.get(component.aircraftId!);
+      if (!aircraft) continue;
+
+      const installedAt = firstCompliance?.performedAt ?? component.installationDate ?? aircraft.createdAt;
+      const installedHours = firstCompliance ? Number(firstCompliance.aircraftHoursAtCompliance) : Number(aircraft.totalFlightHours);
+      const installedCycles = firstCompliance ? firstCompliance.aircraftCyclesAtCompliance : aircraft.totalCycles;
+
+      await prisma.$transaction(async (tx) => {
+        await tx.component.update({
+          where: { id: component.id },
+          data: {
+            installationDate: installedAt,
+            installationAircraftHours: new Prisma.Decimal(installedHours),
+            installationAircraftCycles: installedCycles,
+            status: 'INSTALLED',
+          },
+        });
+
+        await tx.componentHistory.create({
+          data: {
+            organizationId: ORG_ID,
+            componentId: component.id,
+            aircraftId: component.aircraftId!,
+            movementType: 'INSTALLED',
+            aircraftHoursAtMovement: new Prisma.Decimal(installedHours),
+            aircraftCyclesAtMovement: installedCycles,
+            componentHoursAtMovement: new Prisma.Decimal(0),
+            componentCyclesAtMovement: 0,
+            position: null,
+            workOrderId: null,
+            performedById: performedById!,
+            notes: `${IMPORT_MARKER} Instalación de referencia derivada del historial de Access`,
+            movedAt: installedAt,
+          },
+        });
+      });
+
+      summary.applied.installationsBackfilled += 1;
     }
   }
 
@@ -513,11 +808,14 @@ async function main(): Promise<void> {
   console.log(`ITEM rows: ${summary.itemRows} | usables: ${summary.usableItems} | descartadas: ${summary.skipped}`);
   console.log(`Tareas (grupos dominio+código+modelo): ${summary.taskGroups}`);
   console.log(`Por dominio: ${JSON.stringify(summary.byDomain)}`);
-  console.log(`Links aeronave-tarea: activos=${summary.links.active} noAplica=${summary.links.inactive}`);
+  console.log(`Por equipo: aeronave=${summary.byScope.AIRCRAFT} motor=${summary.byScope.ENGINE}`);
+  console.log(`Links aeronave-tarea: activos=${summary.links.active} noAplica=${summary.links.inactive} (con justificación: ${summary.applicabilityNotesLoaded})`);
   console.log(`Cumplimientos: aCrear=${summary.compliances.toCreate} sinFecha=${summary.compliances.skippedNoDate} yaImportados=${summary.compliances.alreadyImported}`);
+  console.log(`Componentes: vinculados=${summary.components.linked} iniciosDeControl=${summary.components.baselinesToCreate} sinMatch=${summary.components.unmatched}`);
+  console.log(`Límites por contador creados: ${summary.counterLimitsCreated}`);
   console.log(`Conflictos de intervalo: ${summary.conflicts.length} (ver item-normativa-report.json)`);
   if (APPLY) {
-    console.log(`Aplicado: tareas +${summary.applied.tasksCreated} / ~${summary.applied.tasksUpdated}, links ${summary.applied.linksUpserted}, cumplimientos ${summary.applied.compliancesCreated}`);
+    console.log(`Aplicado: tareas +${summary.applied.tasksCreated} / ~${summary.applied.tasksUpdated}, links ${summary.applied.linksUpserted}, cumplimientos ${summary.applied.compliancesCreated}, iniciosDeControl ${summary.applied.componentBaselinesCreated}, instalacionesRespaldadas ${summary.applied.installationsBackfilled}`);
   } else {
     console.log('Dry-run: no se escribió nada. Ejecuta con --apply para persistir.');
   }

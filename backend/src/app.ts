@@ -10,6 +10,9 @@ import { aircraftRoutes } from './infrastructure/http/routes/aircraft.routes';
 import { complianceRoutes } from './infrastructure/http/routes/compliance.routes';
 import { componentRoutes } from './infrastructure/http/routes/component.routes';
 import { componentTrackingRoutes } from './infrastructure/http/routes/componentTracking.routes';
+import { aircraftAlterationRoutes } from './infrastructure/http/routes/aircraftAlterations.routes';
+import { aircraftTaskNoteRoutes } from './infrastructure/http/routes/aircraftTaskNotes.routes';
+import { catalogRoutes } from './infrastructure/http/routes/catalogs.routes';
 import { taskRoutes } from './infrastructure/http/routes/tasks.routes';
 import { workOrderRoutes } from './infrastructure/http/routes/workOrders.routes';
 import { componentHistoryRouter, aircraftHistoryRouter, auditRouter } from './infrastructure/http/routes/componentHistory.routes';
@@ -31,7 +34,12 @@ export function createApp(): Application {
     },
     credentials: true,
   }));
-  app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false }));
+  app.use(rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: env.NODE_ENV === 'development' ? 2000 : 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }));
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true }));
   app.use(requestLogger);
@@ -59,6 +67,9 @@ export function createApp(): Application {
   app.use(`${API}/auth`,             authRoutes);
   app.use(`${API}/aircraft`,         aircraftRoutes);
   app.use(`${API}/aircraft`,         aircraftHistoryRouter);
+  app.use(`${API}`,                  aircraftAlterationRoutes);
+  app.use(`${API}`,                  aircraftTaskNoteRoutes);
+  app.use(`${API}/catalogs`,         catalogRoutes);
   app.use(`${API}/compliances`,      complianceRoutes);
   app.use(`${API}/components`,       componentRoutes);
   app.use(`${API}/components`,       componentTrackingRoutes);

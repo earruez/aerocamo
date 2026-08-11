@@ -13,6 +13,7 @@ router.patch('/:id', ctrl.update);
 
 // Aircraft plan management
 router.post('/aircraft/:aircraftId/assign', ctrl.assignToAircraft);
+router.patch('/aircraft/:aircraftId/tasks/:taskId/applicability', ctrl.setApplicability);
 router.delete('/aircraft/:aircraftId/tasks/:taskId', ctrl.removeFromAircraft);
 
 export { router as taskRoutes };

@@ -22,8 +22,19 @@ router.post('/:id/items', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestContro
 router.delete('/:id/items/:itemId', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.removeItem);
 
 router.get('/:id/pdf', WorkRequestController.generatePdf);
+router.post('/:id/cancel', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.cancel);
+router.delete('/:id', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.remove);
+router.post('/:id/submit-review', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.submitForReview);
+router.post('/:id/review', requireRoles('ADMIN', 'SUPERVISOR', 'INSPECTOR'), WorkRequestController.reviewDecision);
+router.post(
+	'/:id/received-ot',
+	requireRoles('ADMIN', 'SUPERVISOR', 'INSPECTOR'),
+	upload.single('otDocument'),
+	WorkRequestController.registerReceivedOt,
+);
 router.post('/:id/send', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.send);
 router.post('/:id/send-email', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.sendEmail);
+router.post('/:id/notify-whatsapp', requireRoles('ADMIN', 'SUPERVISOR'), WorkRequestController.notifyWhatsApp);
 router.post(
 	'/:id/close-and-comply',
 	requireRoles('ADMIN', 'SUPERVISOR', 'INSPECTOR'),

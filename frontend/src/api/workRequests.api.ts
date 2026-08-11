@@ -181,16 +181,50 @@ export const workRequestsApi = {
     return `/api/v1/work-requests/${id}/pdf`;
   },
 
+  /** Descarga el PDF generado por el servidor (con membrete, tabla y firmas). */
+  async downloadPdf(id: string): Promise<Blob> {
+    const { data } = await apiClient.get(`/work-requests/${id}/pdf`, { responseType: 'blob' });
+    return data as Blob;
+  },
+
   async getStateMachine(): Promise<WorkflowStateMachine<WorkRequestStatus>> {
     const { data } = await apiClient.get<{ status: string; data: WorkflowStateMachine<WorkRequestStatus> }>('/work-requests/state-machine');
     return data.data;
   },
 
-  async send(id: string): Promise<WorkRequest> {
-    const { data } = await apiClient.post<{ status: string; data: WorkRequest }>(`/work-requests/${id}/send`);
+  async send(id: string, dispatch?: {
+    repairShopId?: string | null;
+    repairShopContactId?: string | null;
+    dispatchMethod?: 'EMAIL' | 'MANUAL' | null;
+    dispatchNotes?: string | null;
+  }): Promise<WorkRequest> {
+    const { data } = await apiClient.post<{ status: string; data: WorkRequest }>(
+      `/work-requests/${id}/send`,
+      dispatch ?? {},
+    );
     return data.data;
   },
 
+  /** Anula la ST conservando el registro; exige motivo. */
+  async cancel(id: string, reason: string): Promise<WorkRequest> {
+    const { data } = await apiClient.post<{ status: string; data: WorkRequest }>(
+      `/work-requests/${id}/cancel`,
+      { reason },
+    );
+    return data.data;
+  },
+
+  /** Elimina definitivamente. Solo permitido en borrador. */
+  async remove(id: string): Promise<void> {
+    await apiClient.delete(`/work-requests/${id}`);
+  },
+
+  /** Avisa por WhatsApp al contacto del taller, con la ST adjunta. */
+  async notifyWhatsApp(id: string, phone?: string): Promise<void> {
+    await apiClient.post(`/work-requests/${id}/notify-whatsapp`, { phone });
+  },
+
+  /** Envía el PDF por correo al contacto del taller. Lanza si no hay SMTP. */
   async sendEmail(id: string, email?: string): Promise<void> {
     await apiClient.post(`/work-requests/${id}/send-email`, { email });
   },

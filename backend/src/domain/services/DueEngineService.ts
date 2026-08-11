@@ -42,10 +42,17 @@ export interface DueRow {
   aircraftRegistration: string;
   sourceType: DueSourceType;
   sourceId: string;
+  taskCode: string;
   category: string;
   description: string;
+  componentId: string | null;
   partNumber: string | null;
   serialNumber: string | null;
+  requiresComponentTracking: boolean;
+  equipmentScope: 'AIRCRAFT' | 'ENGINE';
+  controlStartAt: Date | null;
+  controlStartHours: number | null;
+  hasRealCompliance: boolean;
   method: DueMethod;
   intervalValue: number | null;
   intervalUnit: string;
@@ -111,6 +118,25 @@ function startsWithAny(input: string, values: string[]): boolean {
   return values.some((v) => input.includes(v));
 }
 
+const IMPORT_NOTE_PREFIX = /^\[IMPORT ACCESS ITEM\].*$/gm;
+
+/**
+ * Devuelve la observación operativa legible de un cumplimiento. Los registros
+ * importados guardan la observación del Access tras "Obs:", precedida por una
+ * línea técnica de trazabilidad que no aporta al usuario.
+ */
+function extractObservation(notes: string | null): string | null {
+  if (!notes) return null;
+  const obsMatch = notes.match(/^Obs:\s*(.+)$/m);
+  const value = obsMatch
+    ? obsMatch[1].trim()
+    : notes.replace(IMPORT_NOTE_PREFIX, '').trim();
+  if (!value) return null;
+  // El marcador de baseline ya se comunica por el estado de la fila.
+  if (value.toLowerCase() === 'inicio de control') return null;
+  return value;
+}
+
 function mapSourceType(item: MaintenancePlanItem): DueSourceType {
   const refType = (item.referenceType ?? '').toUpperCase();
   const reference = `${item.referenceType ?? ''} ${item.referenceNumber ?? ''} ${item.taskCode} ${item.taskTitle}`.toUpperCase();
@@ -121,8 +147,8 @@ function mapSourceType(item: MaintenancePlanItem): DueSourceType {
   if (reference.includes('DAN')) return 'DAN';
   if (startsWithAny(reference, ['MOD', 'ALTER', 'ALTERACION'])) return 'MOD';
   if (item.executionType === 'component_replacement') {
-    if (reference.includes('ENGINE') || reference.includes('MOTOR') || item.taskCode.startsWith('72')) return 'ENGINE_COMPONENT';
-    return 'COMPONENT';
+    // El ámbito viene del equipo de origen (EQ.TIP en Access), no de adivinar por texto.
+    return item.equipmentScope === 'ENGINE' ? 'ENGINE_COMPONENT' : 'COMPONENT';
   }
   return 'INSPECTION';
 }
@@ -133,29 +159,40 @@ function mapComplianceType(item: MaintenancePlanItem): DueComplianceType {
   return 'REP';
 }
 
+/**
+ * Las dimensiones de control se derivan de los límites efectivamente cargados, no
+ * solo del intervalType declarado: una tarea puede tener límite por horas Y por
+ * ciclos a la vez (el enum no tiene un tipo "horas o ciclos"), y descartar uno de
+ * ellos ocultaría un vencimiento real. El intervalType queda como respaldo cuando
+ * no hay ningún límite numérico cargado.
+ */
 function toIntervalDimensions(item: MaintenancePlanItem): Array<{ method: DueMethod; intervalValue: number | null; intervalUnit: string }> {
-  const intervalType = item.intervalType;
+  const dims: Array<{ method: DueMethod; intervalValue: number | null; intervalUnit: string }> = [];
 
-  if (intervalType === 'FLIGHT_HOURS') return [{ method: 'H', intervalValue: item.intervalHours, intervalUnit: 'FH' }];
-  if (intervalType === 'CYCLES') return [{ method: 'C', intervalValue: item.intervalCycles, intervalUnit: 'CYC' }];
-  if (intervalType === 'CALENDAR_DAYS') {
-    const months = item.intervalCalendarMonths ?? null;
-    if (months != null && months > 0) return [{ method: 'M', intervalValue: months, intervalUnit: 'MONTHS' }];
-    return [{ method: 'M', intervalValue: item.intervalCalendarDays, intervalUnit: 'DAYS' }];
-  }
-  if (intervalType === 'FLIGHT_HOURS_OR_CALENDAR') {
-    const dims: Array<{ method: DueMethod; intervalValue: number | null; intervalUnit: string }> = [];
+  if ((item.intervalHours ?? 0) > 0) {
     dims.push({ method: 'H', intervalValue: item.intervalHours, intervalUnit: 'FH' });
-    if ((item.intervalCalendarMonths ?? 0) > 0) dims.push({ method: 'M', intervalValue: item.intervalCalendarMonths, intervalUnit: 'MONTHS' });
-    else dims.push({ method: 'M', intervalValue: item.intervalCalendarDays, intervalUnit: 'DAYS' });
-    return dims;
   }
-  if (intervalType === 'CYCLES_OR_CALENDAR') {
-    const dims: Array<{ method: DueMethod; intervalValue: number | null; intervalUnit: string }> = [];
+  if ((item.intervalCycles ?? 0) > 0) {
     dims.push({ method: 'C', intervalValue: item.intervalCycles, intervalUnit: 'CYC' });
-    if ((item.intervalCalendarMonths ?? 0) > 0) dims.push({ method: 'M', intervalValue: item.intervalCalendarMonths, intervalUnit: 'MONTHS' });
-    else dims.push({ method: 'M', intervalValue: item.intervalCalendarDays, intervalUnit: 'DAYS' });
-    return dims;
+  }
+  if ((item.intervalCalendarMonths ?? 0) > 0) {
+    dims.push({ method: 'M', intervalValue: item.intervalCalendarMonths, intervalUnit: 'MONTHS' });
+  } else if ((item.intervalCalendarDays ?? 0) > 0) {
+    dims.push({ method: 'M', intervalValue: item.intervalCalendarDays, intervalUnit: 'DAYS' });
+  }
+
+  if (dims.length > 0) return dims;
+
+  // Sin límites numéricos: conserva la dimensión declarada para no perder la fila.
+  const intervalType = item.intervalType;
+  if (intervalType === 'FLIGHT_HOURS' || intervalType === 'FLIGHT_HOURS_OR_CALENDAR') {
+    return [{ method: 'H', intervalValue: item.intervalHours, intervalUnit: 'FH' }];
+  }
+  if (intervalType === 'CYCLES' || intervalType === 'CYCLES_OR_CALENDAR') {
+    return [{ method: 'C', intervalValue: item.intervalCycles, intervalUnit: 'CYC' }];
+  }
+  if (intervalType === 'CALENDAR_DAYS') {
+    return [{ method: 'M', intervalValue: item.intervalCalendarDays, intervalUnit: 'DAYS' }];
   }
   return [];
 }
@@ -223,6 +260,66 @@ export class DueEngineService {
     return map;
   }
 
+  /**
+   * Contexto por tarea tomado del último cumplimiento: componente físico asociado
+   * (P/N + S/N) y la observación operativa registrada. Se resuelve en una sola
+   * consulta por aeronave para no multiplicar queries por fila.
+   */
+  private async getComplianceContextByTask(
+    organizationId: string,
+    aircraftId: string,
+  ): Promise<Map<string, {
+    componentId: string | null;
+    partNumber: string | null;
+    serialNumber: string | null;
+    observations: string | null;
+  }>> {
+    const rows = await prisma.compliance.findMany({
+      where: { organizationId, aircraftId },
+      select: {
+        taskId: true,
+        componentId: true,
+        notes: true,
+        performedAt: true,
+        applicationType: true,
+        component: { select: { partNumber: true, serialNumber: true } },
+      },
+      orderBy: { performedAt: 'desc' },
+    });
+
+    const map = new Map<string, {
+      componentId: string | null;
+      partNumber: string | null;
+      serialNumber: string | null;
+      observations: string | null;
+    }>();
+
+    for (const row of rows) {
+      const current = map.get(row.taskId);
+      // El primero (más reciente) fija la observación; un registro posterior con
+      // componente completa el P/N-S/N si el más reciente no lo traía.
+      if (!current) {
+        map.set(row.taskId, {
+          componentId: row.componentId,
+          partNumber: row.component?.partNumber ?? null,
+          serialNumber: row.component?.serialNumber ?? null,
+          observations: extractObservation(row.notes),
+        });
+        continue;
+      }
+      if (!current.componentId && row.componentId) {
+        current.componentId = row.componentId;
+        current.partNumber = row.component?.partNumber ?? null;
+        current.serialNumber = row.component?.serialNumber ?? null;
+      }
+      if (!current.observations) {
+        current.observations = extractObservation(row.notes);
+      }
+    }
+
+    return map;
+  }
+
   async getDueRows(organizationId: string, aircraftId: string, filters?: DueRowsFilters): Promise<DueRow[]> {
     const aircraft = await prisma.aircraft.findFirst({
       where: { id: aircraftId, organizationId },
@@ -242,6 +339,7 @@ export class DueEngineService {
     const currentHours = Number(aircraft.totalFlightHours);
     const currentCycles = aircraft.totalCycles;
     const engineCounters = await this.getEngineCounterSnapshot(organizationId, aircraftId);
+    const complianceContext = await this.getComplianceContextByTask(organizationId, aircraftId);
     const now = nowDate();
 
     const rows: DueRow[] = plan.map((item) => {
@@ -310,9 +408,11 @@ export class DueEngineService {
       const primaryDueDimension = worst.method;
       const isApplicable = true;
 
-      const observations = !item.hasRealCompliance && item.controlStartAt
-        ? 'Inicio de control registrado; falta cumplimiento real para ciclo operativo completo.'
-        : null;
+      const context = complianceContext.get(item.taskId);
+      const observations = context?.observations
+        ?? (!item.hasRealCompliance && item.controlStartAt
+          ? 'Inicio de control registrado; falta cumplimiento real para ciclo operativo completo.'
+          : null);
 
       return {
         id: `task-${item.taskId}`,
@@ -320,10 +420,17 @@ export class DueEngineService {
         aircraftRegistration: aircraft.registration,
         sourceType,
         sourceId: item.taskId,
+        taskCode: item.taskCode,
         category: item.referenceType,
         description: item.taskTitle,
-        partNumber: null,
-        serialNumber: null,
+        componentId: context?.componentId ?? null,
+        partNumber: context?.partNumber ?? null,
+        serialNumber: context?.serialNumber ?? null,
+        requiresComponentTracking: item.requiresComponentTracking,
+        equipmentScope: item.equipmentScope,
+        controlStartAt: item.controlStartAt,
+        controlStartHours: item.controlStartHours,
+        hasRealCompliance: item.hasRealCompliance,
         method: worst.method,
         intervalValue: worst.intervalValue,
         intervalUnit: worst.intervalUnit,
@@ -470,10 +577,17 @@ export class DueEngineService {
       aircraftRegistration,
       sourceType: 'ENGINE_COMPONENT',
       sourceId: `counter-${method}`,
+      taskCode: `COUNTER-${method}`,
       category: 'COUNTER',
       description: `Counter ${method}`,
+      componentId: null,
       partNumber: null,
       serialNumber: null,
+      requiresComponentTracking: false,
+      equipmentScope: 'ENGINE' as const,
+      controlStartAt: null,
+      controlStartHours: null,
+      hasRealCompliance: false,
       method,
       intervalValue: null,
       intervalUnit: methodUnit(method),
@@ -647,10 +761,17 @@ export class DueEngineService {
         aircraftRegistration: input.aircraftRegistration,
         sourceType,
         sourceId: instance.id,
+        taskCode: instance.definition.ataCode,
         category: instance.definition.ataCode,
         description: instance.definition.name,
+        componentId: instance.id,
         partNumber: instance.partNumber,
         serialNumber: instance.serialNumber,
+        requiresComponentTracking: true,
+        equipmentScope: isEngine ? 'ENGINE' as const : 'AIRCRAFT' as const,
+        controlStartAt: baseline?.appliedAt ?? null,
+        controlStartHours: baseline ? Number(baseline.aircraftHoursAtApplication) : null,
+        hasRealCompliance: Boolean(real),
         method: worst.method,
         intervalValue: worst.intervalValue,
         intervalUnit: worst.intervalUnit,
