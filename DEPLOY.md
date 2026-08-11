@@ -1,4 +1,4 @@
-# Desplegar Aerocamo — www.aerocamo.cl / app.aerocamo.cl
+# Desplegar Aerocamo — app.aerocamo.cl
 
 Guía para dejar la plataforma en producción, en el nivel gratuito de cada
 servicio: Neon (base de datos), Render (backend) y Vercel (frontend).
@@ -40,7 +40,7 @@ en cada consola — nunca lo pegues en el chat.
    | `NODE_ENV` | `production` |
    | `DATABASE_URL` | la cadena pooled de Neon |
    | `JWT_SECRET` | genera uno nuevo — ver abajo, **no reutilices el de desarrollo** |
-   | `CORS_ORIGIN` | `https://www.aerocamo.cl,https://app.aerocamo.cl` |
+   | `CORS_ORIGIN` | `https://app.aerocamo.cl` — es donde vive la aplicación. Si más adelante agregas una landing con contenido propio en `www` (no un simple redirect), súmala aquí separada por coma. |
    | `EMAIL_FROM_ADDRESS` | p. ej. `noreply@aerocamo.cl` |
    | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | de tu proveedor de correo (opcional al inicio) |
 
@@ -98,17 +98,29 @@ Ya tienes sesión abierta (`earruez-5574`).
 4. Deploy. Vercel te da una URL tipo `aerocamo.vercel.app` — con eso ya puedes
    probar que todo funciona antes de tocar el dominio.
 
-5. **Dominios**: en el proyecto, **Settings → Domains**, agrega
-   `app.aerocamo.cl` y `www.aerocamo.cl`. Vercel te muestra los registros DNS
-   exactos a crear (normalmente un `CNAME` a `cname.vercel-dns.com`).
+5. **Dominio**: en el proyecto, **Settings → Domains**, agrega solo
+   `app.aerocamo.cl`. Vercel te muestra el registro DNS exacto a crear
+   (normalmente un `CNAME` a `cname.vercel-dns.com`).
+
+   `www.aerocamo.cl` queda sin usar por ahora — no hay landing todavía y no
+   vale la pena armar una de relleno. Cuando la haya, se agrega como proyecto
+   aparte o, si mientras tanto solo quieres que `www` no quede muerto, en
+   **Settings → Domains** de este mismo proyecto puedes agregar
+   `www.aerocamo.cl` con la opción **Redirect to** apuntando a
+   `app.aerocamo.cl` — sin código ni proyecto nuevo, un checkbox.
 
 ## 4. DNS — en tu proveedor de dominio (donde compraste aerocamo.cl)
 
-Agrega los registros que Vercel indique en el paso 3.5. Suele ser:
+Agrega el registro que Vercel indique en el paso 3.5:
 
 | Tipo | Nombre | Valor |
 |---|---|---|
 | CNAME | `app` | `cname.vercel-dns.com` |
+
+Si activaste el redirect de `www`, agrega también:
+
+| Tipo | Nombre | Valor |
+|---|---|---|
 | CNAME | `www` | `cname.vercel-dns.com` |
 
 La propagación puede tardar de minutos a un par de horas.
