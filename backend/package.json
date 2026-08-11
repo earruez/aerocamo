@@ -55,7 +55,9 @@
     "seed:counter-types": "tsx prisma/seed_counter_types.ts",
     "prisma:apply:task-counter-limits": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_task_counter_limits.sql",
     "prisma:apply:equipment-counter-slots": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260810_equipment_counter_slots.sql",
-    "import:access:eq-counters": "tsx prisma/import_access_eq_counters.ts"
+    "import:access:eq-counters": "tsx prisma/import_access_eq_counters.ts",
+    "prisma:apply:work-order-access-fields": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260811_work_order_access_fields.sql",
+    "import:access:ot": "tsx prisma/import_access_ot.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",
