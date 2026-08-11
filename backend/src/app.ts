@@ -20,6 +20,7 @@ import { templateLibraryRouter } from './infrastructure/http/controllers/Templat
 import { workOrderFlowRouter } from './infrastructure/http/routes/workOrderFlowRoutes';
 import { workRequestRoutes } from './infrastructure/http/routes/workRequests.routes';
 import { grisselleMroRoutes } from './infrastructure/http/routes/grisselleMro.routes';
+import { platformRoutes } from './infrastructure/http/routes/platform.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -71,6 +72,7 @@ export function createApp(): Application {
   app.use(`${API}/aircraft`,         aircraftRoutes);
   app.use(`${API}/aircraft`,         aircraftHistoryRouter);
   app.use(`${API}`,                  aircraftAlterationRoutes);
+  app.use(`${API}/platform`,         platformRoutes);
   app.use(`${API}`,                  aircraftTaskNoteRoutes);
   app.use(`${API}/catalogs`,         catalogRoutes);
   app.use(`${API}/compliances`,      complianceRoutes);

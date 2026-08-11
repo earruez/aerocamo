@@ -3,6 +3,7 @@ import { useAuthStore } from '@store/authStore';
 import {
   Plane, Wrench, LayoutDashboard, LogOut, Settings,
   ClipboardList, BarChart2, Package, ChevronRight, ClipboardCheck, Bell, FileText, FileCheck2, Repeat, BookOpen,
+  ShieldCheck,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -43,6 +44,13 @@ const NAV_SECTIONS = [
   },
 ];
 
+const PLATFORM_SECTION = {
+  title: 'Plataforma',
+  items: [
+    { to: '/platform', label: 'Empresas y Usuarios', icon: ShieldCheck },
+  ],
+};
+
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard':        'Dashboard de Flota',
   '/aircraft':         'Aeronaves',
@@ -58,6 +66,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/remanentes':       'Remanentes Operacionales',
   '/notificaciones':   'Centro de Notificaciones',
   '/settings':         'Configuración',
+  '/platform':         'Empresas y Usuarios',
 };
 
 function initials(name?: string) {
@@ -236,6 +245,8 @@ export default function AppLayout() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const { notifications, unreadCount, markRead } = useHeaderNotifications();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const navSections = isSuperAdmin ? [PLATFORM_SECTION] : NAV_SECTIONS;
 
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-50">
@@ -259,7 +270,7 @@ export default function AppLayout() {
 
         {/* Nav */}
         <nav className="flex-1 px-2 py-3 space-y-px overflow-y-auto">
-          {NAV_SECTIONS.map((section) => (
+          {navSections.map((section) => (
             <div key={section.title} className="mb-3">
               <p className="px-2.5 pt-1 pb-2 text-[9.5px] font-bold text-slate-600 uppercase tracking-[0.12em]">
                 {section.title}

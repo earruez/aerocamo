@@ -20,7 +20,7 @@ export default function LoginPage() {
     try {
       const result = await authApi.login({ email: form.email, password: form.password, organizationId: form.organization });
       setAuth(result.token, result.user);
-      navigate('/dashboard');
+      navigate(result.user.role === 'SUPER_ADMIN' ? '/platform' : '/dashboard');
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Error al iniciar sesión';
       toast.error(msg);
