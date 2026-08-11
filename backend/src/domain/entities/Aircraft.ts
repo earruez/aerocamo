@@ -22,6 +22,10 @@ export interface Aircraft {
   status: AircraftStatus;
   manufactureDate: Date | null;
   registrationDate: Date | null;
+  /// Propietario registrado
+  owner: string | null;
+  /// Año de fabricación; el Access solo guarda el año
+  yearManufactured: number | null;
   coaExpiryDate: Date | null;
   insuranceExpiryDate: Date | null;
   isActive: boolean;
@@ -42,6 +46,8 @@ export type CreateAircraftInput = Pick<
   | 'totalCycles'
   | 'manufactureDate'
   | 'registrationDate'
+  | 'owner'
+  | 'yearManufactured'
   | 'coaExpiryDate'
   | 'insuranceExpiryDate'
 >;

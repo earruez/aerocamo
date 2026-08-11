@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { AircraftStatusControl } from '../components/aircraft/AircraftStatusControl';
 import { AircraftCountersPanel } from '../components/aircraft/AircraftCountersPanel';
+import { AircraftDetailsCard } from '../components/aircraft/AircraftDetailsCard';
 import { useAuthStore } from '../store/authStore';
 import {
   aircraftApi,
@@ -1171,6 +1172,8 @@ export default function AircraftProfilePage() {
           })}
         </div>
       </div>
+
+      <AircraftDetailsCard aircraft={aircraft} canEdit={canChangeStatus} />
 
       <AircraftCountersPanel
         aircraftId={aircraft.id}

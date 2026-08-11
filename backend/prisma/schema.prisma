@@ -410,6 +410,10 @@ model Aircraft {
   /// Current status — AOG triggers alerts across all open orders
   status             AircraftStatus @default(OPERATIONAL)
 
+  /// Propietario registrado de la aeronave
+  owner              String?       @db.VarChar(180)
+  /// Año de fabricación. El Access solo guarda el año, no la fecha completa.
+  yearManufactured   Int?          @db.SmallInt
   manufactureDate    DateTime?     @db.Date
   registrationDate   DateTime?     @db.Date
 
@@ -596,6 +600,7 @@ model RepairShop {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
   contacts     RepairShopContact[]
+  workOrders   WorkOrder[]
   workRequests WorkRequest[]
 
   @@index([organizationId])
@@ -1174,6 +1179,14 @@ model WorkOrder {
   closedById     String?         @db.Uuid
   closedAt       DateTime?
 
+  /// Taller que ejecutó el trabajo
+  repairShopId   String?         @db.Uuid
+  /// Manuales citados al cerrar; el Access los guarda como texto libre
+  aircraftManualRef String?      @db.VarChar(255)
+  engineManualRef   String?      @db.VarChar(255)
+  /// Certificado de retorno al servicio
+  releaseToServiceNote String?
+
   notes          String?
   isActive       Boolean         @default(true)
   createdAt      DateTime        @default(now())
@@ -1187,6 +1200,7 @@ model WorkOrder {
   inspector            User?           @relation("WOInspector",    fields: [inspectorId],            references: [id])
   evidenceUploadedByUser User?         @relation("WOEvidenceUploadedBy", fields: [evidenceUploadedBy], references: [id])
   closedBy             User?           @relation("WOClosedBy",     fields: [closedById],             references: [id])
+  repairShop           RepairShop?     @relation(fields: [repairShopId], references: [id], onDelete: SetNull)
 
   tasks                WorkOrderTask[]
   discrepancies        Discrepancy[]

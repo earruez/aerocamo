@@ -34,6 +34,8 @@ export interface Aircraft {
   totalFlightHours: number;
   totalCycles: number;
   status: AircraftStatus;
+  owner: string | null;
+  yearManufactured: number | null;
   coaExpiryDate: string | null;
   insuranceExpiryDate: string | null;
 }
@@ -47,6 +49,10 @@ export interface CreateAircraftInput {
   totalCycles?: number;
   engineCount?: number;
   engineModel?: string | null;
+  owner?: string | null;
+  yearManufactured?: number | null;
+  /// ISO date; el vencimiento del certificado de aeronavegabilidad
+  coaExpiryDate?: string | null;
   assignedPlans?: Array<{
     category: 'manufacturer' | 'national_dgac' | 'engine_components' | 'origin_country';
     templateId: string;
@@ -167,6 +173,17 @@ export const aircraftApi = {
       `/aircraft/${id}/engines`,
     );
     return data.data ?? [];
+  },
+
+  /** Edita los datos de ficha de la aeronave. */
+  async update(id: string, input: {
+    owner?: string | null;
+    yearManufactured?: number | null;
+    coaExpiryDate?: string | null;
+    insuranceExpiryDate?: string | null;
+  }): Promise<Aircraft> {
+    const { data } = await apiClient.patch<{ status: string; data: Aircraft }>(`/aircraft/${id}`, input);
+    return data.data;
   },
 
   /** Cambia el estado operacional dejando constancia del motivo. */
