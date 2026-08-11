@@ -2,6 +2,9 @@
   "name": "griselle-frontend",
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "vite --host",
     "build": "tsc && vite build",

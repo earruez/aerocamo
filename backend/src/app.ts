@@ -20,16 +20,20 @@ import { templateLibraryRouter } from './infrastructure/http/controllers/Templat
 import { workOrderFlowRouter } from './infrastructure/http/routes/workOrderFlowRoutes';
 import { workRequestRoutes } from './infrastructure/http/routes/workRequests.routes';
 import { grisselleMroRoutes } from './infrastructure/http/routes/grisselleMro.routes';
+import { platformRoutes } from './infrastructure/http/routes/platform.routes';
 
 export function createApp(): Application {
   const app = express();
 
   app.use(helmet());
+  // CORS_ORIGIN admite varios orígenes separados por coma: www y app viven en
+  // subdominios distintos y ambos necesitan llamar a esta misma API.
+  const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
   app.use(cors({
     origin: (origin, cb) => {
       // Allow requests with no origin (curl, Postman) or any localhost port in dev
       if (!origin || /^https?:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
-      if (origin === env.CORS_ORIGIN) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
       cb(new Error('Not allowed by CORS'));
     },
     credentials: true,
@@ -68,6 +72,7 @@ export function createApp(): Application {
   app.use(`${API}/aircraft`,         aircraftRoutes);
   app.use(`${API}/aircraft`,         aircraftHistoryRouter);
   app.use(`${API}`,                  aircraftAlterationRoutes);
+  app.use(`${API}/platform`,         platformRoutes);
   app.use(`${API}`,                  aircraftTaskNoteRoutes);
   app.use(`${API}/catalogs`,         catalogRoutes);
   app.use(`${API}/compliances`,      complianceRoutes);

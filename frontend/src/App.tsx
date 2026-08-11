@@ -19,11 +19,22 @@ import AircraftAlterationsPage from '@pages/AircraftAlterationsPage';
 import ConformitiesPage from '@pages/ConformitiesPage';
 import AircraftProfilePage from '@pages/AircraftProfilePage';
 import RemanentesPage from '@pages/RemanentesPage';
+import PlatformPage from '@pages/PlatformPage';
 import AppLayout from '@components/layout/AppLayout';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
   return token ? <>{children}</> : <Navigate to="/login" replace />;
+}
+
+function SuperAdminRoute({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore((s) => s.user);
+  return user?.role === 'SUPER_ADMIN' ? <>{children}</> : <Navigate to="/dashboard" replace />;
+}
+
+function HomeRedirect() {
+  const user = useAuthStore((s) => s.user);
+  return <Navigate to={user?.role === 'SUPER_ADMIN' ? '/platform' : '/dashboard'} replace />;
 }
 
 /** Validates the stored session against the DB on every app load.
@@ -48,7 +59,8 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route element={<PrivateRoute><AppLayout /></PrivateRoute>}>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/" element={<HomeRedirect />} />
+          <Route path="/platform" element={<SuperAdminRoute><PlatformPage /></SuperAdminRoute>} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/aircraft" element={<AircraftPage />} />
           <Route path="/aircraft/:id" element={<AircraftProfilePage />} />

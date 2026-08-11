@@ -269,6 +269,9 @@ enum UserRole {
   TECHNICIAN        // Perform and record maintenance work
   INSPECTOR         // Independent inspection sign-off (RII)
   READONLY          // View-only (auditors, clients)
+  /// Platform-level: creates organizations and their users. Never scoped to a
+  /// customer tenant; lives in an internal platform organization.
+  SUPER_ADMIN
 
   @@map("user_role")
 }
