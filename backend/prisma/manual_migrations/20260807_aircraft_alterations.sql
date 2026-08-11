@@ -49,8 +49,4 @@ CREATE INDEX IF NOT EXISTS aircraft_alterations_aircraft_idx
 CREATE INDEX IF NOT EXISTS aircraft_alterations_organization_idx
   ON aircraft_alterations ("organizationId");
 
--- Evita duplicar la misma alteración al reimportar desde Access
-CREATE UNIQUE INDEX IF NOT EXISTS aircraft_alterations_aircraft_document_uq
-  ON aircraft_alterations ("aircraftId", "documentNumber");
-
 COMMIT;

@@ -10,6 +10,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   JWT_EXPIRES_IN: z.string().default('7d'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  /// Uno o más orígenes separados por coma (p. ej. www.aerocamo.cl,app.aerocamo.cl)
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   
   // Email configuration
