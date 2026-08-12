@@ -102,7 +102,7 @@ export default function SettingsPage() {
         <div className="flex items-start gap-3">
           <Info size={18} className="text-brand-500 mt-0.5 shrink-0" />
           <div>
-            <p className="text-sm font-medium text-slate-800">Griselle · Gestión de Mantenimiento Aeronáutico</p>
+            <p className="text-sm font-medium text-slate-800">Aerocamo · Gestión de Mantenimiento Aeronáutico</p>
             <p className="text-xs text-slate-500 mt-0.5">Versión 1.0.0 · Plataforma SaaS</p>
           </div>
         </div>
