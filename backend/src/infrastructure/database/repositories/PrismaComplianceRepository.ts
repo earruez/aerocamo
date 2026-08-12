@@ -58,7 +58,7 @@ export class PrismaComplianceRepository implements IComplianceRepository {
     const rows = await prisma.compliance.findMany({
       where: { id: { in: latestIds.map((r) => r.id) } },
       include: {
-        task: { select: { code: true, title: true, description: true, referenceType: true, referenceNumber: true } },
+        task: { select: { code: true, ata: true, title: true, description: true, referenceType: true, referenceNumber: true } },
         component: { select: { id: true, partNumber: true, serialNumber: true } },
         inspectedBy: { select: { id: true, name: true } },
       },

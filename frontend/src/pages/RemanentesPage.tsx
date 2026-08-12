@@ -72,6 +72,15 @@ function getOperationalDimension(row: DueRow): DueMethod | null {
   return row.activeDimension ?? row.primaryDueDimension ?? null;
 }
 
+/** Remanente de un motor específico (N1/N2), aparte del "peor caso" que ya muestra la columna Remanente. */
+function fmtEngineRemaining(row: DueRow, method: 'N1' | 'N2'): string {
+  const dim = row.dimensions.find((d) => d.method === method);
+  if (!dim || dim.remainingValue == null) return '—';
+  const unit = dim.remainingUnit ? ` ${dim.remainingUnit}` : '';
+  if (dim.remainingValue < 0) return `${Math.abs(dim.remainingValue)}${unit} vencido`;
+  return `${dim.remainingValue}${unit}`;
+}
+
 function statusLabel(status: DueStatus): string {
   if (status === 'NO_CONTEXT') return 'Sin contexto';
   if (status === 'NOT_APPLICABLE') return 'No aplica';
@@ -372,6 +381,7 @@ export default function RemanentesPage() {
               <tr>
                 <th className="table-header sticky left-0 z-10 bg-slate-50 w-[84px] min-w-[84px]">Tipo</th>
                 <th className="table-header sticky left-[84px] z-10 bg-slate-50 w-[260px] min-w-[260px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">Descripción</th>
+                <th className="table-header">ATA</th>
                 <th className="table-header">P/N</th>
                 <th className="table-header">S/N</th>
                 <th className="table-header">DIM</th>
@@ -380,6 +390,8 @@ export default function RemanentesPage() {
                 <th className="table-header">Último cumplimiento</th>
                 <th className="table-header">Próximo</th>
                 <th className="table-header">Remanente</th>
+                <th className="table-header">N1 REM</th>
+                <th className="table-header">N2 REM</th>
                 <th className="table-header">Estado</th>
                 <th className="table-header">Obs./Ref.</th>
                 <th className="table-header">OT/ST</th>
@@ -388,13 +400,14 @@ export default function RemanentesPage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {isLoading ? (
-                <tr><td className="table-cell" colSpan={14}>Cargando...</td></tr>
+                <tr><td className="table-cell" colSpan={17}>Cargando...</td></tr>
               ) : visibleRows.length === 0 ? (
-                <tr><td className="table-cell" colSpan={14}>{MISSING_OPERATIONAL_CONTEXT_LABEL}</td></tr>
+                <tr><td className="table-cell" colSpan={17}>{MISSING_OPERATIONAL_CONTEXT_LABEL}</td></tr>
               ) : visibleRows.map((row: DueRow) => (
                 <tr key={row.id} className="group hover:bg-slate-50">
                   <td className="table-cell sticky left-0 z-10 bg-white group-hover:bg-slate-50 w-[84px] min-w-[84px]">{row.sourceType}</td>
                   <td className="table-cell sticky left-[84px] z-10 bg-white group-hover:bg-slate-50 w-[260px] min-w-[260px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">{row.description}</td>
+                  <td className="table-cell font-mono">{row.ata ?? '—'}</td>
                   <td className="table-cell font-mono">{row.partNumber ?? '—'}</td>
                   <td className="table-cell font-mono">{row.serialNumber ?? '—'}</td>
                   <td className="table-cell font-semibold">{getOperationalDimension(row) ?? MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
@@ -403,6 +416,8 @@ export default function RemanentesPage() {
                   <td className="table-cell">{row.lastComplianceDate ? `${fmtDate(row.lastComplianceDate)} · ${fmtNumber(row.lastComplianceValue)}` : MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
                   <td className="table-cell">{row.nextDueDate ? fmtDate(row.nextDueDate) : row.nextDueValue != null ? fmtNumber(row.nextDueValue) : MISSING_OPERATIONAL_CONTEXT_LABEL}</td>
                   <td className="table-cell">{fmtRemainingValue(row)}</td>
+                  <td className="table-cell tabular-nums">{fmtEngineRemaining(row, 'N1')}</td>
+                  <td className="table-cell tabular-nums">{fmtEngineRemaining(row, 'N2')}</td>
                   <td className="table-cell">
                     <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusClass[row.status]}`}>
                       {statusLabel(row.status)}

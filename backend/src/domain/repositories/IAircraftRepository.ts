@@ -10,6 +10,7 @@ export interface MaintenancePlanItem {
   taskId: string;
   taskCode: string;
   taskTitle: string;
+  taskAta: string | null;
   executionType: MaintenanceExecutionType;
   requiresComponentTracking: boolean;
   equipmentScope: 'AIRCRAFT' | 'ENGINE';

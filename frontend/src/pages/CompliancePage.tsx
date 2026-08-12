@@ -62,7 +62,7 @@ export default function CompliancePage() {
     const q = search.trim().toLowerCase();
     if (!q) return byTab;
     return byTab.filter((c) => [
-      c.task?.code, c.task?.title, c.task?.description, c.task?.referenceType, c.task?.referenceNumber,
+      c.task?.code, c.task?.ata, c.task?.title, c.task?.description, c.task?.referenceType, c.task?.referenceNumber,
       c.component?.partNumber, c.component?.serialNumber, c.workOrderNumber, c.inspectedBy?.name,
     ].some((field) => field?.toLowerCase().includes(q)));
   }, [records, complianceTab, search]);
@@ -158,6 +158,7 @@ export default function CompliancePage() {
               <tr>
                 <th className="table-header sticky left-0 z-10 bg-slate-50 w-[240px] min-w-[240px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">Tarea</th>
                 <th className="table-header">Ref. regulatoria</th>
+                <th className="table-header">ATA</th>
                 <th className="table-header">P/N</th>
                 <th className="table-header">S/N</th>
                 <th className="table-header">Último cumplimiento</th>
@@ -171,10 +172,10 @@ export default function CompliancePage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {isLoading && (
-                <tr><td colSpan={11} className="table-cell text-center text-slate-400 py-12">Cargando…</td></tr>
+                <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-12">Cargando…</td></tr>
               )}
               {!isLoading && filteredRecords.length === 0 && (
-                <tr><td colSpan={11} className="table-cell text-center text-slate-400 py-12">
+                <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-12">
                   {search ? 'Sin resultados para esa búsqueda' : 'No hay registros de cumplimiento para esta aeronave'}
                 </td></tr>
               )}
@@ -202,6 +203,7 @@ export default function CompliancePage() {
                           : `${c.task.referenceType} ${c.task.referenceNumber ?? ''}`.trim()
                         : '—'}
                     </td>
+                    <td className="table-cell text-xs font-mono text-slate-500">{c.task?.ata ?? '—'}</td>
                     <td className="table-cell text-xs font-mono text-slate-500">{c.component?.partNumber ?? '—'}</td>
                     <td className="table-cell text-xs font-mono text-slate-500">{c.component?.serialNumber ?? '—'}</td>
                     <td className="table-cell text-xs text-slate-500">

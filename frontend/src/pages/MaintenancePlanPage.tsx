@@ -503,6 +503,7 @@ function AssignTaskModal({
 // ─── Modal 3: Create / Edit task definition ───────────────────────────────────
 type TaskFormState = {
   code: string;
+  ata: string;
   title: string;
   description: string;
   maintenanceType: MaintenanceType;
@@ -523,7 +524,7 @@ type TaskFormState = {
 
 function blankForm(): TaskFormState {
   return {
-    code: '', title: '', description: '', maintenanceType: 'HORARIO', intervalType: 'FLIGHT_HOURS',
+    code: '', ata: '', title: '', description: '', maintenanceType: 'HORARIO', intervalType: 'FLIGHT_HOURS',
     intervalHours: '', intervalCycles: '', intervalCalendarDays: '', intervalCalendarMonths: '',
     toleranceHours: '', toleranceCycles: '', toleranceCalendarDays: '',
     referenceType: 'AMM', referenceNumber: '',
@@ -534,6 +535,7 @@ function blankForm(): TaskFormState {
 function taskToForm(task: TaskDefinition): TaskFormState {
   return {
     code: task.code,
+    ata: task.ata ?? '',
     title: task.title,
     description: task.description,
     maintenanceType: classifyMaintenanceType(task),
@@ -563,6 +565,7 @@ function formToInput(f: TaskFormState): CreateTaskInput {
 
   return {
     code: f.code.trim().toUpperCase(),
+    ata: f.ata.trim() || null,
     title: f.title.trim(),
     description: f.description.trim(),
     intervalType,
@@ -693,7 +696,11 @@ function CreateEditTaskModal({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
+            <F label="ATA">
+              <input value={form.ata} onChange={e => set('ata', e.target.value)}
+                placeholder="05-10-01" className="input font-mono" />
+            </F>
             <F label="Tipo de referencia">
               <select value={form.referenceType} onChange={e => set('referenceType', e.target.value)} className="input">
                 {REFERENCE_TYPES.map(r => <option key={r} value={r}>{r}</option>)}
