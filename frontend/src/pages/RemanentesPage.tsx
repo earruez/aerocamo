@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { saveAs } from 'file-saver';
+import toast from 'react-hot-toast';
+import { FileDown } from 'lucide-react';
 import { aircraftApi } from '@api/aircraft.api';
 import { dueApi, type DueMethod, type DueRow, type DueSourceType, type DueStatus } from '@api/due.api';
 import { MISSING_OPERATIONAL_CONTEXT_LABEL } from '@/shared/operationalContext';
@@ -77,6 +80,7 @@ export default function RemanentesPage() {
   const [aircraftId, setAircraftId] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<DueStatus | null>(null);
   const [dimensionFilter, setDimensionFilter] = useState<'ALL' | DueMethod>('ALL');
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   const { data: aircraft = [] } = useQuery({
     queryKey: ['aircraft'],
@@ -145,13 +149,43 @@ export default function RemanentesPage() {
     console.info('[Remanentes] Historial stub', row.id);
   };
 
+  const selectedAircraft = aircraft.find((a) => a.id === selectedAircraftId);
+
+  const handleDownloadPdf = async () => {
+    if (!selectedAircraftId) return;
+    setDownloadingPdf(true);
+    try {
+      const blob = await dueApi.downloadReportPdf(selectedAircraftId);
+      saveAs(blob, `Remanentes-${selectedAircraft?.registration ?? selectedAircraftId}.pdf`);
+    } catch {
+      toast.error('No se pudo generar el informe PDF');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
   const totalRowsCount = summary?.totalRows ?? visibleRows.length;
 
   return (
     <div className="p-6 lg:p-8 space-y-6 max-w-[96rem] mx-auto">
       <div className="bg-white border border-slate-200 rounded-2xl p-5 lg:p-6 shadow-sm space-y-3">
-        <h1 className="text-2xl font-bold text-slate-900">Remanentes Operacionales</h1>
-        <p className="text-sm text-slate-600">Vista equivalencia Access impulsada por Due Engine backend (sin cálculos frontend).</p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Remanentes Operacionales</h1>
+            <p className="text-sm text-slate-600 mt-1">
+              Calculado automáticamente a partir de las horas, ciclos y cumplimientos registrados de la aeronave.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={!selectedAircraftId || downloadingPdf}
+            className="btn-secondary flex items-center gap-1.5 shrink-0"
+          >
+            <FileDown size={15} />
+            {downloadingPdf ? 'Generando…' : 'Descargar informe PDF'}
+          </button>
+        </div>
         <div className="max-w-sm">
           <label className="form-label">Aeronave</label>
           <select className="input w-full" value={selectedAircraftId} onChange={(e) => setAircraftId(e.target.value)}>
@@ -215,12 +249,16 @@ export default function RemanentesPage() {
           })}
         </div>
 
-        <div className="overflow-x-auto">
+        <div
+          className="overflow-x-auto [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-track]:bg-slate-100
+          [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full
+          [&::-webkit-scrollbar-thumb:hover]:bg-slate-500"
+        >
           <table className="min-w-full text-xs">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="table-header">Tipo</th>
-                <th className="table-header">Descripción</th>
+                <th className="table-header sticky left-0 z-10 bg-slate-50 w-[84px] min-w-[84px]">Tipo</th>
+                <th className="table-header sticky left-[84px] z-10 bg-slate-50 w-[260px] min-w-[260px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">Descripción</th>
                 <th className="table-header">P/N</th>
                 <th className="table-header">S/N</th>
                 <th className="table-header">DIM</th>
@@ -241,9 +279,9 @@ export default function RemanentesPage() {
               ) : visibleRows.length === 0 ? (
                 <tr><td className="table-cell" colSpan={14}>{MISSING_OPERATIONAL_CONTEXT_LABEL}</td></tr>
               ) : visibleRows.map((row: DueRow) => (
-                <tr key={row.id} className="hover:bg-slate-50">
-                  <td className="table-cell">{row.sourceType}</td>
-                  <td className="table-cell">{row.description}</td>
+                <tr key={row.id} className="group hover:bg-slate-50">
+                  <td className="table-cell sticky left-0 z-10 bg-white group-hover:bg-slate-50 w-[84px] min-w-[84px]">{row.sourceType}</td>
+                  <td className="table-cell sticky left-[84px] z-10 bg-white group-hover:bg-slate-50 w-[260px] min-w-[260px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">{row.description}</td>
                   <td className="table-cell font-mono">{row.partNumber ?? '—'}</td>
                   <td className="table-cell font-mono">{row.serialNumber ?? '—'}</td>
                   <td className="table-cell font-semibold">{getOperationalDimension(row) ?? MISSING_OPERATIONAL_CONTEXT_LABEL}</td>

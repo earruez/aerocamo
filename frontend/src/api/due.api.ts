@@ -106,4 +106,10 @@ export const dueApi = {
     const { data } = await apiClient.get<{ status: string; data: DueReportData }>(`/aircraft/${aircraftId}/due-report-data`);
     return data.data;
   },
+
+  /** Descarga el PDF del informe de remanentes generado por el servidor. */
+  async downloadReportPdf(aircraftId: string): Promise<Blob> {
+    const { data } = await apiClient.get(`/aircraft/${aircraftId}/due-report.pdf`, { responseType: 'blob' });
+    return data;
+  },
 };

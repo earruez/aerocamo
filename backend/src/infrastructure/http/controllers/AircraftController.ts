@@ -11,6 +11,7 @@ import { BaselineComplianceService } from '../../../domain/services/BaselineComp
 import { aircraftUsageService } from '../../../domain/services/AircraftUsageService';
 import { TemplateCloneService } from '../../../domain/services/TemplateCloneService';
 import { dueEngineService } from '../../../domain/services/DueEngineService';
+import { RemanentesDocumentService } from '../../../domain/services/RemanentesDocumentService';
 import { prisma } from '../../database/prisma.client';
 import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
 
@@ -550,6 +551,16 @@ export class AircraftController {
     try {
       const report = await dueEngineService.getDueReportData(req.organizationId, req.params.id);
       res.status(200).json({ status: 'success', data: report });
+    } catch (err) { next(err); }
+  };
+
+  getDueReportPdf = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const report = await dueEngineService.getDueReportData(req.organizationId, req.params.id);
+      const pdf = await RemanentesDocumentService.renderPdf(req.organizationId, report);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="Remanentes-${report.aircraft.registration}.pdf"`);
+      res.send(pdf);
     } catch (err) { next(err); }
   };
 }
