@@ -20,6 +20,7 @@ export interface Compliance {
   deferralExpiresAt: string | null;
   task?: {
     code: string;
+    ata: string | null;
     title: string;
     description: string;
     referenceType: string | null;

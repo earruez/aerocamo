@@ -353,6 +353,7 @@ export class PrismaAircraftRepository implements IAircraftRepository {
         taskId:              task.id,
         taskCode:            task.code,
         taskTitle:           task.title,
+        taskAta:             task.ata ?? null,
         executionType,
         requiresComponentTracking,
         isComponentControl,

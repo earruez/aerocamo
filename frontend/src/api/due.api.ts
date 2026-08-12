@@ -31,6 +31,7 @@ export interface DueRow {
   sourceType: DueSourceType;
   sourceId: string;
   taskCode: string;
+  ata: string | null;
   category: string;
   description: string;
   componentId: string | null;

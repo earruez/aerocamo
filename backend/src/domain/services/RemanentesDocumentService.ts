@@ -67,6 +67,14 @@ function fmtRemaining(row: DueRow): string {
   return `${fmtNumber(row.remainingValue)}${unit}`;
 }
 
+function fmtEngineRemaining(row: DueRow, method: 'N1' | 'N2'): string {
+  const dim = row.dimensions.find((d) => d.method === method);
+  if (!dim || dim.remainingValue == null) return '—';
+  const unit = dim.remainingUnit ? ` ${dim.remainingUnit}` : '';
+  if (dim.remainingValue < 0) return `${fmtNumber(Math.abs(dim.remainingValue))}${unit} vencido`;
+  return `${fmtNumber(dim.remainingValue)}${unit}`;
+}
+
 type Doc = PDFKit.PDFDocument;
 
 type DueReportData = Awaited<ReturnType<typeof dueEngineService.getDueReportData>>;
@@ -161,14 +169,17 @@ export class RemanentesDocumentService {
   private static tableHeader(doc: Doc, y: number): number {
     doc.rect(MARGIN, y, CONTENT_WIDTH, 16).fill(BAND);
     doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(7);
-    doc.text('TIPO', MARGIN + 6, y + 5, { width: 84 });
-    doc.text('DESCRIPCIÓN', MARGIN + 92, y + 5, { width: 296 });
-    doc.text('P/N', MARGIN + 392, y + 5, { width: 70 });
-    doc.text('MÉTODO', MARGIN + 466, y + 5, { width: 44 });
-    doc.text('INTERVALO', MARGIN + 514, y + 5, { width: 66 });
-    doc.text('PRÓXIMO', MARGIN + 584, y + 5, { width: 66 });
-    doc.text('REMANENTE', MARGIN + 654, y + 5, { width: 84 });
-    doc.text('ESTADO', MARGIN + 742, y + 5, { width: 60 });
+    doc.text('TIPO', MARGIN + 6, y + 5, { width: 68 });
+    doc.text('ATA', MARGIN + 78, y + 5, { width: 48 });
+    doc.text('DESCRIPCIÓN', MARGIN + 132, y + 5, { width: 188 });
+    doc.text('P/N', MARGIN + 326, y + 5, { width: 54 });
+    doc.text('MÉTODO', MARGIN + 386, y + 5, { width: 34 });
+    doc.text('INTERVALO', MARGIN + 426, y + 5, { width: 52 });
+    doc.text('PRÓXIMO', MARGIN + 484, y + 5, { width: 52 });
+    doc.text('REMANENTE', MARGIN + 542, y + 5, { width: 60 });
+    doc.text('N1 REM', MARGIN + 608, y + 5, { width: 46 });
+    doc.text('N2 REM', MARGIN + 660, y + 5, { width: 46 });
+    doc.text('ESTADO', MARGIN + 712, y + 5, { width: 48 });
     doc.fillColor(INK);
     return y + 20;
   }
@@ -196,20 +207,23 @@ export class RemanentesDocumentService {
       y = this.tableHeader(doc, y);
 
       for (const row of group.items) {
-        const descHeight = doc.font('Helvetica').fontSize(7.5).heightOfString(row.description, { width: 296 });
+        const descHeight = doc.font('Helvetica').fontSize(7.5).heightOfString(row.description, { width: 188 });
         const rowHeight = Math.max(descHeight, 10) + 6;
         y = this.ensureSpace(doc, y, rowHeight, true);
 
-        doc.fillColor(INK).font('Helvetica').fontSize(7).text(row.sourceType, MARGIN + 6, y, { width: 84 });
-        doc.fontSize(7.5).text(row.description, MARGIN + 92, y, { width: 296 });
+        doc.fillColor(INK).font('Helvetica').fontSize(7).text(row.sourceType, MARGIN + 6, y, { width: 68 });
+        doc.fillColor(MUTED).text(row.ata ?? '—', MARGIN + 78, y, { width: 48 });
+        doc.fillColor(INK).fontSize(7.5).text(row.description, MARGIN + 132, y, { width: 188 });
         doc.font('Helvetica').fontSize(7).fillColor(MUTED)
-          .text(row.partNumber ?? '—', MARGIN + 392, y, { width: 70 });
-        doc.text(row.method, MARGIN + 466, y, { width: 44 });
-        doc.text(fmtInterval(row), MARGIN + 514, y, { width: 66 });
-        doc.text(fmtNext(row), MARGIN + 584, y, { width: 66 });
-        doc.text(fmtRemaining(row), MARGIN + 654, y, { width: 84 });
+          .text(row.partNumber ?? '—', MARGIN + 326, y, { width: 54 });
+        doc.text(row.method, MARGIN + 386, y, { width: 34 });
+        doc.text(fmtInterval(row), MARGIN + 426, y, { width: 52 });
+        doc.text(fmtNext(row), MARGIN + 484, y, { width: 52 });
+        doc.text(fmtRemaining(row), MARGIN + 542, y, { width: 60 });
+        doc.text(fmtEngineRemaining(row, 'N1'), MARGIN + 608, y, { width: 46 });
+        doc.text(fmtEngineRemaining(row, 'N2'), MARGIN + 660, y, { width: 46 });
         doc.fillColor(STATUS_COLOR[row.status]).font('Helvetica-Bold')
-          .text(STATUS_LABELS[row.status], MARGIN + 742, y, { width: 60 });
+          .text(STATUS_LABELS[row.status], MARGIN + 712, y, { width: 48 });
 
         doc.fillColor(INK);
         y += rowHeight;

@@ -2,6 +2,7 @@ import { apiClient } from './client';
 
 export interface CreateTaskInput {
   code: string;
+  ata?: string | null;
   title: string;
   description: string;
   intervalType: string;
@@ -27,6 +28,7 @@ export interface TaskDefinition {
   id: string;
   organizationId: string;
   code: string;
+  ata: string | null;
   title: string;
   description: string;
   intervalType: string;

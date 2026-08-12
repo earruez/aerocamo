@@ -43,6 +43,7 @@ export interface DueRow {
   sourceType: DueSourceType;
   sourceId: string;
   taskCode: string;
+  ata: string | null;
   category: string;
   description: string;
   componentId: string | null;
@@ -421,6 +422,7 @@ export class DueEngineService {
         sourceType,
         sourceId: item.taskId,
         taskCode: item.taskCode,
+        ata: item.taskAta,
         category: item.referenceType,
         description: item.taskTitle,
         componentId: context?.componentId ?? null,
@@ -578,6 +580,7 @@ export class DueEngineService {
       sourceType: 'ENGINE_COMPONENT',
       sourceId: `counter-${method}`,
       taskCode: `COUNTER-${method}`,
+      ata: null,
       category: 'COUNTER',
       description: `Counter ${method}`,
       componentId: null,
@@ -762,6 +765,7 @@ export class DueEngineService {
         sourceType,
         sourceId: instance.id,
         taskCode: instance.definition.ataCode,
+        ata: instance.definition.ataCode,
         category: instance.definition.ataCode,
         description: instance.definition.name,
         componentId: instance.id,

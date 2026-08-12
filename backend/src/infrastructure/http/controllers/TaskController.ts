@@ -9,6 +9,7 @@ const REFERENCE_TYPES = ['AMM','AD','SB','CMR','CDCCL','MPD','ETOPS','INTERNAL']
 
 const createSchema = z.object({
   code:                  z.string().min(1).max(100).toUpperCase(),
+  ata:                   z.string().trim().max(20).optional().nullable(),
   title:                 z.string().min(1).max(255),
   description:           z.string().min(1),
   intervalType:          z.enum(INTERVAL_TYPES),

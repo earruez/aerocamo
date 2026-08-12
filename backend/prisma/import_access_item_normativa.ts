@@ -31,6 +31,12 @@ const CSV_DIR = path.resolve(getArgValue('--csv-dir') ?? path.join(__dirname, '.
 const ORG_ID = getArgValue('--org-id') ?? process.env.DEFAULT_ORG_ID ?? '';
 const APPLY = args.includes('--apply');
 const USER_ID_ARG = getArgValue('--user-id');
+// Backfill seguro para tareas ya importadas antes de que existiera la columna `ata`:
+// reusa el mismo agrupamiento/parsing (cero riesgo de que el código quede distinto),
+// pero solo toca la columna ata — nada de compliances, links, ni el resto de taskData,
+// así que no puede duplicar ni pisar ediciones manuales hechas después del import.
+const ATA_ONLY = args.includes('--ata-only');
+let ataOnlyUpdated = 0;
 
 const IMPORT_MARKER = '[IMPORT ACCESS ITEM]';
 
@@ -507,7 +513,11 @@ async function main(): Promise<void> {
       intervalCalendarDays: null as number | null,
       intervalCalendarMonths: representative.limt != null ? Math.round(representative.limt) : null,
       referenceType: DOMAIN_REFERENCE_TYPE[group.domain],
+      // referenceNumber sigue llevando el ATA por compatibilidad con lo ya importado
+      // (no había un campo dedicado cuando se escribió este import); ahora ata sí
+      // lo tiene, así que ambos quedan poblados con el mismo valor.
       referenceNumber: group.ata ? truncate(group.ata, 100) : null,
+      ata: group.ata ? truncate(group.ata, 20) : null,
       isMandatory,
       requiresInspection,
       isComponentControl: group.domain === 'COMP',
@@ -517,6 +527,15 @@ async function main(): Promise<void> {
     };
 
     let taskId: string | null = null;
+
+    if (APPLY && ATA_ONLY) {
+      const result = await prisma.maintenanceTask.updateMany({
+        where: { code: group.code, organizationId: ORG_ID, ata: null },
+        data: { ata: taskData.ata },
+      });
+      ataOnlyUpdated += result.count;
+      continue; // no toca compliances, links ni el resto de taskData
+    }
 
     if (APPLY) {
       const existing = await prisma.maintenanceTask.findUnique({
@@ -814,8 +833,12 @@ async function main(): Promise<void> {
   console.log(`Componentes: vinculados=${summary.components.linked} iniciosDeControl=${summary.components.baselinesToCreate} sinMatch=${summary.components.unmatched}`);
   console.log(`Límites por contador creados: ${summary.counterLimitsCreated}`);
   console.log(`Conflictos de intervalo: ${summary.conflicts.length} (ver item-normativa-report.json)`);
-  if (APPLY) {
+  if (APPLY && ATA_ONLY) {
+    console.log(`--ata-only: ${ataOnlyUpdated} tareas actualizadas (solo columna ata, donde estaba en null). Nada más se tocó.`);
+  } else if (APPLY) {
     console.log(`Aplicado: tareas +${summary.applied.tasksCreated} / ~${summary.applied.tasksUpdated}, links ${summary.applied.linksUpserted}, cumplimientos ${summary.applied.compliancesCreated}, iniciosDeControl ${summary.applied.componentBaselinesCreated}, instalacionesRespaldadas ${summary.applied.installationsBackfilled}`);
+  } else if (ATA_ONLY) {
+    console.log(`Dry-run (--ata-only): se actualizarían hasta ${summary.taskGroups} tareas. Ejecuta con --apply --ata-only para aplicar.`);
   } else {
     console.log('Dry-run: no se escribió nada. Ejecuta con --apply para persistir.');
   }
