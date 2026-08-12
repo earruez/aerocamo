@@ -32,17 +32,19 @@ export class PrismaComplianceRepository implements IComplianceRepository {
         component: { select: { id: true, partNumber: true, serialNumber: true } },
       },
     });
-    return rows as unknown as Compliance[];
+    return rows.map((r) => this.toEntityWithRelations(r));
   }
 
   async findLatestPerTask(
     aircraftId: string,
     organizationId: string,
   ): Promise<Compliance[]> {
-    // Prisma raw query — PostgreSQL DISTINCT ON is the correct aeronautical query pattern
-    const rows = await prisma.$queryRaw<Array<Record<string, unknown>>>(
+    // Prisma raw query — PostgreSQL DISTINCT ON is the correct aeronautical query pattern.
+    // It only resolves *which* row is the latest per task; the relations (task, component,
+    // inspector) are hydrated below via a normal Prisma query, since $queryRaw can't `include`.
+    const latestIds = await prisma.$queryRaw<Array<{ id: string }>>(
       Prisma.sql`
-        SELECT DISTINCT ON ("taskId") *
+        SELECT DISTINCT ON ("taskId") id
         FROM compliances
         WHERE "aircraftId" = ${aircraftId}::uuid
           AND "organizationId" = ${organizationId}::uuid
@@ -51,7 +53,22 @@ export class PrismaComplianceRepository implements IComplianceRepository {
           "performedAt" DESC
       `,
     );
-    return rows.map(this.toEntity);
+    if (latestIds.length === 0) return [];
+
+    const rows = await prisma.compliance.findMany({
+      where: { id: { in: latestIds.map((r) => r.id) } },
+      include: {
+        task: { select: { code: true, title: true, description: true, referenceType: true, referenceNumber: true } },
+        component: { select: { id: true, partNumber: true, serialNumber: true } },
+        inspectedBy: { select: { id: true, name: true } },
+      },
+    });
+
+    // findMany doesn't preserve the `in` array order — re-sort to match the DISTINCT ON result.
+    const order = new Map(latestIds.map((r, i) => [r.id, i]));
+    rows.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+
+    return rows.map((r) => this.toEntityWithRelations(r));
   }
 
   async findAll(
@@ -112,6 +129,16 @@ export class PrismaComplianceRepository implements IComplianceRepository {
       deferralExpiresAt: r.deferralExpiresAt as Date | null,
       notes: r.notes as string | null,
       createdAt: r.createdAt as Date,
+    };
+  }
+
+  /** Same numeric normalization as toEntity, plus whatever relations were `include`d. */
+  private toEntityWithRelations(r: Record<string, unknown>): Compliance {
+    return {
+      ...this.toEntity(r),
+      task: (r.task as Compliance['task']) ?? null,
+      component: (r.component as Compliance['component']) ?? null,
+      inspectedBy: (r.inspectedBy as Compliance['inspectedBy']) ?? null,
     };
   }
 }

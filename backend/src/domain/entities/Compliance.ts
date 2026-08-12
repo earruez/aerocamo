@@ -23,6 +23,10 @@ export interface Compliance {
   deferralExpiresAt: Date | null;
   notes: string | null;
   createdAt: Date;
+  /** Hydrated by repositories that join the task (not present on bare `create()` results). */
+  task?: { code: string; title: string; description: string; referenceType: string | null; referenceNumber: string | null } | null;
+  component?: { id: string; partNumber: string; serialNumber: string } | null;
+  inspectedBy?: { id: string; name: string } | null;
 }
 
 export type CreateComplianceInput = Pick<

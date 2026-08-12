@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { aircraftApi } from '@api/aircraft.api';
 import { complianceApi, type Compliance } from '@api/compliance.api';
-import { Wrench, ChevronDown } from 'lucide-react';
+import { Wrench, ChevronDown, Search } from 'lucide-react';
 import {
   hasOperationalDueContext,
   MISSING_OPERATIONAL_CONTEXT_BADGE_CLASS,
@@ -43,6 +43,7 @@ function dueBadge(c: Compliance): { label: string; cls: string } {
 export default function CompliancePage() {
   const [selectedAircraftId, setSelectedAircraftId] = useState<string>('');
   const [complianceTab, setComplianceTab] = useState<'ALL' | 'COMPONENT' | 'GENERAL'>('ALL');
+  const [search, setSearch] = useState('');
   const { data: aircraft = [] } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
   const { data: records = [], isLoading } = useQuery({
     queryKey: ['compliance', 'latest', selectedAircraftId],
@@ -51,12 +52,20 @@ export default function CompliancePage() {
   });
 
   const filteredRecords = useMemo(() => {
-    if (complianceTab === 'ALL') return records;
-    return records.filter((record) => {
-      const isComponentRecord = Boolean(record.componentId);
-      return complianceTab === 'COMPONENT' ? isComponentRecord : !isComponentRecord;
-    });
-  }, [records, complianceTab]);
+    const byTab = complianceTab === 'ALL'
+      ? records
+      : records.filter((record) => {
+          const isComponentRecord = Boolean(record.componentId);
+          return complianceTab === 'COMPONENT' ? isComponentRecord : !isComponentRecord;
+        });
+
+    const q = search.trim().toLowerCase();
+    if (!q) return byTab;
+    return byTab.filter((c) => [
+      c.task?.code, c.task?.title, c.task?.description, c.task?.referenceType, c.task?.referenceNumber,
+      c.component?.partNumber, c.component?.serialNumber, c.workOrderNumber, c.inspectedBy?.name,
+    ].some((field) => field?.toLowerCase().includes(q)));
+  }, [records, complianceTab, search]);
 
   const selected = aircraft.find((a) => a.id === selectedAircraftId);
 
@@ -94,6 +103,18 @@ export default function CompliancePage() {
             {Number(selected.totalFlightHours).toFixed(1)} h · {selected.totalCycles} ciclos
           </span>
         )}
+        {selectedAircraftId && (
+          <div className="relative ml-auto">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar tarea, referencia, P/N, S/N…"
+              className="filter-input min-w-72 pl-8"
+            />
+          </div>
+        )}
       </div>
 
       {selectedAircraftId && (
@@ -126,12 +147,19 @@ export default function CompliancePage() {
       )}
 
       {selectedAircraftId && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
+        <div
+          className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto
+          [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-track]:bg-slate-100
+          [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full
+          [&::-webkit-scrollbar-thumb:hover]:bg-slate-500"
+        >
           <table className="min-w-full divide-y divide-slate-100 text-sm">
             <thead className="bg-slate-50">
               <tr>
-                <th className="table-header">Tarea</th>
+                <th className="table-header sticky left-0 z-10 bg-slate-50 w-[240px] min-w-[240px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">Tarea</th>
                 <th className="table-header">Ref. regulatoria</th>
+                <th className="table-header">P/N</th>
+                <th className="table-header">S/N</th>
                 <th className="table-header">Último cumplimiento</th>
                 <th className="table-header text-right">Horas aeronave</th>
                 <th className="table-header text-right">Próx. vto. (h)</th>
@@ -143,10 +171,12 @@ export default function CompliancePage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {isLoading && (
-                <tr><td colSpan={9} className="table-cell text-center text-slate-400 py-12">Cargando…</td></tr>
+                <tr><td colSpan={11} className="table-cell text-center text-slate-400 py-12">Cargando…</td></tr>
               )}
               {!isLoading && filteredRecords.length === 0 && (
-                <tr><td colSpan={9} className="table-cell text-center text-slate-400 py-12">No hay registros de cumplimiento para esta aeronave</td></tr>
+                <tr><td colSpan={11} className="table-cell text-center text-slate-400 py-12">
+                  {search ? 'Sin resultados para esa búsqueda' : 'No hay registros de cumplimiento para esta aeronave'}
+                </td></tr>
               )}
               {filteredRecords.map((c) => {
                 const { label, cls } = dueBadge(c);
@@ -158,9 +188,22 @@ export default function CompliancePage() {
                   nextDueDate: c.nextDueDate,
                 });
                 return (
-                  <tr key={c.id} className={`transition-colors ${isOverdue ? 'bg-rose-50 hover:bg-rose-100/70' : 'hover:bg-slate-50'}`}>
-                    <td className={`table-cell font-medium ${isOverdue ? 'text-rose-700' : 'text-slate-700'}`}>{c.task?.code ?? '—'}</td>
-                    <td className="table-cell text-xs text-slate-500">{c.task?.referenceType} {c.task?.referenceNumber}</td>
+                  <tr key={c.id} className={`group transition-colors ${isOverdue ? 'bg-rose-50 hover:bg-rose-100/70' : 'hover:bg-slate-50'}`}>
+                    <td className={`table-cell font-medium sticky left-0 z-10 w-[240px] min-w-[240px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)] ${
+                      isOverdue ? 'text-rose-700 bg-rose-50 group-hover:bg-rose-100/70' : 'text-slate-700 bg-white group-hover:bg-slate-50'
+                    }`}>
+                      <span className="block">{c.task?.code ?? '—'}</span>
+                      {c.task?.title && <span className="block text-xs font-normal text-slate-500 mt-0.5">{c.task.title}</span>}
+                    </td>
+                    <td className="table-cell text-xs text-slate-500">
+                      {c.task
+                        ? c.task.referenceNumber?.toLowerCase().startsWith(c.task.referenceType?.toLowerCase() ?? '')
+                          ? c.task.referenceNumber
+                          : `${c.task.referenceType} ${c.task.referenceNumber ?? ''}`.trim()
+                        : '—'}
+                    </td>
+                    <td className="table-cell text-xs font-mono text-slate-500">{c.component?.partNumber ?? '—'}</td>
+                    <td className="table-cell text-xs font-mono text-slate-500">{c.component?.serialNumber ?? '—'}</td>
                     <td className="table-cell text-xs text-slate-500">
                       {isBaseline
                         ? `Inicio de control: ${new Date(c.performedAt).toLocaleDateString('es-MX')}`

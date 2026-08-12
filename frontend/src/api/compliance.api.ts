@@ -20,8 +20,15 @@ export interface Compliance {
   deferralExpiresAt: string | null;
   task?: {
     code: string;
+    title: string;
+    description: string;
     referenceType: string | null;
     referenceNumber: string | null;
+  } | null;
+  component?: {
+    id: string;
+    partNumber: string;
+    serialNumber: string;
   } | null;
   aircraft?: {
     totalFlightHours: number;
