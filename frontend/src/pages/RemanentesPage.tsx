@@ -1,11 +1,19 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { saveAs } from 'file-saver';
 import toast from 'react-hot-toast';
-import { FileDown } from 'lucide-react';
+import { FileDown, X } from 'lucide-react';
 import { aircraftApi } from '@api/aircraft.api';
 import { dueApi, type DueMethod, type DueRow, type DueSourceType, type DueStatus } from '@api/due.api';
+import { workOrdersApi } from '@api/workOrders.api';
+import { complianceApi } from '@api/compliance.api';
+import { useWorkRequestStore } from '@store/workRequestStore';
+import { createSTFromSource } from '@/shared/createSTFromSource';
 import { MISSING_OPERATIONAL_CONTEXT_LABEL } from '@/shared/operationalContext';
+
+/** Source types respaldados por una MaintenanceTask (tienen taskId real, no componentId). */
+const TASK_SOURCE_TYPES: DueSourceType[] = ['AD', 'SB', 'INSPECTION', 'MIM', 'DAN', 'MOD'];
 
 const sourceTabs: Array<{ key: string; label: string; sourceType?: DueSourceType }> = [
   { key: 'all', label: 'Todos' },
@@ -73,14 +81,81 @@ function statusLabel(status: DueStatus): string {
   return 'OK';
 }
 
+const COMPLIANCE_STATUS_LABEL: Record<string, string> = {
+  COMPLETED: 'Completado',
+  DEFERRED: 'Diferido',
+  OVERDUE: 'Vencido',
+  CANCELLED: 'Cancelado',
+};
+
+function HistoryModal({ row, onClose }: { row: DueRow; onClose: () => void }) {
+  const { data: history = [], isLoading } = useQuery({
+    queryKey: ['compliance-history', row.aircraftId, row.sourceId],
+    queryFn: () => complianceApi.historyForTask(row.aircraftId, row.sourceId),
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-xl">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-6 py-4">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Historial de cumplimientos</h2>
+            <p className="text-xs text-slate-500 mt-0.5">{row.description}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 hover:bg-slate-100 shrink-0">
+            <X size={15} className="text-slate-500" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto px-6 py-4">
+          {isLoading ? (
+            <p className="text-xs text-slate-400 py-6 text-center">Cargando…</p>
+          ) : history.length === 0 ? (
+            <p className="text-xs text-slate-400 py-6 text-center">Sin cumplimientos registrados todavía.</p>
+          ) : (
+            <ul className="space-y-2">
+              {history.map((c) => (
+                <li key={c.id} className="rounded-lg border border-slate-200 px-3.5 py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-slate-800">{fmtDate(c.performedAt)}</span>
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      c.status === 'COMPLETED' ? 'badge-state-success'
+                        : c.status === 'OVERDUE' ? 'badge-state-critical'
+                        : c.status === 'DEFERRED' ? 'badge-state-warning' : 'badge-state-neutral'
+                    }`}>
+                      {COMPLIANCE_STATUS_LABEL[c.status] ?? c.status}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {fmtNumber(c.aircraftHoursAtCompliance, ' FH')} · {fmtNumber(c.aircraftCyclesAtCompliance, ' CYC')}
+                    {c.workOrderNumber ? ` · OT ${c.workOrderNumber}` : ''}
+                    {c.isInitial ? ' · Inicio de control' : ''}
+                  </p>
+                  {c.notes && <p className="text-xs text-slate-500 mt-1.5">{c.notes}</p>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function RemanentesPage() {
   type KpiCard = { label: string; value: number; status: DueStatus };
+
+  const navigate = useNavigate();
+  const selectWorkRequest = useWorkRequestStore((s) => s.selectWorkRequest);
 
   const [sourceTab, setSourceTab] = useState(sourceTabs[0]);
   const [aircraftId, setAircraftId] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<DueStatus | null>(null);
   const [dimensionFilter, setDimensionFilter] = useState<'ALL' | DueMethod>('ALL');
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [creatingSTRowId, setCreatingSTRowId] = useState<string | null>(null);
+  const [loadingOTRowId, setLoadingOTRowId] = useState<string | null>(null);
+  const [historyRow, setHistoryRow] = useState<DueRow | null>(null);
 
   const { data: aircraft = [] } = useQuery({
     queryKey: ['aircraft'],
@@ -136,20 +211,58 @@ export default function RemanentesPage() {
     });
   }, [sortedRows, sourceTab.sourceType, statusFilter, dimensionFilter]);
 
-  const handleCreateST = (row: DueRow) => {
-    console.info('[Remanentes] Crear ST stub', row.id);
+  const selectedAircraft = aircraft.find((a) => a.id === selectedAircraftId);
+
+  const handleCreateST = async (row: DueRow) => {
+    setCreatingSTRowId(row.id);
+    try {
+      const isComponent = row.sourceType === 'COMPONENT' || row.sourceType === 'ENGINE_COMPONENT';
+      const stId = await createSTFromSource(isComponent ? 'component' : 'maintenance_plan', {
+        aircraftId: row.aircraftId,
+        sourceId: (isComponent ? row.componentId : null) ?? row.sourceId,
+        ataCode: row.taskCode || '—',
+        title: row.description,
+        description: row.description,
+        aircraftHoursAtRequest: selectedAircraft?.totalFlightHours ?? 0,
+        aircraftCyclesAtRequest: selectedAircraft?.totalCycles ?? 0,
+        priority: row.status === 'OVERDUE' ? 'alta' : row.status === 'DUE_SOON' ? 'media' : 'baja',
+        requiresComponentTracking: row.requiresComponentTracking,
+      });
+      selectWorkRequest(stId, 'general');
+      toast.success('Agregado a la Solicitud de Trabajo');
+      navigate(`/work-requests?aircraftId=${row.aircraftId}&stId=${stId}`);
+    } catch {
+      toast.error('No se pudo crear/actualizar la ST');
+    } finally {
+      setCreatingSTRowId(null);
+    }
   };
 
-  const handleViewOT = (row: DueRow) => {
+  const handleViewOT = async (row: DueRow) => {
     if (!row.referenceOt) return;
-    console.info('[Remanentes] Ver OT stub', row.referenceOt);
+    setLoadingOTRowId(row.id);
+    try {
+      const workOrders = await workOrdersApi.list({ aircraftId: row.aircraftId });
+      const wo = workOrders.find((w) => w.number === row.referenceOt);
+      if (!wo) {
+        toast.error(`No se encontró la OT ${row.referenceOt}`);
+        return;
+      }
+      navigate(`/work-orders/${wo.id}`);
+    } catch {
+      toast.error('No se pudo abrir la OT');
+    } finally {
+      setLoadingOTRowId(null);
+    }
   };
 
   const handleHistory = (row: DueRow) => {
-    console.info('[Remanentes] Historial stub', row.id);
+    if (!TASK_SOURCE_TYPES.includes(row.sourceType)) {
+      toast.error('El historial todavía no está disponible para componentes');
+      return;
+    }
+    setHistoryRow(row);
   };
-
-  const selectedAircraft = aircraft.find((a) => a.id === selectedAircraftId);
 
   const handleDownloadPdf = async () => {
     if (!selectedAircraftId) return;
@@ -299,13 +412,29 @@ export default function RemanentesPage() {
                   <td className="table-cell">{row.referenceOt ?? '-'} / {row.referenceSt ?? '-'}</td>
                   <td className="table-cell">
                     <div className="flex items-center gap-1.5">
-                      <button type="button" className="btn-secondary btn-xs" onClick={() => handleCreateST(row)}>
-                        Crear ST
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        onClick={() => handleCreateST(row)}
+                        disabled={creatingSTRowId === row.id}
+                      >
+                        {creatingSTRowId === row.id ? '…' : 'Crear ST'}
                       </button>
-                      <button type="button" className="btn-secondary btn-xs" onClick={() => handleViewOT(row)} disabled={!row.referenceOt}>
-                        Ver OT
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        onClick={() => handleViewOT(row)}
+                        disabled={!row.referenceOt || loadingOTRowId === row.id}
+                      >
+                        {loadingOTRowId === row.id ? '…' : 'Ver OT'}
                       </button>
-                      <button type="button" className="btn-secondary btn-xs" onClick={() => handleHistory(row)}>
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                        onClick={() => handleHistory(row)}
+                        disabled={!TASK_SOURCE_TYPES.includes(row.sourceType)}
+                        title={TASK_SOURCE_TYPES.includes(row.sourceType) ? undefined : 'No disponible para componentes todavía'}
+                      >
                         Historial
                       </button>
                     </div>
@@ -316,6 +445,8 @@ export default function RemanentesPage() {
           </table>
         </div>
       </div>
+
+      {historyRow && <HistoryModal row={historyRow} onClose={() => setHistoryRow(null)} />}
     </div>
   );
 }
