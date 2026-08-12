@@ -58,6 +58,8 @@ export default function WorkRequestDetailPage() {
   const [showSendDialog, setShowSendDialog] = useState(false);
   const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [pendingOtData, setPendingOtData] = useState<{ otNumber: string; receivedAt: string; file?: File | null; notes: string } | null>(null);
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   const syncWorkRequest = (nextApiWorkRequest: Awaited<ReturnType<typeof workRequestsApi.getById>>) => {
     const adapted = adaptApiWorkRequest(nextApiWorkRequest);
@@ -112,6 +114,42 @@ export default function WorkRequestDetailPage() {
       toast.success(`${folio} eliminada`);
     } catch {
       toast.error('No se pudo eliminar la solicitud');
+    }
+  };
+
+  const toggleItemSelected = (itemId: string) => {
+    setSelectedItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllItems = (ids: string[]) => {
+    setSelectedItemIds((prev) => (prev.size === ids.length ? new Set() : new Set(ids)));
+  };
+
+  const handleBulkDeleteItems = async () => {
+    if (!workRequest || selectedItemIds.size === 0) return;
+    const count = selectedItemIds.size;
+    if (!window.confirm(`¿Eliminar ${count} item${count !== 1 ? 's' : ''} de esta ST? Esta acción no se puede deshacer.`)) return;
+
+    setIsBulkDeleting(true);
+    try {
+      let updated: Awaited<ReturnType<typeof workRequestsApi.removeItem>> | null = null;
+      // Secuencial, no Promise.all: cada llamada modifica la misma ST en el
+      // servidor — en paralelo se pisarían entre sí.
+      for (const itemId of selectedItemIds) {
+        updated = await workRequestsApi.removeItem(workRequest.id, itemId);
+      }
+      if (updated) syncWorkRequest(updated);
+      setSelectedItemIds(new Set());
+      setNotice(`${count} item${count !== 1 ? 's' : ''} eliminado${count !== 1 ? 's' : ''} de la ST.`);
+    } catch {
+      toast.error('No se pudieron eliminar todos los items seleccionados');
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -542,10 +580,33 @@ export default function WorkRequestDetailPage() {
               <Wrench size={16} className="text-brand-600" />
               Que incluye esta solicitud
             </h2>
-            <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded-full">
-              {sortedItems.length} item{sortedItems.length !== 1 ? 's' : ''}
-            </span>
+            <div className="flex items-center gap-2">
+              {canEditCurrent && selectedItemIds.size > 0 && (
+                <button
+                  type="button"
+                  className="btn-xs bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 disabled:opacity-50"
+                  onClick={() => void handleBulkDeleteItems()}
+                  disabled={isBulkDeleting}
+                >
+                  {isBulkDeleting ? 'Eliminando…' : `Eliminar seleccionados (${selectedItemIds.size})`}
+                </button>
+              )}
+              <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded-full">
+                {sortedItems.length} item{sortedItems.length !== 1 ? 's' : ''}
+              </span>
+            </div>
           </div>
+          {canEditCurrent && sortedItems.length > 0 && (
+            <label className="flex items-center gap-1.5 text-xs text-slate-500 mb-2 cursor-pointer select-none w-fit">
+              <input
+                type="checkbox"
+                checked={selectedItemIds.size === sortedItems.length}
+                onChange={() => toggleSelectAllItems(sortedItems.map((i) => i.id))}
+                className="rounded border-slate-300"
+              />
+              Seleccionar todos
+            </label>
+          )}
           <div className={blockGap}>
             {sortedItems.length === 0 && (
               <div className={`rounded-xl border border-dashed border-slate-300 bg-slate-50 ${viewDensity === 'compact' ? 'p-4' : 'p-7'} text-center`}>
@@ -558,7 +619,23 @@ export default function WorkRequestDetailPage() {
             )}
 
             {sortedItems.map((item) => (
-              <article key={item.id} className={`border border-slate-200 rounded-xl ${itemCardPadding} bg-slate-50/40 hover:bg-white hover:shadow-sm transition-all`}>
+              <article
+                key={item.id}
+                className={`border rounded-xl ${itemCardPadding} transition-all flex gap-3 ${
+                  selectedItemIds.has(item.id)
+                    ? 'border-rose-300 bg-rose-50/40'
+                    : 'border-slate-200 bg-slate-50/40 hover:bg-white hover:shadow-sm'
+                }`}
+              >
+                {canEditCurrent && (
+                  <input
+                    type="checkbox"
+                    checked={selectedItemIds.has(item.id)}
+                    onChange={() => toggleItemSelected(item.id)}
+                    className="mt-1 shrink-0 rounded border-slate-300"
+                  />
+                )}
+                <div className="flex-1 min-w-0">
                 <div className={`flex flex-wrap items-center ${viewDensity === 'compact' ? 'gap-1.5 mb-0.5' : 'gap-2 mb-1'}`}>
                   <span className="text-xs bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md">ATA {item.ataCode}</span>
                   <span className="text-xs text-slate-500">{SOURCE_LABELS[item.sourceKind] ?? 'Manual'}</span>
@@ -578,6 +655,12 @@ export default function WorkRequestDetailPage() {
                           try {
                             const updated = await workRequestsApi.removeItem(workRequest.id, item.id);
                             syncWorkRequest(updated);
+                            setSelectedItemIds((prev) => {
+                              if (!prev.has(item.id)) return prev;
+                              const next = new Set(prev);
+                              next.delete(item.id);
+                              return next;
+                            });
                             setNotice('Item eliminado de la ST.');
                           } catch {
                             toast.error('No se pudo eliminar el item');
@@ -589,6 +672,7 @@ export default function WorkRequestDetailPage() {
                     </button>
                   </div>
                 )}
+                </div>
               </article>
             ))}
           </div>
