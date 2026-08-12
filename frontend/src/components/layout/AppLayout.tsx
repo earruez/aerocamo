@@ -11,6 +11,7 @@ import { aircraftApi } from '@api/aircraft.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { workOrdersApi } from '@api/workOrders.api';
 import { generarAlertas, TIPO_CONFIG, type Notificacion } from '@pages/NotificationsPage';
+import AerocamoMark from '@components/AerocamoMark';
 
 const NAV_SECTIONS = [
   {
@@ -136,7 +137,7 @@ function TopBar({ notifications, unreadCount, markRead }: {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const title = PAGE_TITLES[pathname] ?? 'Griselle';
+  const title = PAGE_TITLES[pathname] ?? 'Aerocamo';
   const today = new Date().toLocaleDateString('es-MX', {
     weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
   });
@@ -156,7 +157,7 @@ function TopBar({ notifications, unreadCount, markRead }: {
   return (
     <header className="h-12 shrink-0 flex items-center justify-between px-8 border-b border-slate-200/80 bg-white/85 backdrop-blur-md">
       <div className="flex items-center gap-2 text-xs text-slate-400">
-        <span className="font-medium text-slate-500">Griselle</span>
+        <span className="font-medium text-slate-500">Aerocamo</span>
         <ChevronRight size={11} className="text-slate-300" />
         <span className="font-semibold text-slate-700">{title}</span>
       </div>
@@ -255,11 +256,9 @@ export default function AppLayout() {
         {/* Logo */}
         <div className="px-4 pt-5 pb-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 bg-brand-600 rounded-lg flex items-center justify-center shrink-0 shadow-md">
-              <Plane size={14} className="text-white" />
-            </div>
+            <AerocamoMark size={28} rounded="rounded-lg" className="shadow-md" />
             <div>
-              <p className="text-[13px] font-bold text-white leading-none tracking-tight">Griselle</p>
+              <p className="text-[13px] font-bold text-white leading-none tracking-tight">Aerocamo</p>
               <p className="text-[9.5px] text-slate-500 mt-0.5 leading-none">MRO Platform</p>
             </div>
           </div>

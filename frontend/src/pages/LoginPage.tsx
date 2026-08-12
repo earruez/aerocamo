@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { authApi } from '@api/auth.api';
 import { useAuthStore } from '@store/authStore';
-import { Plane, Lock, Mail, Building2 } from 'lucide-react';
+import { Lock, Mail, Building2 } from 'lucide-react';
+import AerocamoMark from '@components/AerocamoMark';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -38,11 +39,9 @@ export default function LoginPage() {
         <div className="relative z-10 w-full max-w-sm">
           {/* Logo */}
           <div className="flex items-center gap-4 mb-10">
-            <div className="w-12 h-12 bg-brand-600 rounded-xl flex items-center justify-center shadow-2xl">
-              <Plane size={24} className="text-white" />
-            </div>
+            <AerocamoMark size={48} className="shadow-2xl" />
             <div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">Griselle</h1>
+              <h1 className="text-2xl font-bold text-white tracking-tight">Aerocamo</h1>
               <p className="text-xs text-slate-500">MRO Platform</p>
             </div>
           </div>
@@ -73,9 +72,7 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           {/* Mobile-only logo */}
           <div className="lg:hidden flex justify-center mb-8">
-            <div className="w-12 h-12 bg-brand-600 rounded-xl flex items-center justify-center shadow-lg">
-              <Plane size={22} className="text-white" />
-            </div>
+            <AerocamoMark size={48} />
           </div>
 
           <div className="mb-8">
