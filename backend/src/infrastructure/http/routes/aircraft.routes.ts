@@ -31,6 +31,7 @@ router.get('/:id/maintenance-plan', ctrl.getMaintenancePlan);
 router.get('/:id/due-summary', ctrl.getDueSummary);
 router.get('/:id/due-rows', ctrl.getDueRows);
 router.get('/:id/due-report-data', ctrl.getDueReportData);
+router.get('/:id/due-report.pdf', ctrl.getDueReportPdf);
 router.get('/:id/usage-history', ctrl.getUsageHistory);
 router.get('/:id/engines', ctrl.listEngines);
 router.get('/:id', ctrl.findById);
