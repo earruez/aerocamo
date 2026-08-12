@@ -19,6 +19,9 @@ const AMBER_HOURS = 10;
 const SUGGEST_DAYS = 90;
 const SUGGEST_HOURS = 50;
 
+/** Cuánto respeta el job un borrador que el usuario borró a propósito antes de volver a ofrecer la misma tarea. */
+const DISMISSAL_COOLDOWN_HOURS = 24;
+
 const WORK_REQUEST_FLOW_INCLUDE = {
   aircraft: true,
   responsible: true,
@@ -558,7 +561,14 @@ export class WorkRequestService {
     });
     if (!actor) throw new AppError('Usuario no encontrado para auditoría', 404);
 
-    // Los ítems caen en cascada; nada más cuelga de un borrador.
+    // Los ítems caen en cascada; nada más cuelga de un borrador. Antes de que
+    // desaparezcan, se guardan sus taskId en el log de auditoría — es lo único
+    // que le permite al job de autogeneración diaria saber que el usuario ya
+    // descartó esta tarea a propósito, en vez de recrear la ST al toque.
+    const deletedTaskIds = wr.items
+      .map((item) => item.taskId)
+      .filter((id): id is string => Boolean(id));
+
     await prisma.workRequest.delete({ where: { id: wr.id } });
 
     await auditLogService.log({
@@ -571,7 +581,7 @@ export class WorkRequestService {
       userId: input.actorId,
       userEmail: actor.email,
       userRole: actor.role,
-      metadata: { workRequestNumber: wr.number, aircraftId: wr.aircraftId },
+      metadata: { workRequestNumber: wr.number, aircraftId: wr.aircraftId, taskIds: deletedTaskIds },
     });
 
     return { id: wr.id, number: wr.number };
@@ -850,6 +860,34 @@ export class WorkRequestService {
     });
   }
 
+  /**
+   * TaskId que el usuario borró explícitamente (vía remove()) para esta aeronave
+   * en las últimas DISMISSAL_COOLDOWN_HOURS. El job los respeta y no los vuelve
+   * a ofrecer de inmediato — sin esto, borrar un borrador no servía de nada: la
+   * siguiente corrida (5s después del próximo reinicio en dev, o el cron diario
+   * en producción) recreaba la misma ST para la misma tarea vencida.
+   */
+  private static async getRecentlyDismissedTaskIds(aircraftId: string, organizationId: string): Promise<Set<string>> {
+    const cutoff = new Date(Date.now() - DISMISSAL_COOLDOWN_HOURS * 60 * 60 * 1000);
+    const logs = await prisma.auditLog.findMany({
+      where: {
+        organizationId,
+        entityType: 'WorkRequest',
+        action: 'DELETE',
+        createdAt: { gte: cutoff },
+      },
+      select: { metadata: true },
+    });
+
+    const dismissed = new Set<string>();
+    for (const log of logs) {
+      const metadata = log.metadata as { aircraftId?: string; taskIds?: string[] } | null;
+      if (metadata?.aircraftId !== aircraftId) continue;
+      for (const taskId of metadata.taskIds ?? []) dismissed.add(taskId);
+    }
+    return dismissed;
+  }
+
   static async runDailyAutoGenerationForAllOrganizations(): Promise<{ created: number; updated: number; scanned: number }> {
     const aircraftList = await prisma.aircraft.findMany({
       where: { isActive: true, status: { not: 'DECOMMISSIONED' } },
@@ -862,11 +900,13 @@ export class WorkRequestService {
 
     for (const a of aircraftList) {
       const plan = await this.aircraftRepo.getMaintenancePlan(a.id, a.organizationId);
+      const dismissedTaskIds = await this.getRecentlyDismissedTaskIds(a.id, a.organizationId);
       const amber = plan.filter((item) => {
         const byHours = item.hoursRemaining != null && item.hoursRemaining <= AMBER_HOURS;
         const byDays = item.daysRemaining != null && item.daysRemaining <= AMBER_DAYS;
         return (byHours || byDays || item.status === 'OVERDUE')
-          && this.isChapter0405(item.taskCode, item.referenceNumber);
+          && this.isChapter0405(item.taskCode, item.referenceNumber)
+          && !dismissedTaskIds.has(item.taskId);
       });
 
       if (amber.length === 0) {
