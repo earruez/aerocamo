@@ -16,6 +16,7 @@ import { workRequestsApi } from '@api/workRequests.api';
 import { useWorkRequestStore } from '../store/workRequestStore';
 import { isActiveWorkRequestStatus } from '@/shared/workRequestTypes';
 import { adaptApiWorkRequest } from '@/shared/workRequestApiAdapter';
+import { applySort, SortableHeader, toggleSort, type SortState } from '@/shared/tableSort';
 import {
   ClipboardCheck, AlertTriangle, Clock, CheckCircle2,
   ChevronRight, Search, BookOpen, Calendar, Gauge, RefreshCw,
@@ -1397,6 +1398,7 @@ export default function MaintenancePlanPage() {
   const [searchParams] = useSearchParams();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<SortState | null>(null);
   const [filterStatus, setFilterStatus] = useState<PlanItemStatus | ''>(searchParams.get('status') as PlanItemStatus | '' ?? '');
   const [normativeTab, setNormativeTab] = useState<NormativeTab>('PROGRAMA');
   const [equipmentTab, setEquipmentTab] = useState<EquipmentTab>('ALL');
@@ -1732,6 +1734,21 @@ export default function MaintenancePlanPage() {
         return STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
       });
   }, [planItems, filterStatus, normativeTab, equipmentTab, recurrenceTab, applicabilityTab, maintenanceTab, search, smartPriorityByTaskId, onlyPendingAction, priorityContext]);
+
+  const getSortValue = (item: MaintenancePlanItem, key: string): unknown => {
+    switch (key) {
+      case 'tarea': return item.taskCode;
+      case 'tipo': return MAINTENANCE_TYPE_META[classifyMaintenanceType(item)].label;
+      case 'intervalo': return item.intervalHours ?? item.intervalCycles ?? item.intervalCalendarDays ?? item.intervalCalendarMonths;
+      case 'proximo': return item.nextDueDate ? new Date(item.nextDueDate) : item.nextDueHours ?? item.nextDueCycles;
+      case 'historico': return item.lastPerformedAt ? new Date(item.lastPerformedAt) : item.controlStartAt ? new Date(item.controlStartAt) : null;
+      case 'estado': return STATUS_ORDER[item.status];
+      default: return null;
+    }
+  };
+
+  // Sin orden manual, se conserva el orden inteligente por prioridad ya calculado en filteredPlan.
+  const visiblePlan = useMemo(() => applySort(filteredPlan, sort, getSortValue), [filteredPlan, sort]);
 
   // Las tareas marcadas "no aplica" siguen en el plan, pero no deben contar como
   // pendientes ni disparar alertas de aeronavegabilidad.
@@ -2554,18 +2571,18 @@ export default function MaintenancePlanPage() {
                 <thead className="bg-white sticky top-0 z-10 border-b border-slate-200">
                   <tr>
                     <th className="table-header w-12 text-center">Sel</th>
-                    <th className="table-header">Tarea</th>
-                    <th className="table-header">Tipo</th>
-                    <th className="table-header">Intervalo</th>
-                    <th className="table-header">Próx. vencimiento</th>
-                    <th className="table-header">Histórico</th>
-                    <th className="table-header">Estado</th>
+                    <SortableHeader label="Tarea" sortKey="tarea" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header" />
+                    <SortableHeader label="Tipo" sortKey="tipo" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header" />
+                    <SortableHeader label="Intervalo" sortKey="intervalo" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header" />
+                    <SortableHeader label="Próx. vencimiento" sortKey="proximo" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header" />
+                    <SortableHeader label="Histórico" sortKey="historico" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header" />
+                    <SortableHeader label="Estado" sortKey="estado" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header" />
                     <th className="table-header">Solicitud</th>
                     <th className="table-header">Acción</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredPlan.map(item => (
+                  {visiblePlan.map(item => (
                     <TaskRow
                       key={item.taskId}
                       item={item}
