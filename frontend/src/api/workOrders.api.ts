@@ -269,16 +269,17 @@ export const workOrdersApi = {
     return data.data;
   },
 
-  downloadPdf: (workOrderId: string): string => {
-    return `/api/v1/work-orders/${workOrderId}/download-pdf`;
+  downloadPdf: async (workOrderId: string): Promise<Blob> => {
+    const { data } = await apiClient.get(`/work-orders/${workOrderId}/download-pdf`, { responseType: 'blob' });
+    return data;
   },
 
   emailPdf: async (workOrderId: string, email: string): Promise<void> => {
     await apiClient.post(`/work-orders/${workOrderId}/email-pdf`, { email });
   },
 
-  generatePendingForAircraft: async (aircraftId: string): Promise<{ generatedCount: number; workOrders: WorkOrder[] }> => {
-    const { data } = await apiClient.post<{ success: boolean; data: { generatedCount: number; workOrders: WorkOrder[] } }>(
+  generatePendingForAircraft: async (aircraftId: string): Promise<{ generated: boolean; message: string; workOrder?: WorkOrder }> => {
+    const { data } = await apiClient.post<{ success: boolean; data: { generated: boolean; message: string; workOrder?: WorkOrder } }>(
       `/work-orders/${aircraftId}/generate-pending`, {}
     );
     return data.data;

@@ -276,6 +276,20 @@ export default function WorkOrdersListPage() {
 
   const { data: workOrderStateMachine } = useWorkOrderStateMachine();
 
+  const canCreate = user?.role && ['ADMIN', 'SUPERVISOR'].includes(user.role);
+  const canManage = user?.role && ['ADMIN', 'SUPERVISOR'].includes(user.role);
+
+  // Todos los hooks deben ejecutarse antes del "return" temprano de más abajo
+  // (regla de Hooks de React) — antes este useQuery vivía después del return
+  // y provocaba "Rendered more hooks than during the previous render".
+  const { data: pendingList = [] } = useQuery({
+    queryKey: ['work-orders-pending-assignment'],
+    queryFn: workOrdersApi.getPendingAssignment,
+    enabled: !!canManage,
+    refetchInterval: 60_000,
+  });
+  const pendingCount = pendingList.length;
+
   if (!workOrderStateMachine) {
     return (
       <div className="p-8 space-y-6">
@@ -307,18 +321,6 @@ export default function WorkOrdersListPage() {
     acc[s] = workOrders.filter(w => w.status === s).length;
     return acc;
   }, {} as Record<WorkOrderStatus, number>);
-
-  const canCreate = user?.role && ['ADMIN', 'SUPERVISOR'].includes(user.role);
-
-  const canManage = user?.role && ['ADMIN', 'SUPERVISOR'].includes(user.role);
-
-  const { data: pendingList = [] } = useQuery({
-    queryKey: ['work-orders-pending-assignment'],
-    queryFn: workOrdersApi.getPendingAssignment,
-    enabled: !!canManage,
-    refetchInterval: 60_000,
-  });
-  const pendingCount = pendingList.length;
 
   return (
     <div className="p-8 space-y-6">

@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { saveAs } from 'file-saver';
 import toast from 'react-hot-toast';
-import { FileDown, X } from 'lucide-react';
+import { FileDown, Search, Wrench, X } from 'lucide-react';
 import { aircraftApi } from '@api/aircraft.api';
 import { dueApi, type DueMethod, type DueRow, type DueSourceType, type DueStatus } from '@api/due.api';
 import { workOrdersApi } from '@api/workOrders.api';
@@ -11,6 +11,7 @@ import { complianceApi } from '@api/compliance.api';
 import { useWorkRequestStore } from '@store/workRequestStore';
 import { createSTFromSource } from '@/shared/createSTFromSource';
 import { MISSING_OPERATIONAL_CONTEXT_LABEL } from '@/shared/operationalContext';
+import { applySort, SortableHeader, toggleSort, type SortState } from '@/shared/tableSort';
 
 /** Source types respaldados por una MaintenanceTask (tienen taskId real, no componentId). */
 const TASK_SOURCE_TYPES: DueSourceType[] = ['AD', 'SB', 'INSPECTION', 'MIM', 'DAN', 'MOD'];
@@ -155,13 +156,17 @@ export default function RemanentesPage() {
   type KpiCard = { label: string; value: number; status: DueStatus };
 
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const selectWorkRequest = useWorkRequestStore((s) => s.selectWorkRequest);
 
   const [sourceTab, setSourceTab] = useState(sourceTabs[0]);
   const [aircraftId, setAircraftId] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<DueStatus | null>(null);
   const [dimensionFilter, setDimensionFilter] = useState<'ALL' | DueMethod>('ALL');
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<SortState | null>(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [generatingOT, setGeneratingOT] = useState(false);
   const [creatingSTRowId, setCreatingSTRowId] = useState<string | null>(null);
   const [loadingOTRowId, setLoadingOTRowId] = useState<string | null>(null);
   const [historyRow, setHistoryRow] = useState<DueRow | null>(null);
@@ -208,7 +213,8 @@ export default function RemanentesPage() {
     });
   }, [rows]);
 
-  const visibleRows = useMemo(() => {
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return sortedRows.filter((row) => {
       if (sourceTab.sourceType && row.sourceType !== sourceTab.sourceType) return false;
       if (statusFilter && row.status !== statusFilter) return false;
@@ -216,9 +222,43 @@ export default function RemanentesPage() {
         const operationalDimension = getOperationalDimension(row);
         if (!operationalDimension || operationalDimension !== dimensionFilter) return false;
       }
+      if (q) {
+        const haystack = [row.description, row.ata, row.partNumber, row.serialNumber, row.taskCode, row.referenceOt, row.referenceSt]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
       return true;
     });
-  }, [sortedRows, sourceTab.sourceType, statusFilter, dimensionFilter]);
+  }, [sortedRows, sourceTab.sourceType, statusFilter, dimensionFilter, search]);
+
+  const getSortValue = (row: DueRow, key: string): unknown => {
+    switch (key) {
+      case 'tipo': return row.sourceType;
+      case 'descripcion': return row.description;
+      case 'ata': return row.ata;
+      case 'pn': return row.partNumber;
+      case 'sn': return row.serialNumber;
+      case 'dim': return getOperationalDimension(row);
+      case 'metodo': return row.method;
+      case 'intervalo': return row.intervalValue;
+      case 'ultimo': return row.lastComplianceDate ? new Date(row.lastComplianceDate) : null;
+      case 'proximo': return row.nextDueDate ? new Date(row.nextDueDate) : row.nextDueValue;
+      case 'remanente': return row.remainingValue;
+      case 'n1rem': return row.dimensions.find((d) => d.method === 'N1')?.remainingValue ?? null;
+      case 'n2rem': return row.dimensions.find((d) => d.method === 'N2')?.remainingValue ?? null;
+      case 'estado': return STATUS_PRIORITY[row.status];
+      case 'obsref': return row.observations ?? row.sourceDocumentReference;
+      case 'otst': return [row.referenceOt, row.referenceSt].filter(Boolean).join(' ');
+      default: return null;
+    }
+  };
+
+  const visibleRows = useMemo(
+    () => applySort(filteredRows, sort, getSortValue),
+    [filteredRows, sort],
+  );
 
   const selectedAircraft = aircraft.find((a) => a.id === selectedAircraftId);
 
@@ -286,6 +326,26 @@ export default function RemanentesPage() {
     }
   };
 
+  const handleGeneratePendingOT = async () => {
+    if (!selectedAircraftId) return;
+    setGeneratingOT(true);
+    try {
+      const result = await workOrdersApi.generatePendingForAircraft(selectedAircraftId);
+      if (result.generated) {
+        toast.success(result.message);
+        qc.invalidateQueries({ queryKey: ['due-rows', selectedAircraftId] });
+        qc.invalidateQueries({ queryKey: ['due-summary', selectedAircraftId] });
+        qc.invalidateQueries({ queryKey: ['work-orders'] });
+      } else {
+        toast(result.message, { icon: 'ℹ️' });
+      }
+    } catch {
+      toast.error('No se pudo generar la OT');
+    } finally {
+      setGeneratingOT(false);
+    }
+  };
+
   const totalRowsCount = summary?.totalRows ?? visibleRows.length;
 
   return (
@@ -298,23 +358,47 @@ export default function RemanentesPage() {
               Calculado automáticamente a partir de las horas, ciclos y cumplimientos registrados de la aeronave.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleDownloadPdf}
-            disabled={!selectedAircraftId || downloadingPdf}
-            className="btn-secondary flex items-center gap-1.5 shrink-0"
-          >
-            <FileDown size={15} />
-            {downloadingPdf ? 'Generando…' : 'Descargar informe PDF'}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleGeneratePendingOT}
+              disabled={!selectedAircraftId || generatingOT}
+              title="Agrupa en una OT nueva todas las tareas vencidas o próximas a vencer de esta aeronave"
+              className="btn-secondary flex items-center gap-1.5"
+            >
+              <Wrench size={15} />
+              {generatingOT ? 'Generando…' : 'Generar OT pendientes'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={!selectedAircraftId || downloadingPdf}
+              className="btn-secondary flex items-center gap-1.5"
+            >
+              <FileDown size={15} />
+              {downloadingPdf ? 'Generando…' : 'Descargar informe PDF'}
+            </button>
+          </div>
         </div>
-        <div className="max-w-sm">
-          <label className="form-label">Aeronave</label>
-          <select className="input w-full" value={selectedAircraftId} onChange={(e) => setAircraftId(e.target.value)}>
-            {aircraft.map((a) => (
-              <option key={a.id} value={a.id}>{a.registration} · {a.manufacturer} {a.model}</option>
-            ))}
-          </select>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="max-w-sm w-full">
+            <label className="form-label">Aeronave</label>
+            <select className="input w-full" value={selectedAircraftId} onChange={(e) => setAircraftId(e.target.value)}>
+              {aircraft.map((a) => (
+                <option key={a.id} value={a.id}>{a.registration} · {a.manufacturer} {a.model}</option>
+              ))}
+            </select>
+          </div>
+          <div className="relative flex-1 min-w-[220px] max-w-xs">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar tarea, ATA, P/N, S/N, OT/ST…"
+              className="filter-input w-full pl-8"
+            />
+          </div>
         </div>
       </div>
 
@@ -379,23 +463,25 @@ export default function RemanentesPage() {
           <table className="min-w-full text-xs">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="table-header sticky left-0 z-10 bg-slate-50 w-[84px] min-w-[84px]">Tipo</th>
-                <th className="table-header sticky left-[84px] z-10 bg-slate-50 w-[260px] min-w-[260px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">Descripción</th>
-                <th className="table-header">ATA</th>
-                <th className="table-header">P/N</th>
-                <th className="table-header">S/N</th>
-                <th className="table-header">DIM</th>
-                <th className="table-header">Método</th>
-                <th className="table-header">Intervalo</th>
-                <th className="table-header">Último cumplimiento</th>
-                <th className="table-header">Próximo</th>
-                <th className="table-header">Remanente</th>
-                <th className="table-header">N1 REM</th>
-                <th className="table-header">N2 REM</th>
-                <th className="table-header">Estado</th>
-                <th className="table-header">Obs./Ref.</th>
-                <th className="table-header">OT/ST</th>
-                <th className="table-header">Acciones</th>
+                <SortableHeader label="Tipo" sortKey="tipo" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))}
+                  className="table-header sticky left-0 top-0 z-20 bg-slate-50 w-[84px] min-w-[84px]" />
+                <SortableHeader label="Descripción" sortKey="descripcion" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))}
+                  className="table-header sticky left-[84px] top-0 z-20 bg-slate-50 w-[260px] min-w-[260px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]" />
+                <SortableHeader label="ATA" sortKey="ata" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="P/N" sortKey="pn" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="S/N" sortKey="sn" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="DIM" sortKey="dim" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Método" sortKey="metodo" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Intervalo" sortKey="intervalo" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Último cumplimiento" sortKey="ultimo" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Próximo" sortKey="proximo" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Remanente" sortKey="remanente" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="N1 REM" sortKey="n1rem" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="N2 REM" sortKey="n2rem" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Estado" sortKey="estado" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Obs./Ref." sortKey="obsref" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="OT/ST" sortKey="otst" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <th className="table-header sticky top-0 z-10 bg-slate-50">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

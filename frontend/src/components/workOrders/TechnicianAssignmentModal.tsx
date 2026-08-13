@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'react-hot-toast';
 import { User, Loader2, CheckCircle2, Mail } from 'lucide-react';
 import { workOrdersApi } from '@api/workOrders.api';
-import { apiClient } from '@api/client';
 
 interface TechnicianAssignmentModalProps {
   workOrderId: string;
@@ -26,13 +25,7 @@ export function TechnicianAssignmentModal({
 
   const { data: technicians = [], isLoading } = useQuery({
     queryKey: ['users', organizationId, 'technicians'],
-    queryFn: async () => {
-      const response = await apiClient.get<{
-        status: string;
-        data: Array<{ id: string; name: string; email: string; licenseNumber: string | null; role: string }>;
-      }>('/users?role=TECHNICIAN');
-      return response.data.data;
-    },
+    queryFn: workOrdersApi.getAvailableTechnicians,
     staleTime: 30_000,
   });
 

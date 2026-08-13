@@ -8,9 +8,17 @@ import {
   MISSING_OPERATIONAL_CONTEXT_BADGE_CLASS,
   MISSING_OPERATIONAL_CONTEXT_LABEL,
 } from '@/shared/operationalContext';
+import { applySort, SortableHeader, toggleSort, type SortState } from '@/shared/tableSort';
 
 function isBaselineRecord(c: Compliance): boolean {
   return c.applicationType === 'baseline' || (c.notes ?? '').trim().toLowerCase() === 'inicio de control';
+}
+
+function regulatoryRef(c: Compliance): string {
+  if (!c.task) return '—';
+  return c.task.referenceNumber?.toLowerCase().startsWith(c.task.referenceType?.toLowerCase() ?? '')
+    ? (c.task.referenceNumber ?? '')
+    : `${c.task.referenceType ?? ''} ${c.task.referenceNumber ?? ''}`.trim();
 }
 
 function dueBadge(c: Compliance): { label: string; cls: string } {
@@ -44,6 +52,7 @@ export default function CompliancePage() {
   const [selectedAircraftId, setSelectedAircraftId] = useState<string>('');
   const [complianceTab, setComplianceTab] = useState<'ALL' | 'COMPONENT' | 'GENERAL'>('ALL');
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<SortState | null>(null);
   const { data: aircraft = [] } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
   const { data: records = [], isLoading } = useQuery({
     queryKey: ['compliance', 'latest', selectedAircraftId],
@@ -66,6 +75,26 @@ export default function CompliancePage() {
       c.component?.partNumber, c.component?.serialNumber, c.workOrderNumber, c.inspectedBy?.name,
     ].some((field) => field?.toLowerCase().includes(q)));
   }, [records, complianceTab, search]);
+
+  const getSortValue = (c: Compliance, key: string): unknown => {
+    switch (key) {
+      case 'tarea': return c.task?.code;
+      case 'ref': return regulatoryRef(c);
+      case 'ata': return c.task?.ata;
+      case 'pn': return c.component?.partNumber;
+      case 'sn': return c.component?.serialNumber;
+      case 'ultimo': return new Date(c.performedAt);
+      case 'horas': return Number(c.aircraftHoursAtCompliance);
+      case 'proxh': return c.nextDueHours;
+      case 'proxciclos': return c.nextDueCycles;
+      case 'proxfecha': return c.nextDueDate ? new Date(c.nextDueDate) : null;
+      case 'inspector': return isBaselineRecord(c) ? 'Registro inicial' : c.inspectedBy?.name;
+      case 'estado': return dueBadge(c).label;
+      default: return null;
+    }
+  };
+
+  const sortedRecords = useMemo(() => applySort(filteredRecords, sort, getSortValue), [filteredRecords, sort]);
 
   const selected = aircraft.find((a) => a.id === selectedAircraftId);
 
@@ -156,30 +185,31 @@ export default function CompliancePage() {
           <table className="min-w-full divide-y divide-slate-100 text-sm">
             <thead className="bg-slate-50">
               <tr>
-                <th className="table-header sticky left-0 z-10 bg-slate-50 w-[240px] min-w-[240px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">Tarea</th>
-                <th className="table-header">Ref. regulatoria</th>
-                <th className="table-header">ATA</th>
-                <th className="table-header">P/N</th>
-                <th className="table-header">S/N</th>
-                <th className="table-header">Último cumplimiento</th>
-                <th className="table-header text-right">Horas aeronave</th>
-                <th className="table-header text-right">Próx. vto. (h)</th>
-                <th className="table-header text-right">Próx. vto. (ciclos)</th>
-                <th className="table-header">Próx. vto. (fecha)</th>
-                <th className="table-header">Inspector RII</th>
-                <th className="table-header">Estado</th>
+                <SortableHeader label="Tarea" sortKey="tarea" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))}
+                  className="table-header sticky left-0 top-0 z-20 bg-slate-50 w-[240px] min-w-[240px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]" />
+                <SortableHeader label="Ref. regulatoria" sortKey="ref" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="ATA" sortKey="ata" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="P/N" sortKey="pn" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="S/N" sortKey="sn" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Último cumplimiento" sortKey="ultimo" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Horas aeronave" sortKey="horas" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} align="right" className="table-header text-right sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Próx. vto. (h)" sortKey="proxh" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} align="right" className="table-header text-right sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Próx. vto. (ciclos)" sortKey="proxciclos" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} align="right" className="table-header text-right sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Próx. vto. (fecha)" sortKey="proxfecha" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Inspector RII" sortKey="inspector" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
+                <SortableHeader label="Estado" sortKey="estado" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="table-header sticky top-0 z-10 bg-slate-50" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {isLoading && (
                 <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-12">Cargando…</td></tr>
               )}
-              {!isLoading && filteredRecords.length === 0 && (
+              {!isLoading && sortedRecords.length === 0 && (
                 <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-12">
                   {search ? 'Sin resultados para esa búsqueda' : 'No hay registros de cumplimiento para esta aeronave'}
                 </td></tr>
               )}
-              {filteredRecords.map((c) => {
+              {sortedRecords.map((c) => {
                 const { label, cls } = dueBadge(c);
                 const isOverdue = cls === 'badge-overdue';
                 const isBaseline = isBaselineRecord(c);
@@ -196,13 +226,7 @@ export default function CompliancePage() {
                       <span className="block">{c.task?.code ?? '—'}</span>
                       {c.task?.title && <span className="block text-xs font-normal text-slate-500 mt-0.5">{c.task.title}</span>}
                     </td>
-                    <td className="table-cell text-xs text-slate-500">
-                      {c.task
-                        ? c.task.referenceNumber?.toLowerCase().startsWith(c.task.referenceType?.toLowerCase() ?? '')
-                          ? c.task.referenceNumber
-                          : `${c.task.referenceType} ${c.task.referenceNumber ?? ''}`.trim()
-                        : '—'}
-                    </td>
+                    <td className="table-cell text-xs text-slate-500">{regulatoryRef(c)}</td>
                     <td className="table-cell text-xs font-mono text-slate-500">{c.task?.ata ?? '—'}</td>
                     <td className="table-cell text-xs font-mono text-slate-500">{c.component?.partNumber ?? '—'}</td>
                     <td className="table-cell text-xs font-mono text-slate-500">{c.component?.serialNumber ?? '—'}</td>

@@ -32,12 +32,27 @@ export interface Compliance {
     serialNumber: string;
   } | null;
   aircraft?: {
+    id: string;
+    registration: string;
+    model: string;
     totalFlightHours: number;
     totalCycles: number;
   } | null;
   inspectedBy?: {
     name: string;
   } | null;
+  performedBy?: {
+    id: string;
+    name: string;
+  } | null;
+}
+
+export interface PaginatedCompliance {
+  data: Compliance[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export interface RecordComplianceInput {
@@ -55,6 +70,17 @@ export interface RecordComplianceInput {
 }
 
 export const complianceApi = {
+  list: async (params?: { aircraftId?: string; page?: number; limit?: number }): Promise<PaginatedCompliance> => {
+    const q = new URLSearchParams();
+    if (params?.aircraftId) q.set('aircraftId', params.aircraftId);
+    if (params?.page)       q.set('page', String(params.page));
+    if (params?.limit)      q.set('limit', String(params.limit));
+    const { data } = await apiClient.get<{ status: string; data: PaginatedCompliance }>(
+      `/compliances${q.toString() ? '?' + q.toString() : ''}`,
+    );
+    return data.data;
+  },
+
   latestForAircraft: async (aircraftId: string): Promise<Compliance[]> => {
     const { data } = await apiClient.get<{ status: string; data: Compliance[] }>(
       `/compliances/aircraft/${aircraftId}/latest`,

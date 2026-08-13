@@ -5,6 +5,8 @@
 import { WorkOrderStatus, UserRole } from '@prisma/client';
 import { prisma } from '../../infrastructure/database/prisma.client';
 import { auditLogService } from './AuditLogService';
+import { aircraftUsageService } from './AircraftUsageService';
+import { ComplianceDueDateService } from './ComplianceDueDateService';
 import {
   WORK_ORDER_STATE_MACHINE,
   assertValidTransition,
@@ -48,6 +50,7 @@ export interface UpdateWorkOrderInput {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class WorkOrderService {
+  private dueDateService = new ComplianceDueDateService();
 
   // ── Generate sequential WO number ─────────────────────────────────────────
   private async generateNumber(organizationId: string): Promise<string> {
@@ -130,7 +133,7 @@ export class WorkOrderService {
       workOrderId:  workOrder.id,
     });
 
-    return workOrder;
+    return this.normalizeDecimals(workOrder);
   }
 
   // ── Update metadata (only when DRAFT or OPEN) ─────────────────────────────
@@ -172,7 +175,7 @@ export class WorkOrderService {
       workOrderId:   id,
     });
 
-    return updated;
+    return this.normalizeDecimals(updated);
   }
 
   // ── Transition state ───────────────────────────────────────────────────────
@@ -203,6 +206,13 @@ export class WorkOrderService {
     }
 
     if (newStatus === 'CLOSED') {
+      // Sin evidencia no hay respaldo de que el trabajo se hizo: es la misma
+      // exigencia que ya tenía el endpoint de cierre del panel de asignación,
+      // pero ahora vive aquí para que ningún camino de cierre pueda saltársela.
+      if (!wo.evidenceFileUrl) {
+        throw new ValidationError('No se puede cerrar la OT: falta subir evidencia del trabajo realizado');
+      }
+
       await this.assertReadyToClose(wo.id);
 
       if (!['ADMIN', 'INSPECTOR'].includes(currentUser.role)) {
@@ -260,7 +270,109 @@ export class WorkOrderService {
       metadata:      { transition: `${wo.status} → ${newStatus}` },
     });
 
-    return updated;
+    if (newStatus === 'CLOSED') {
+      const generatedCompliances = await this.createComplianceForClosedTasks(updated, organizationId, currentUser);
+      if (generatedCompliances > 0) {
+        await auditLogService.log({
+          organizationId,
+          entityType:   'WorkOrder',
+          entityId:     id,
+          action:       'CLOSE_AND_COMPLY',
+          newValue:     { generatedCompliances, workOrderNumber: updated.number },
+          userId:       currentUser.id,
+          userEmail:    currentUser.email,
+          userRole:     currentUser.role,
+          workOrderId:  id,
+          metadata:     { message: `Cierre de OT ${updated.number} generó ${generatedCompliances} cumplimiento(s)` },
+        });
+      }
+    }
+
+    return this.normalizeDecimals(updated);
+  }
+
+  /**
+   * Genera un Compliance por cada tarea completada de la OT al cerrarla —
+   * mismo patrón que WorkRequestService.closeAndComply para que una tarea
+   * cumplida por OT actualice Cumplimientos/Remanentes/Due Engine igual que
+   * una cumplida por ST. Idempotente: si esta OT ya generó cumplimientos
+   * (reintento), no duplica.
+   */
+  private async createComplianceForClosedTasks(
+    wo: { id: string; number: string; aircraftId: string; evidenceFileUrl: string | null; evidenceFileName: string | null },
+    organizationId: string,
+    currentUser: { id: string; email: string; role: UserRole },
+  ): Promise<number> {
+    const existing = await prisma.compliance.count({
+      where: { organizationId, aircraftId: wo.aircraftId, workOrderNumber: wo.number },
+    });
+    if (existing > 0) return 0;
+
+    const completedTasks = await prisma.workOrderTask.findMany({
+      where: { workOrderId: wo.id, isCompleted: true },
+      include: { task: true },
+    });
+    if (completedTasks.length === 0) return 0;
+
+    const usageSummary = await aircraftUsageService.getAircraftUsageSummary(wo.aircraftId, organizationId);
+    const closeDate = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      for (const wot of completedTasks) {
+        const task = wot.task;
+        const taskForDue: import('../entities/MaintenanceTask').MaintenanceTask = {
+          ...task,
+          intervalHours: task.intervalHours != null ? Number(task.intervalHours) : null,
+          intervalCycles: task.intervalCycles,
+          intervalCalendarDays: task.intervalCalendarDays,
+          intervalCalendarMonths: task.intervalCalendarMonths,
+          toleranceHours: task.toleranceHours != null ? Number(task.toleranceHours) : null,
+          toleranceCycles: task.toleranceCycles,
+          toleranceCalendarDays: task.toleranceCalendarDays,
+          estimatedManHours: task.estimatedManHours != null ? Number(task.estimatedManHours) : null,
+        };
+        const computed = this.dueDateService.calculate(
+          taskForDue,
+          usageSummary.totalHours,
+          usageSummary.totalCycles,
+          closeDate,
+        );
+
+        await tx.compliance.create({
+          data: {
+            organizationId,
+            aircraftId: wo.aircraftId,
+            taskId: wot.taskId,
+            performedById: currentUser.id,
+            performedAt: closeDate,
+            aircraftHoursAtCompliance: usageSummary.totalHours,
+            aircraftCyclesAtCompliance: usageSummary.totalCycles,
+            nextDueHours: computed.nextDueHours,
+            nextDueCycles: computed.nextDueCycles,
+            nextDueDate: computed.nextDueDate,
+            workOrderNumber: wo.number,
+            notes: [
+              `OT ${wo.number}`,
+              wo.evidenceFileName ? `Evidencia ${wo.evidenceFileName}` : null,
+              wot.notes?.trim() || null,
+            ].filter(Boolean).join(' | '),
+          },
+        });
+      }
+    });
+
+    await aircraftUsageService.recordUsage({
+      organizationId,
+      aircraftId: wo.aircraftId,
+      date: closeDate,
+      totalHours: usageSummary.totalHours,
+      totalCycles: usageSummary.totalCycles,
+      source: 'ot_close',
+      notes: `Cierre OT ${wo.number}`,
+      updateMaster: false,
+    });
+
+    return completedTasks.length;
   }
 
   // ── Add / remove tasks ─────────────────────────────────────────────────────
@@ -356,7 +468,7 @@ export class WorkOrderService {
       include: this.fullInclude,
     });
     if (!wo) throw new NotFoundError('WorkOrder', id);
-    return wo;
+    return this.normalizeDecimals(wo);
   }
 
   // ── Internal helpers ───────────────────────────────────────────────────────
@@ -395,6 +507,35 @@ export class WorkOrderService {
         `No se puede cerrar la OT: hay ${unactioned} hallazgo(s) abierto(s) sin acción correctiva`,
       );
     }
+  }
+
+  /**
+   * Prisma serializa los campos Decimal como string sobre JSON (p.ej.
+   * "estimatedManHours" o "aircraftHoursAtOpen"), lo que rompe cualquier
+   * suma/.toFixed() del lado del frontend. Se normalizan a Number aquí, en
+   * el único punto donde se arma la respuesta completa de una OT.
+   */
+  private normalizeDecimals<T extends Record<string, any>>(wo: T): T {
+    const num = (v: unknown) => (v == null ? v : Number(v));
+    return {
+      ...wo,
+      aircraftHoursAtOpen: num(wo.aircraftHoursAtOpen),
+      aircraftHoursAtClose: num(wo.aircraftHoursAtClose),
+      aircraft: wo.aircraft ? { ...wo.aircraft, totalFlightHours: num(wo.aircraft.totalFlightHours) } : wo.aircraft,
+      tasks: Array.isArray(wo.tasks)
+        ? wo.tasks.map((t: any) => ({
+            ...t,
+            task: t.task
+              ? {
+                  ...t.task,
+                  intervalHours: num(t.task.intervalHours),
+                  toleranceHours: num(t.task.toleranceHours),
+                  estimatedManHours: num(t.task.estimatedManHours),
+                }
+              : t.task,
+          }))
+        : wo.tasks,
+    };
   }
 
   /** Reusable deep include for WO queries */

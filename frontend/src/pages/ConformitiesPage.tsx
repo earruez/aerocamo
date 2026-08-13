@@ -1,19 +1,38 @@
-import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { FileCheck2 } from 'lucide-react';
-import { workOrdersApi } from '@api/workOrders.api';
+import { FileCheck2, ChevronDown, Search } from 'lucide-react';
+import { aircraftApi } from '@api/aircraft.api';
+import { complianceApi } from '@api/compliance.api';
+
+const PAGE_SIZE = 100;
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
 
 export default function ConformitiesPage() {
-  const { data: workOrders = [], isLoading } = useQuery({
-    queryKey: ['work-orders'],
-    queryFn: () => workOrdersApi.list(),
+  const [selectedAircraftId, setSelectedAircraftId] = useState<string>('');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+
+  const { data: aircraft = [] } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
+
+  const { data: result, isLoading } = useQuery({
+    queryKey: ['compliances', selectedAircraftId, page],
+    queryFn: () => complianceApi.list({ aircraftId: selectedAircraftId || undefined, page, limit: PAGE_SIZE }),
   });
 
-  const conformities = useMemo(
-    () => workOrders.flatMap((wo) => wo.discrepancies.map((d) => ({ ...d, workOrderNumber: wo.number, workOrderId: wo.id }))),
-    [workOrders],
-  );
+  const records = result?.data ?? [];
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return records;
+    return records.filter((c) => [
+      c.task?.code, c.task?.ata, c.task?.title,
+      c.aircraft?.registration, c.workOrderNumber, c.performedBy?.name, c.inspectedBy?.name,
+    ].some((field) => field?.toLowerCase().includes(q)));
+  }, [records, search]);
 
   return (
     <div className="p-8 space-y-6">
@@ -23,53 +42,116 @@ export default function ConformitiesPage() {
         </div>
         <div>
           <h1 className="text-xl font-bold text-slate-900">Conformidades</h1>
-          <p className="text-sm text-slate-500">Seguimiento de hallazgos y conformidades en Órdenes de Trabajo</p>
+          <p className="text-sm text-slate-500">
+            Libro de cumplimientos: tareas de mantenimiento firmadas al cerrar una ST o una OT.
+          </p>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        <div className="px-5 py-3 border-b border-slate-100 text-sm font-semibold text-slate-700">
-          Total: {conformities.length}
+      {/* Filters */}
+      <div className="filter-bar">
+        <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest shrink-0">Aeronave</label>
+        <div className="relative">
+          <select
+            value={selectedAircraftId}
+            onChange={(e) => { setSelectedAircraftId(e.target.value); setPage(1); }}
+            className="filter-input pr-8 min-w-56 appearance-none cursor-pointer"
+          >
+            <option value="">— Todas las aeronaves —</option>
+            {aircraft.map((a) => (
+              <option key={a.id} value={a.id}>{a.registration} — {a.model}</option>
+            ))}
+          </select>
+          <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-slate-600">
-              <tr>
-                <th className="text-left px-4 py-2.5">Código</th>
-                <th className="text-left px-4 py-2.5">OT</th>
-                <th className="text-left px-4 py-2.5">Título</th>
-                <th className="text-left px-4 py-2.5">Estado</th>
-                <th className="text-left px-4 py-2.5">Fecha</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading && (
-                <tr><td className="px-4 py-4 text-slate-400" colSpan={5}>Cargando…</td></tr>
-              )}
-              {!isLoading && conformities.length === 0 && (
-                <tr><td className="px-4 py-4 text-slate-400" colSpan={5}>No hay conformidades registradas.</td></tr>
-              )}
-              {conformities.map((c) => (
-                <tr key={c.id} className="border-t border-slate-100">
-                  <td className="px-4 py-2.5 font-mono text-xs">{c.code}</td>
-                  <td className="px-4 py-2.5">
-                    <Link className="text-brand-600 hover:underline" to={`/work-orders/${c.workOrderId}`}>
-                      {c.workOrderNumber}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2.5">{c.title}</td>
-                  <td className="px-4 py-2.5">
-                    <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold bg-slate-100 text-slate-700">
-                      {c.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5">{new Date(c.createdAt).toLocaleDateString('es-MX')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="relative ml-auto">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar tarea, matrícula, OT/ST, quién firmó…"
+            className="filter-input min-w-72 pl-8"
+          />
         </div>
       </div>
+
+      <div
+        className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto
+        [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-track]:bg-slate-100
+        [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full
+        [&::-webkit-scrollbar-thumb:hover]:bg-slate-500"
+      >
+        <div className="px-5 py-3 border-b border-slate-100 text-sm font-semibold text-slate-700">
+          Total: {result?.total ?? 0}
+        </div>
+        <table className="min-w-full divide-y divide-slate-100 text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="table-header sticky left-0 z-10 bg-slate-50 w-[260px] min-w-[260px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">Tarea</th>
+              <th className="table-header">Aeronave</th>
+              <th className="table-header">Fecha de cumplimiento</th>
+              <th className="table-header text-right">Horas</th>
+              <th className="table-header text-right">Ciclos</th>
+              <th className="table-header">Próximo vencimiento</th>
+              <th className="table-header">Ref. OT/ST</th>
+              <th className="table-header">Realizado por</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {isLoading && (
+              <tr><td colSpan={8} className="table-cell text-center text-slate-400 py-12">Cargando…</td></tr>
+            )}
+            {!isLoading && filtered.length === 0 && (
+              <tr><td colSpan={8} className="table-cell text-center text-slate-400 py-12">
+                {search ? 'Sin resultados para esa búsqueda' : 'No hay conformidades registradas todavía'}
+              </td></tr>
+            )}
+            {filtered.map((c) => (
+              <tr key={c.id} className="hover:bg-slate-50/60 transition-colors">
+                <td className="table-cell sticky left-0 z-10 bg-white w-[260px] min-w-[260px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">
+                  <p className="font-mono text-xs font-bold text-slate-700">{c.task?.code ?? '—'}</p>
+                  <p className="text-xs text-slate-500 truncate max-w-[240px]">{c.task?.title ?? '—'}</p>
+                </td>
+                <td className="table-cell font-mono text-xs">{c.aircraft?.registration ?? '—'}</td>
+                <td className="table-cell">{fmtDate(c.performedAt)}</td>
+                <td className="table-cell text-right tabular-nums">{c.aircraftHoursAtCompliance?.toFixed(1) ?? '—'}</td>
+                <td className="table-cell text-right tabular-nums">{c.aircraftCyclesAtCompliance ?? '—'}</td>
+                <td className="table-cell text-xs">
+                  {c.nextDueDate ? fmtDate(c.nextDueDate) : null}
+                  {c.nextDueHours != null ? ` · ${c.nextDueHours.toFixed(1)} h` : ''}
+                  {c.nextDueCycles != null ? ` · ${c.nextDueCycles} cyc` : ''}
+                  {!c.nextDueDate && c.nextDueHours == null && c.nextDueCycles == null && '—'}
+                </td>
+                <td className="table-cell font-mono text-xs">{c.workOrderNumber ?? '—'}</td>
+                <td className="table-cell text-xs">{c.performedBy?.name ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {result && result.totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 text-sm">
+          <button
+            type="button"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            className="btn-secondary disabled:opacity-40"
+          >
+            Anterior
+          </button>
+          <span className="text-slate-500 text-xs">Página {result.page} de {result.totalPages}</span>
+          <button
+            type="button"
+            disabled={page >= result.totalPages}
+            onClick={() => setPage((p) => p + 1)}
+            className="btn-secondary disabled:opacity-40"
+          >
+            Siguiente
+          </button>
+        </div>
+      )}
     </div>
   );
 }

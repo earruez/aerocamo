@@ -158,22 +158,19 @@ export class WorkOrderController {
       const { aircraftId } = req.params;
       const organizationId = req.currentUser?.organizationId;
       const userId = req.currentUser?.id;
-      if (!organizationId || !userId) throw new AppError('Authentication context required', 401);
-
-      const dueTasks = await WorkOrderAutoGeneratorService.findTasksDueSoon(aircraftId, organizationId);
-      const createdWorkOrders = [];
-      for (const task of dueTasks) {
-        try {
-          const wo = await WorkOrderAutoGeneratorService.generateWorkOrder(aircraftId, task.taskId, organizationId, userId);
-          createdWorkOrders.push(wo);
-        } catch (woErr) { console.error(`Failed to generate WO for task ${task.taskId}:`, woErr); }
+      const userEmail = req.currentUser?.email;
+      const userRole = req.currentUser?.role;
+      if (!organizationId || !userId || !userEmail || !userRole) {
+        throw new AppError('Authentication context required', 401);
       }
 
-      res.json({
-        success: true,
-        message: `Generated ${createdWorkOrders.length} work order(s)`,
-        data: { generatedCount: createdWorkOrders.length, workOrders: createdWorkOrders, dueTasks },
-      });
+      const result = await WorkOrderAutoGeneratorService.generatePendingForAircraft(
+        aircraftId,
+        organizationId,
+        { id: userId, email: userEmail, role: userRole },
+      );
+
+      res.json({ success: true, message: result.message, data: result });
     } catch (error) { next(error); }
   }
 

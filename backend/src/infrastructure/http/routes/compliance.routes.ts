@@ -26,6 +26,7 @@ const ctrl = new ComplianceController(
 
 router.use(authMiddleware, tenantMiddleware);
 router.post('/', ctrl.record);
+router.get('/', ctrl.list);
 router.get('/aircraft/:aircraftId/latest', ctrl.latestPerTask);
 router.get('/aircraft/:aircraftId/task/:taskId/history', ctrl.historyForTask);
 

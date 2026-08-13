@@ -2,6 +2,7 @@ import { Compliance, ComplianceStatus, CreateComplianceInput } from '../entities
 import { PaginatedResult, PaginationOptions } from './shared';
 
 export interface ComplianceFilters {
+  aircraftId?: string;
   taskId?: string;
   componentId?: string;
   status?: ComplianceStatus;

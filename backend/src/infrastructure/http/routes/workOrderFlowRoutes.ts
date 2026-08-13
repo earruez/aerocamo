@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { WorkOrderController } from '../controllers/WorkOrderFlowController';
-import { authMiddleware } from '../middlewares/authMiddleware';
+import { authMiddleware, requireRoles } from '../middlewares/authMiddleware';
 import { upload } from '../middlewares/upload';
 
 /**
@@ -28,13 +28,13 @@ workOrderFlowRouter.get('/available-technicians', WorkOrderController.getAvailab
  * POST /api/v1/work-orders/:id/assign
  * Asignar OT a técnico
  */
-workOrderFlowRouter.post('/:id/assign', WorkOrderController.assignWorkOrder);
+workOrderFlowRouter.post('/:id/assign', requireRoles('ADMIN', 'SUPERVISOR'), WorkOrderController.assignWorkOrder);
 
 /**
  * POST /api/v1/work-orders/:id/start-execution
  * Técnico inicia ejecución
  */
-workOrderFlowRouter.post('/:id/start-execution', WorkOrderController.startExecution);
+workOrderFlowRouter.post('/:id/start-execution', requireRoles('ADMIN', 'SUPERVISOR', 'TECHNICIAN'), WorkOrderController.startExecution);
 
 /**
  * POST /api/v1/work-orders/:id/upload-evidence
@@ -42,6 +42,7 @@ workOrderFlowRouter.post('/:id/start-execution', WorkOrderController.startExecut
  */
 workOrderFlowRouter.post(
   '/:id/upload-evidence',
+  requireRoles('ADMIN', 'SUPERVISOR', 'TECHNICIAN'),
   upload.single('evidence'),
   WorkOrderController.uploadEvidence
 );
@@ -50,13 +51,13 @@ workOrderFlowRouter.post(
  * POST /api/v1/work-orders/:id/close
  * Cerrar OT (requiere evidencia)
  */
-workOrderFlowRouter.post('/:id/close', WorkOrderController.closeWorkOrder);
+workOrderFlowRouter.post('/:id/close', requireRoles('ADMIN', 'INSPECTOR'), WorkOrderController.closeWorkOrder);
 
 /**
  * POST /api/v1/work-orders/:aircraftId/generate-pending
  * Generar OT automáticamente para tareas próximas
  */
-workOrderFlowRouter.post('/:aircraftId/generate-pending', WorkOrderController.generatePendingWorkOrders);
+workOrderFlowRouter.post('/:aircraftId/generate-pending', requireRoles('ADMIN', 'SUPERVISOR'), WorkOrderController.generatePendingWorkOrders);
 
 /**
  * GET /api/v1/work-orders/:id/download-pdf
@@ -68,4 +69,4 @@ workOrderFlowRouter.get('/:id/download-pdf', WorkOrderController.downloadWorkOrd
  * POST /api/v1/work-orders/:id/email-pdf
  * Enviar PDF por email
  */
-workOrderFlowRouter.post('/:id/email-pdf', WorkOrderController.emailWorkOrderPdf);
+workOrderFlowRouter.post('/:id/email-pdf', requireRoles('ADMIN', 'SUPERVISOR'), WorkOrderController.emailWorkOrderPdf);

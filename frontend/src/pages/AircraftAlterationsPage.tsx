@@ -9,6 +9,7 @@ import {
   type AircraftAlterationInput,
 } from '@api/aircraftAlterations.api';
 import { useAuthStore } from '../store/authStore';
+import { applySort, SortableHeader, toggleSort, type SortState } from '@/shared/tableSort';
 
 // ─── Modal ────────────────────────────────────────────────────────────────────
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
@@ -161,6 +162,7 @@ function AlterationForm({
 export default function AircraftAlterationsPage() {
   const [aircraftId, setAircraftId] = useState('');
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<SortState | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<AircraftAlteration | null>(null);
   const [deleting, setDeleting] = useState<AircraftAlteration | null>(null);
@@ -214,6 +216,20 @@ export default function AircraftAlterationsPage() {
         .some((field) => field?.toLowerCase().includes(term)),
     );
   }, [alterations, search]);
+
+  const getSortValue = (a: AircraftAlteration, key: string): unknown => {
+    switch (key) {
+      case 'documento': return a.documentNumber;
+      case 'descripcion': return a.description;
+      case 'aprobacion': return a.approvalDate ? new Date(a.approvalDate) : null;
+      case 'fms': return a.hasFlightManualSupplement ? 1 : 0;
+      case 'ica': return a.hasIca ? 1 : 0;
+      case 'otTaller': return a.reference;
+      default: return null;
+    }
+  };
+
+  const sortedAlterations = useMemo(() => applySort(filtered, sort, getSortValue), [filtered, sort]);
 
   const counts = useMemo(() => ({
     total: alterations.length,
@@ -293,19 +309,19 @@ export default function AircraftAlterationsPage() {
 
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
             <div className="px-5 py-3 border-b border-slate-100 text-sm font-semibold text-slate-700">
-              {selectedAircraft.registration} · {filtered.length}
-              {filtered.length !== counts.total ? ` de ${counts.total}` : ''} alteraciones
+              {selectedAircraft.registration} · {sortedAlterations.length}
+              {sortedAlterations.length !== counts.total ? ` de ${counts.total}` : ''} alteraciones
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-slate-600">
+                <thead className="bg-slate-50 text-slate-600 sticky top-0 z-10">
                   <tr>
-                    <th className="text-left px-4 py-2.5">Documento</th>
-                    <th className="text-left px-4 py-2.5">Descripción</th>
-                    <th className="text-left px-4 py-2.5 whitespace-nowrap">Aprobación</th>
-                    <th className="text-left px-4 py-2.5">FMS</th>
-                    <th className="text-left px-4 py-2.5">ICA</th>
-                    <th className="text-left px-4 py-2.5">OT / Taller</th>
+                    <SortableHeader label="Documento" sortKey="documento" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="text-left px-4 py-2.5" />
+                    <SortableHeader label="Descripción" sortKey="descripcion" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="text-left px-4 py-2.5" />
+                    <SortableHeader label="Aprobación" sortKey="aprobacion" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="text-left px-4 py-2.5 whitespace-nowrap" />
+                    <SortableHeader label="FMS" sortKey="fms" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="text-left px-4 py-2.5" />
+                    <SortableHeader label="ICA" sortKey="ica" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="text-left px-4 py-2.5" />
+                    <SortableHeader label="OT / Taller" sortKey="otTaller" sort={sort} onSort={(k) => setSort((p) => toggleSort(p, k))} className="text-left px-4 py-2.5" />
                     {canEdit && <th className="text-right px-4 py-2.5">Acciones</th>}
                   </tr>
                 </thead>
@@ -313,7 +329,7 @@ export default function AircraftAlterationsPage() {
                   {isFetching && (
                     <tr><td className="px-4 py-4 text-slate-400" colSpan={canEdit ? 7 : 6}>Cargando…</td></tr>
                   )}
-                  {!isFetching && filtered.length === 0 && (
+                  {!isFetching && sortedAlterations.length === 0 && (
                     <tr>
                       <td className="px-4 py-4 text-slate-400" colSpan={canEdit ? 7 : 6}>
                         {counts.total === 0
@@ -322,7 +338,7 @@ export default function AircraftAlterationsPage() {
                       </td>
                     </tr>
                   )}
-                  {!isFetching && filtered.map((row) => (
+                  {!isFetching && sortedAlterations.map((row) => (
                     <tr key={row.id} className="border-t border-slate-100 align-top">
                       <td className="px-4 py-2.5 font-mono text-xs text-slate-700 max-w-[190px]">{row.documentNumber}</td>
                       <td className="px-4 py-2.5 max-w-[340px]">

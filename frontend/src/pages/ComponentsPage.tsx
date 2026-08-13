@@ -18,6 +18,7 @@ import {
 } from '@/shared/operationalContext';
 import { calculateComponentDue, calculateNextDue, type ComponentDueResult } from '@/shared/componentDueCalculator';
 import { mockComponentApplications } from '@/shared/componentTrackingMocks';
+import { applySort, SortableHeader, toggleSort, type SortState } from '@/shared/tableSort';
 import type {
   AircraftSnapshot,
   ComponentApplication,
@@ -1007,6 +1008,7 @@ export default function ComponentsPage() {
     enabled: !!selectedAircraft,
     staleTime: 0,
   });
+  const [movementSort, setMovementSort] = useState<SortState | null>(null);
 
   // Vencimientos calculados en el backend (Due Engine). El frontend no recalcula
   // remanentes: los muestra tal como los entrega el contrato.
@@ -1050,6 +1052,30 @@ export default function ComponentsPage() {
     }
     return map;
   }, [components]);
+
+  const getMovementSortValue = (row: typeof movementHistory[number], key: string): unknown => {
+    switch (key) {
+      case 'fecha': return new Date(row.movedAt);
+      case 'movimiento': return row.movementType;
+      case 'pn': return row.component?.partNumber ?? componentById.get(row.componentId)?.partNumber;
+      case 'sn': return row.component?.serialNumber ?? componentById.get(row.componentId)?.serialNumber;
+      case 'descripcion': return row.component?.description ?? componentById.get(row.componentId)?.description;
+      case 'posicion': return row.position;
+      case 'hrsaeronave': return Number(row.aircraftHoursAtMovement);
+      case 'ciclosaeronave': return row.aircraftCyclesAtMovement;
+      case 'hrscomponente': return Number(row.componentHoursAtMovement);
+      case 'ot': return row.workOrder?.number;
+      case 'usuario': return row.performedBy?.name;
+      case 'notas': return row.notes;
+      default: return null;
+    }
+  };
+
+  const sortedMovementHistory = useMemo(
+    () => applySort(movementHistory, movementSort, getMovementSortValue),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [movementHistory, movementSort, componentById],
+  );
 
   const installedComponents = useMemo(
     () => filteredComponents.filter((c) => !(c.position ?? '').toUpperCase().startsWith('REMOVED')),
@@ -1941,28 +1967,28 @@ export default function ComponentsPage() {
         <table className="min-w-full divide-y divide-slate-100 text-sm">
           <thead className="bg-white sticky top-0 z-10 border-b border-slate-200">
             <tr>
-              <th className="table-header">Fecha</th>
-              <th className="table-header">Movimiento</th>
-              <th className="table-header">P/N</th>
-              <th className="table-header">S/N</th>
-              <th className="table-header">Descripción</th>
-              <th className="table-header">Posición</th>
-              <th className="table-header">Hrs aeronave</th>
-              <th className="table-header">Ciclos aeronave</th>
-              <th className="table-header">Hrs componente</th>
-              <th className="table-header">OT</th>
-              <th className="table-header">Usuario</th>
-              <th className="table-header">Notas</th>
+              <SortableHeader label="Fecha" sortKey="fecha" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="Movimiento" sortKey="movimiento" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="P/N" sortKey="pn" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="S/N" sortKey="sn" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="Descripción" sortKey="descripcion" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="Posición" sortKey="posicion" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="Hrs aeronave" sortKey="hrsaeronave" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="Ciclos aeronave" sortKey="ciclosaeronave" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="Hrs componente" sortKey="hrscomponente" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="OT" sortKey="ot" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="Usuario" sortKey="usuario" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+              <SortableHeader label="Notas" sortKey="notas" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {loadingMovementHistory && (
               <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-8">Cargando historial…</td></tr>
             )}
-            {!loadingMovementHistory && movementHistory.length === 0 && (
+            {!loadingMovementHistory && sortedMovementHistory.length === 0 && (
               <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-8">Sin movimientos registrados para esta aeronave.</td></tr>
             )}
-            {movementHistory.map((row) => (
+            {sortedMovementHistory.map((row) => (
               <tr key={row.id} className="hover:bg-slate-50 transition-colors">
                 <td className="table-cell text-xs text-slate-600">{new Date(row.movedAt).toLocaleString('es-MX')}</td>
                 <td className="table-cell text-xs text-slate-700">{movementTypeBadge(row.movementType)}</td>
