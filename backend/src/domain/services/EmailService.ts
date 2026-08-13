@@ -1,5 +1,18 @@
 import nodemailer from 'nodemailer';
+import { readFile } from 'fs/promises';
 import { env } from '../../config/env';
+
+interface MailAttachment {
+  filename: string;
+  path: string;
+}
+
+interface MailInput {
+  to: string;
+  subject: string;
+  html: string;
+  attachments?: MailAttachment[];
+}
 
 /**
  * EmailService
@@ -9,7 +22,7 @@ export class EmailService {
   private static transporter: nodemailer.Transporter;
 
   /**
-   * Inicializar transporte SMTP
+   * Inicializar transporte SMTP (solo se usa cuando EMAIL_PROVIDER=smtp).
    */
   static initialize() {
     if (env.email.provider === 'smtp') {
@@ -22,16 +35,63 @@ export class EmailService {
           pass: env.email.smtpPass,
         },
       });
-    } else if (env.email.provider === 'sendgrid') {
-      // Usar plugin de Sendgrid si está disponible
-      this.transporter = nodemailer.createTransport({
-        host: 'smtp.sendgrid.net',
-        port: 587,
-        auth: {
-          user: 'apikey',
-          pass: env.email.sendgridApiKey,
-        },
-      });
+    }
+  }
+
+  /**
+   * Punto único de envío: con SendGrid usa su API HTTPS (puerto 443) en vez
+   * de SMTP (puerto 587) — varios hosts (Render incluido) bloquean SMTP
+   * saliente en sus planes gratis, y ahí una llamada por SMTP se queda
+   * colgada indefinidamente en vez de fallar con un error claro.
+   */
+  private static async dispatch(input: MailInput): Promise<void> {
+    if (env.email.provider === 'sendgrid') {
+      await this.sendViaSendGridApi(input);
+      return;
+    }
+
+    if (!this.transporter) {
+      this.initialize();
+    }
+    await this.transporter.sendMail({
+      from: env.email.fromAddress,
+      to: input.to,
+      subject: input.subject,
+      html: input.html,
+      attachments: input.attachments,
+    });
+  }
+
+  private static async sendViaSendGridApi(input: MailInput): Promise<void> {
+    const attachments = input.attachments
+      ? await Promise.all(
+          input.attachments.map(async (a) => ({
+            content: (await readFile(a.path)).toString('base64'),
+            filename: a.filename,
+            type: 'application/pdf',
+            disposition: 'attachment',
+          })),
+        )
+      : undefined;
+
+    const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.email.sendgridApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: input.to }] }],
+        from: { email: env.email.fromAddress },
+        subject: input.subject,
+        content: [{ type: 'text/html', value: input.html }],
+        ...(attachments ? { attachments } : {}),
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`SendGrid API error ${res.status}: ${body}`);
     }
   }
 
@@ -47,52 +107,40 @@ export class EmailService {
     plannedDate: Date,
     pdfAttachmentPath?: string
   ): Promise<void> {
-    if (!this.transporter) {
-      this.initialize();
-    }
-
     const subject = `Nueva Orden de Trabajo Asignada: ${workOrderNumber}`;
 
     const htmlContent = `
       <html>
         <body style="font-family: Arial, sans-serif; color: #333;">
           <h2>Hola ${technicianName},</h2>
-          
+
           <p>Se te ha asignado una nueva orden de trabajo.</p>
-          
+
           <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
             <h3>Detalles de la Orden de Trabajo</h3>
             <p><strong>Número OT:</strong> ${workOrderNumber}</p>
             <p><strong>Aeronave:</strong> ${aircraftRegistration} (${aircraftModel})</p>
             <p><strong>Fecha Programada:</strong> ${plannedDate.toLocaleDateString()}</p>
           </div>
-          
+
           <p>Por favor, accede a la plataforma para revisar los detalles completos de las tareas asignadas.</p>
-          
+
           <p>Si tienes preguntas, contacta a tu supervisor.</p>
-          
+
           <p>Saludos,<br/>Sistema de Gestión de Mantenimiento</p>
         </body>
       </html>
     `;
 
-    const mailOptions: nodemailer.SendMailOptions = {
-      from: env.email.fromAddress,
-      to: technicianEmail,
-      subject,
-      html: htmlContent,
-      attachments: pdfAttachmentPath
-        ? [
-            {
-              filename: `OT-${workOrderNumber}.pdf`,
-              path: pdfAttachmentPath,
-            },
-          ]
-        : undefined,
-    };
-
     try {
-      await this.transporter.sendMail(mailOptions);
+      await this.dispatch({
+        to: technicianEmail,
+        subject,
+        html: htmlContent,
+        attachments: pdfAttachmentPath
+          ? [{ filename: `OT-${workOrderNumber}.pdf`, path: pdfAttachmentPath }]
+          : undefined,
+      });
     } catch (error) {
       console.error('Error sending work order assignment email:', error);
       // No lanzar error: el sistema debe continuar aunque falle el email
@@ -108,41 +156,30 @@ export class EmailService {
     workOrderNumber: string,
     aircraftRegistration: string
   ): Promise<void> {
-    if (!this.transporter) {
-      this.initialize();
-    }
-
     const subject = `Requerida Evidencia Fotográfica: ${workOrderNumber}`;
 
     const htmlContent = `
       <html>
         <body style="font-family: Arial, sans-serif; color: #333;">
           <h2>Hola ${technicianName},</h2>
-          
+
           <p>Tu supervisor requiere que cargues evidencia fotográfica para completar la orden de trabajo.</p>
-          
+
           <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
             <p><strong>Orden de Trabajo:</strong> ${workOrderNumber}</p>
             <p><strong>Aeronave:</strong> ${aircraftRegistration}</p>
             <p><strong>Requerimiento:</strong> Carga al menos una foto del trabajo completado.</p>
           </div>
-          
+
           <p>Accede a la plataforma para cargar la evidencia.</p>
-          
+
           <p>Saludos,<br/>Sistema de Gestión de Mantenimiento</p>
         </body>
       </html>
     `;
 
-    const mailOptions: nodemailer.SendMailOptions = {
-      from: env.email.fromAddress,
-      to: technicianEmail,
-      subject,
-      html: htmlContent,
-    };
-
     try {
-      await this.transporter.sendMail(mailOptions);
+      await this.dispatch({ to: technicianEmail, subject, html: htmlContent });
     } catch (error) {
       console.error('Error sending evidence notification email:', error);
     }
@@ -158,42 +195,31 @@ export class EmailService {
     aircraftRegistration: string,
     technicianName: string
   ): Promise<void> {
-    if (!this.transporter) {
-      this.initialize();
-    }
-
     const subject = `Orden de Trabajo Completada: ${workOrderNumber}`;
 
     const htmlContent = `
       <html>
         <body style="font-family: Arial, sans-serif; color: #333;">
           <h2>Hola ${supervisorName},</h2>
-          
+
           <p>Una orden de trabajo ha sido completada y cerrada.</p>
-          
+
           <div style="background-color: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0;">
             <p><strong>Número OT:</strong> ${workOrderNumber}</p>
             <p><strong>Aeronave:</strong> ${aircraftRegistration}</p>
             <p><strong>Técnico:</strong> ${technicianName}</p>
             <p><strong>Estado:</strong> Completada y cerrada</p>
           </div>
-          
+
           <p>Los registros de cumplimiento se han actualizado automáticamente.</p>
-          
+
           <p>Saludos,<br/>Sistema de Gestión de Mantenimiento</p>
         </body>
       </html>
     `;
 
-    const mailOptions: nodemailer.SendMailOptions = {
-      from: env.email.fromAddress,
-      to: supervisorEmail,
-      subject,
-      html: htmlContent,
-    };
-
     try {
-      await this.transporter.sendMail(mailOptions);
+      await this.dispatch({ to: supervisorEmail, subject, html: htmlContent });
     } catch (error) {
       console.error('Error sending work order closed email:', error);
     }
@@ -207,39 +233,28 @@ export class EmailService {
     supervisorName: string,
     pendingCount: number
   ): Promise<void> {
-    if (!this.transporter) {
-      this.initialize();
-    }
-
     const subject = `Alerta: ${pendingCount} Orden(es) de Trabajo Pendiente(s) de Asignación`;
 
     const htmlContent = `
       <html>
         <body style="font-family: Arial, sans-serif; color: #333;">
           <h2>Hola ${supervisorName},</h2>
-          
+
           <p>Tienes ${pendingCount} orden(s) de trabajo que requieren asignación de técnico.</p>
-          
+
           <div style="background-color: #ffe0e0; padding: 15px; border-radius: 5px; margin: 20px 0;">
             <p><strong>Acción Requerida:</strong> Asignar técnico(s) a las órdenes pendientes.</p>
           </div>
-          
+
           <p>Accede a la plataforma para completar las asignaciones.</p>
-          
+
           <p>Saludos,<br/>Sistema de Gestión de Mantenimiento</p>
         </body>
       </html>
     `;
 
-    const mailOptions: nodemailer.SendMailOptions = {
-      from: env.email.fromAddress,
-      to: supervisorEmail,
-      subject,
-      html: htmlContent,
-    };
-
     try {
-      await this.transporter.sendMail(mailOptions);
+      await this.dispatch({ to: supervisorEmail, subject, html: htmlContent });
     } catch (error) {
       console.error('Error sending pending assignment alert email:', error);
     }
@@ -257,10 +272,6 @@ export class EmailService {
     createdAt: Date;
     pdfAttachmentPath: string;
   }): Promise<void> {
-    if (!this.transporter) {
-      this.initialize();
-    }
-
     const subject = `${input.organizationName} · Nueva Solicitud de Trabajo ${input.workRequestNumber} — ${input.aircraftRegistration}`;
     const esc = (value: string) =>
       value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -365,24 +376,24 @@ ${notesBlock}
       </html>
     `;
 
-    await this.transporter.sendMail({
-      from: env.email.fromAddress,
+    await this.dispatch({
       to: input.to,
       subject,
       html: htmlContent,
-      attachments: [
-        {
-          filename: `${input.workRequestNumber}.pdf`,
-          path: input.pdfAttachmentPath,
-        },
-      ],
+      attachments: [{ filename: `${input.workRequestNumber}.pdf`, path: input.pdfAttachmentPath }],
     });
   }
 
   /**
-   * Probar conexión SMTP
+   * Probar conexión de correo saliente
    */
   static async testConnection(): Promise<boolean> {
+    if (env.email.provider === 'sendgrid') {
+      // La API HTTPS no mantiene una conexión persistente que verificar;
+      // basta con confirmar que hay una API key configurada.
+      return Boolean(env.email.sendgridApiKey);
+    }
+
     if (!this.transporter) {
       this.initialize();
     }
