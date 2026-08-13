@@ -10,6 +10,7 @@
 import PDFDocument from 'pdfkit';
 import { dueEngineService, type DueRow, type DueStatus } from './DueEngineService';
 import { prisma } from '../../infrastructure/database/prisma.client';
+import { drawOrganizationLogo } from '../../shared/pdfLogo';
 
 const PAGE = { width: 841.89, height: 595.28 }; // A4 apaisado: la tabla necesita el ancho
 const MARGIN = 40;
@@ -86,7 +87,7 @@ export class RemanentesDocumentService {
   }
 
   static async renderPdf(organizationId: string, report: DueReportData): Promise<Buffer> {
-    const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true, legalName: true } });
+    const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true, legalName: true, logoDataUri: true } });
     if (!org) throw new Error('Organization not found');
 
     const doc = new PDFDocument({
@@ -114,14 +115,17 @@ export class RemanentesDocumentService {
 
   private static drawHeader(
     doc: Doc,
-    org: { name: string; legalName: string | null },
+    org: { name: string; legalName: string | null; logoDataUri?: string | null },
     aircraft: { registration: string; model: string; serialNumber: string; totalHours: number; totalCycles: number },
   ): void {
     doc.rect(0, 0, PAGE.width, 88).fill(BAND);
 
-    doc.fillColor(INK).font('Helvetica-Bold').fontSize(16).text('INFORME DE REMANENTES OPERACIONALES', MARGIN, 24);
-    doc.font('Helvetica').fontSize(9).fillColor(MUTED).text(org.name.toUpperCase(), MARGIN, 44);
-    if (org.legalName) doc.fontSize(8).text(org.legalName, MARGIN, 56);
+    const logoW = drawOrganizationLogo(doc, org.logoDataUri, MARGIN, 14, 36);
+    const textX = logoW > 0 ? MARGIN + logoW + 12 : MARGIN;
+
+    doc.fillColor(INK).font('Helvetica-Bold').fontSize(16).text('INFORME DE REMANENTES OPERACIONALES', textX, 24);
+    doc.font('Helvetica').fontSize(9).fillColor(MUTED).text(org.name.toUpperCase(), textX, 44);
+    if (org.legalName) doc.fontSize(8).text(org.legalName, textX, 56);
 
     const boxW = 240;
     const boxX = PAGE.width - MARGIN - boxW;

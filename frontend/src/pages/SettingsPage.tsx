@@ -22,6 +22,7 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 import { CounterTypesSection, ManualsSection, RepairShopsSection } from '../components/settings/CatalogSections';
+import { OrganizationBrandingSection } from '../components/settings/OrganizationBrandingSection';
 
 export default function SettingsPage() {
   const user = useAuthStore(s => s.user);
@@ -52,6 +53,8 @@ export default function SettingsPage() {
         <Field label="Rol" value={user?.role ?? '—'} />
         <Field label="ID de Organización" value={user?.organizationId ?? '—'} />
       </Section>
+
+      <OrganizationBrandingSection />
 
       <CounterTypesSection />
       <ManualsSection />
