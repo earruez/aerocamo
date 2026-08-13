@@ -6,6 +6,7 @@ export interface Organization {
   name: string;
   slug: string;
   legalName: string | null;
+  logoDataUri: string | null;
   country: string;
   subscriptionPlan: SubscriptionPlan;
   subscriptionStatus: SubscriptionStatus;

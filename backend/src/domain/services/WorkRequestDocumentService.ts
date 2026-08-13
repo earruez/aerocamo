@@ -11,6 +11,7 @@ import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 import { prisma } from '../../infrastructure/database/prisma.client';
+import { drawOrganizationLogo } from '../../shared/pdfLogo';
 
 const PAGE = { width: 595.28, height: 841.89 };
 const MARGIN = 44;
@@ -93,12 +94,15 @@ export class WorkRequestDocumentService {
   private static drawHeader(doc: Doc, wr: any): void {
     doc.rect(0, 0, PAGE.width, 96).fill(BAND);
 
+    const logoW = drawOrganizationLogo(doc, wr.organization.logoDataUri, MARGIN, 16, 40);
+    const textX = logoW > 0 ? MARGIN + logoW + 12 : MARGIN;
+
     doc.fillColor(INK).font('Helvetica-Bold').fontSize(16)
-      .text('SOLICITUD DE TRABAJO', MARGIN, 26);
+      .text('SOLICITUD DE TRABAJO', textX, 26);
     doc.font('Helvetica').fontSize(9).fillColor(MUTED)
-      .text(wr.organization.name.toUpperCase(), MARGIN, 47);
+      .text(wr.organization.name.toUpperCase(), textX, 47);
     if (wr.organization.legalName) {
-      doc.fontSize(8).text(wr.organization.legalName, MARGIN, 60, { width: 300 });
+      doc.fontSize(8).text(wr.organization.legalName, textX, 60, { width: 300 - (textX - MARGIN) });
     }
 
     // Bloque de identificación, alineado a la derecha

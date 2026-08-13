@@ -285,6 +285,9 @@ model Organization {
   name               String             @db.VarChar(255)
   slug               String             @unique @db.VarChar(100)
   legalName          String?            @db.VarChar(255)
+  /// Logo en PNG/JPEG como data URI (data:image/png;base64,...) — se
+  /// incrusta directo en los PDF generados sin depender de un fetch externo.
+  logoDataUri        String?            @db.Text
   country            String             @db.Char(2)          // ISO 3166-1 alpha-2
   subscriptionPlan   SubscriptionPlan   @default(FREE)
   subscriptionStatus SubscriptionStatus @default(TRIALING)

@@ -21,6 +21,7 @@ import { workOrderFlowRouter } from './infrastructure/http/routes/workOrderFlowR
 import { workRequestRoutes } from './infrastructure/http/routes/workRequests.routes';
 import { grisselleMroRoutes } from './infrastructure/http/routes/grisselleMro.routes';
 import { platformRoutes } from './infrastructure/http/routes/platform.routes';
+import { organizationRoutes } from './infrastructure/http/routes/organization.routes';
 
 export function createApp(): Application {
   const app = express();
@@ -88,6 +89,7 @@ export function createApp(): Application {
   app.use(`${API}/audit-logs`,       auditRouter);
   app.use(`${API}/library`,          templateLibraryRouter);
   app.use(`${API}/work-requests`,    workRequestRoutes);
+  app.use(`${API}/organization`,     organizationRoutes);
 
   // Compatibility routes for Grisselle MRO integration without version prefix.
   app.use('/api',                    grisselleMroRoutes);

@@ -1,0 +1,5 @@
+BEGIN;
+
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS "logoDataUri" TEXT;
+
+COMMIT;

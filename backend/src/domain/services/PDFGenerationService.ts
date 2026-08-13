@@ -10,6 +10,7 @@ import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 import { PrismaClient } from '@prisma/client';
+import { drawOrganizationLogo } from '../../shared/pdfLogo';
 
 const prisma = new PrismaClient();
 
@@ -99,12 +100,15 @@ export class PDFGenerationService {
   private static drawHeader(doc: Doc, wo: any): void {
     doc.rect(0, 0, PAGE.width, 96).fill(BAND);
 
+    const logoW = drawOrganizationLogo(doc, wo.organization.logoDataUri, MARGIN, 16, 40);
+    const textX = logoW > 0 ? MARGIN + logoW + 12 : MARGIN;
+
     doc.fillColor(INK).font('Helvetica-Bold').fontSize(16)
-      .text('ORDEN DE TRABAJO', MARGIN, 26);
+      .text('ORDEN DE TRABAJO', textX, 26);
     doc.font('Helvetica').fontSize(9).fillColor(MUTED)
-      .text(wo.organization.name.toUpperCase(), MARGIN, 47);
+      .text(wo.organization.name.toUpperCase(), textX, 47);
     if (wo.organization.legalName) {
-      doc.fontSize(8).text(wo.organization.legalName, MARGIN, 60, { width: 300 });
+      doc.fontSize(8).text(wo.organization.legalName, textX, 60, { width: 300 - (textX - MARGIN) });
     }
 
     const boxW = 178;
