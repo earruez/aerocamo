@@ -27,6 +27,8 @@ export interface Compliance {
   task?: { code: string; ata: string | null; title: string; description: string; referenceType: string | null; referenceNumber: string | null } | null;
   component?: { id: string; partNumber: string; serialNumber: string } | null;
   inspectedBy?: { id: string; name: string } | null;
+  performedBy?: { id: string; name: string } | null;
+  aircraft?: { id: string; registration: string; model: string; totalFlightHours: number; totalCycles: number } | null;
 }
 
 export type CreateComplianceInput = Pick<

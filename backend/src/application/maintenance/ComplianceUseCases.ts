@@ -129,14 +129,14 @@ export class GetComplianceUseCase {
   constructor(private readonly complianceRepo: IComplianceRepository) {}
 
   async findAllForAircraft(
-    aircraftId: string,
+    aircraftId: string | undefined,
     organizationId: string,
     filters?: ComplianceFilters,
     options?: PaginationOptions,
   ): Promise<PaginatedResult<Compliance>> {
     return this.complianceRepo.findAll(
       organizationId,
-      { ...filters },
+      { ...filters, ...(aircraftId ? { aircraftId } : {}) },
       options,
     );
   }

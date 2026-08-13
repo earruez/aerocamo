@@ -2,6 +2,12 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { RecordComplianceUseCase, GetComplianceUseCase } from '../../../application/maintenance/ComplianceUseCases';
 
+const listSchema = z.object({
+  aircraftId: z.string().uuid().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
 const recordSchema = z.object({
   aircraftId: z.string().uuid(),
   taskId: z.string().uuid(),
@@ -34,6 +40,19 @@ export class ComplianceController {
         performedById: req.currentUser.id,
       });
       res.status(201).json({ status: 'success', data: compliance });
+    } catch (err) { next(err); }
+  };
+
+  list = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const { aircraftId, page, limit } = listSchema.parse(req.query);
+      const result = await this.getUseCase.findAllForAircraft(
+        aircraftId,
+        req.organizationId,
+        {},
+        { page, limit },
+      );
+      res.status(200).json({ status: 'success', data: result });
     } catch (err) { next(err); }
   };
 

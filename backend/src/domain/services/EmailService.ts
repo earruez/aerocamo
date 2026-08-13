@@ -248,27 +248,119 @@ export class EmailService {
   static async sendWorkRequestNotification(input: {
     to: string;
     responsibleName: string;
+    organizationName: string;
     workRequestNumber: string;
     aircraftRegistration: string;
     aircraftModel: string;
+    itemCount: number;
+    dispatchNotes?: string | null;
+    createdAt: Date;
     pdfAttachmentPath: string;
   }): Promise<void> {
     if (!this.transporter) {
       this.initialize();
     }
 
-    const subject = `Solicitud de Trabajo ${input.workRequestNumber}`;
+    const subject = `${input.organizationName} · Nueva Solicitud de Trabajo ${input.workRequestNumber} — ${input.aircraftRegistration}`;
+    const esc = (value: string) =>
+      value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+    const formattedDate = input.createdAt.toLocaleDateString('es-CL', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    });
+
+    const notesBlock = input.dispatchNotes
+      ? `
+          <tr>
+            <td style="padding: 0 32px 24px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;">
+                <tr>
+                  <td style="padding: 14px 16px; font-size: 13px; line-height: 1.6; color: #92400e; font-family: Arial, Helvetica, sans-serif;">
+                    <strong>Notas del envío:</strong> ${esc(input.dispatchNotes)}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`
+      : '';
+
     const htmlContent = `
-      <html>
-        <body style="font-family: Arial, sans-serif; color: #333;">
-          <h2>Hola ${input.responsibleName},</h2>
-          <p>Se ha generado una Solicitud de Trabajo para la aeronave ${input.aircraftRegistration}.</p>
-          <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <p><strong>Solicitud:</strong> ${input.workRequestNumber}</p>
-            <p><strong>Aeronave:</strong> ${input.aircraftRegistration} (${input.aircraftModel})</p>
-          </div>
-          <p>Adjunto encontrarás el PDF con las tareas agrupadas para despacho.</p>
-          <p>Saludos,<br/>Sistema de Gestión de Mantenimiento</p>
+      <!DOCTYPE html>
+      <html lang="es">
+        <body style="margin: 0; padding: 0; background-color: #f1f5f9;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f1f5f9; padding: 32px 16px;">
+            <tr>
+              <td align="center">
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);">
+                  <!-- Header -->
+                  <tr>
+                    <td style="background-color: #1d4ed8; background-image: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); padding: 28px 32px;">
+                      <table role="presentation" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td style="width: 40px; height: 40px; background-color: #ffffff; border-radius: 10px; text-align: center; vertical-align: middle; font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: bold; color: #1d4ed8;">
+                            A
+                          </td>
+                          <td style="padding-left: 12px; font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: bold; color: #ffffff; letter-spacing: 0.5px;">
+                            AEROCAMO
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <!-- Body -->
+                  <tr>
+                    <td style="padding: 32px 32px 8px; font-family: Arial, Helvetica, sans-serif;">
+                      <p style="margin: 0 0 4px; font-size: 13px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; color: #2563eb;">
+                        Nueva Solicitud de Trabajo
+                      </p>
+                      <h1 style="margin: 0 0 16px; font-size: 21px; line-height: 1.4; color: #0f172a;">
+                        ${esc(input.aircraftRegistration)} — ${esc(input.aircraftModel)}
+                      </h1>
+                      <p style="margin: 0 0 20px; font-size: 14px; line-height: 1.6; color: #334155;">
+                        Hola ${esc(input.responsibleName)}, <strong>${esc(input.organizationName)}</strong> ha generado una nueva solicitud de trabajo para la aeronave <strong>${esc(input.aircraftRegistration)}</strong>. Encontrarás el detalle completo de las tareas en el PDF adjunto a este correo.
+                      </p>
+                    </td>
+                  </tr>
+
+                  <!-- Info card -->
+                  <tr>
+                    <td style="padding: 0 32px 24px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+                        <tr>
+                          <td style="padding: 16px 20px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #64748b; width: 40%;">Solicitud</td>
+                          <td style="padding: 16px 20px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #0f172a; font-weight: bold; text-align: right;">${esc(input.workRequestNumber)}</td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 0 20px 16px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #64748b;">Aeronave</td>
+                          <td style="padding: 0 20px 16px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #0f172a; font-weight: bold; text-align: right;">${esc(input.aircraftRegistration)} (${esc(input.aircraftModel)})</td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 0 20px 16px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #64748b;">Ítems incluidos</td>
+                          <td style="padding: 0 20px 16px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #0f172a; font-weight: bold; text-align: right;">${input.itemCount}</td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 0 20px 20px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #64748b;">Fecha de envío</td>
+                          <td style="padding: 0 20px 20px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #0f172a; font-weight: bold; text-align: right;">${formattedDate}</td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+${notesBlock}
+                  <!-- Footer -->
+                  <tr>
+                    <td style="padding: 20px 32px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; font-family: Arial, Helvetica, sans-serif;">
+                      <p style="margin: 0; font-size: 12px; line-height: 1.6; color: #94a3b8;">
+                        Este correo fue generado automáticamente por Aerocamo a nombre de ${esc(input.organizationName)}. Por favor no respondas a esta dirección.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
         </body>
       </html>
     `;

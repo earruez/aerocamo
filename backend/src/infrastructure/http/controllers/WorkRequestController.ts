@@ -302,13 +302,22 @@ export class WorkRequestController {
       const pdf = await WorkRequestDocumentService.generateSTDocument(wr.id);
       const pdfPath = await WorkRequestDocumentService.savePdfToFile(pdf, `${wr.number}.pdf`);
 
+      const organization = await prisma.organization.findUnique({
+        where: { id: req.organizationId },
+        select: { name: true },
+      });
+
       EmailService.initialize();
       await EmailService.sendWorkRequestNotification({
         to: target,
         responsibleName: wr.repairShopContact?.name ?? wr.responsible?.name ?? 'Responsable',
+        organizationName: organization?.name ?? 'Aerocamo',
         workRequestNumber: wr.number,
         aircraftRegistration: wr.aircraft.registration,
         aircraftModel: wr.aircraft.model,
+        itemCount: wr.items.length,
+        dispatchNotes: wr.dispatchNotes,
+        createdAt: wr.createdAt,
         pdfAttachmentPath: pdfPath,
       });
 

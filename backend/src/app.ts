@@ -80,8 +80,11 @@ export function createApp(): Application {
   app.use(`${API}/components`,       componentTrackingRoutes);
   app.use(`${API}/components`,       componentHistoryRouter);
   app.use(`${API}/tasks`,            taskRoutes);
-  app.use(`${API}/work-orders`,      workOrderRoutes);
+  // El router de flujo va primero: sus rutas literales (/pending-assignment,
+  // /available-technicians) deben resolverse antes que el "/:id" genérico de
+  // workOrderRoutes, que si no las intercepta como si "id" fuera ese texto.
   app.use(`${API}/work-orders`,      workOrderFlowRouter);
+  app.use(`${API}/work-orders`,      workOrderRoutes);
   app.use(`${API}/audit-logs`,       auditRouter);
   app.use(`${API}/library`,          templateLibraryRouter);
   app.use(`${API}/work-requests`,    workRequestRoutes);

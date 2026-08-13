@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'react-hot-toast';
+import { saveAs } from 'file-saver';
 import {
   ArrowLeft, ClipboardList, Plane, User, Calendar, Clock, CheckCircle2,
   AlertTriangle, ShieldCheck, Loader2, Plus, Check, FileText,
   ChevronDown, X, AlertCircle, Activity, Download, Lock, Pencil,
-  Stamp, Timer, GitBranch, Wrench, ListChecks, Shield, Edit3,
+  Timer, GitBranch, Wrench, ListChecks, Shield, Edit3,
   AlertOctagon, RefreshCw, Eye, UserCheck, Upload, Mail,
 } from 'lucide-react';
 import { useAuthStore } from '@store/authStore';
@@ -1505,97 +1506,6 @@ function AuditLogTimeline({ workOrderId }: { workOrderId: string }) {
   );
 }
 
-// ── Close Stamp Modal ─────────────────────────────────────────────────────
-// Inspector must enter their license number to authorize return to service.
-
-function CloseStampModal({
-  wo,
-  onConfirm,
-  onClose,
-  isPending,
-}: {
-  wo: WorkOrder;
-  onConfirm: (licenseNumber: string) => void;
-  onClose: () => void;
-  isPending: boolean;
-}) {
-  const user = useAuthStore(s => s.user);
-  const [license, setLicense] = useState('');
-  const isValid = license.trim().length >= 3;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 bg-slate-900 rounded-t-2xl">
-          <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center">
-            <Stamp size={16} className="text-emerald-400" />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-white">Sello Digital de Cierre</h2>
-            <p className="text-xs text-slate-400">{wo.number} · Retorno al Servicio</p>
-          </div>
-        </div>
-
-        <div className="p-6 space-y-5">
-          {/* Regulatory notice */}
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-2.5">
-            <AlertTriangle size={14} className="text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-800 leading-relaxed">
-              <strong>Acción regulatoria.</strong> Al firmar digitalmente autorizas el retorno al servicio de la aeronave
-              &nbsp;<strong>{wo.aircraft.registration}</strong>. Este registro queda vinculado a tu número de licencia
-              técnica en el historial aeronáutico de la OT.
-            </p>
-          </div>
-
-          {/* Inspector info */}
-          {user && (
-            <div className="bg-slate-50 rounded-xl px-4 py-3">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Inspector que cierra</p>
-              <p className="text-sm font-semibold text-slate-800">{user.name}</p>
-              <p className="text-xs text-slate-500">{user.email} · {user.role}</p>
-            </div>
-          )}
-
-          {/* License input */}
-          <div>
-            <label className="form-label">
-              N° de Licencia Técnica <span className="text-rose-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={license}
-              onChange={e => setLicense(e.target.value.toUpperCase())}
-              placeholder="Ej: AMT-2024-0042"
-              className="filter-input w-full font-mono text-sm tracking-wide"
-              autoFocus
-              onKeyDown={e => { if (e.key === 'Enter' && isValid) onConfirm(license.trim()); }}
-            />
-            <p className="text-[11px] text-slate-400 mt-1">
-              Ingresa tu número de licencia AMT, IA o equivalente emitido por la autoridad de aviación civil.
-            </p>
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex justify-end gap-2 pt-1">
-            <button type="button" onClick={onClose} className="btn-secondary" disabled={isPending}>
-              Cancelar
-            </button>
-            <button
-              onClick={() => onConfirm(license.trim())}
-              disabled={!isValid || isPending}
-              className="btn-primary flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 border-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isPending ? <Loader2 size={14} className="animate-spin" /> : <Stamp size={14} />}
-              Firmar y Cerrar OT
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Main Detail Page ───────────────────────────────────────────────────────
 
 // ── Assignment Workflow Panel ─────────────────────────────────────────────
@@ -1629,6 +1539,7 @@ interface AssignmentWorkflowPanelProps {
   isSendingEmail: boolean;
   currentUserId?: string;
   canAssign: boolean;
+  canClose: boolean;
   showEmailInput: boolean;
   setShowEmailInput: (v: boolean) => void;
   emailTarget: string;
@@ -1646,6 +1557,7 @@ function AssignmentWorkflowPanel({
   isSendingEmail,
   currentUserId,
   canAssign,
+  canClose,
   showEmailInput,
   setShowEmailInput,
   emailTarget,
@@ -1654,6 +1566,19 @@ function AssignmentWorkflowPanel({
   const qc = useQueryClient();
   const assignmentStatus: WorkOrderAssignmentStatus = wo.assignmentStatus ?? 'PENDING';
   const isAssignedToMe = wo.assignedTechnicianId === currentUserId;
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true);
+    try {
+      const blob = await workOrdersApi.downloadPdf(wo.id);
+      saveAs(blob, `${wo.number}.pdf`);
+    } catch {
+      toast.error('No se pudo descargar el PDF');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-card p-5 space-y-5">
@@ -1694,16 +1619,15 @@ function AssignmentWorkflowPanel({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {/* PDF Download button */}
-        <a
-          href={`/api/v1/work-orders/${wo.id}/download-pdf`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
+        {/* PDF Download button — vía fetch autenticado, no <a href> directo (el endpoint exige Bearer token) */}
+        <button
+          onClick={handleDownloadPdf}
+          disabled={downloadingPdf}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 disabled:opacity-50 transition-colors"
         >
-          <Download size={12} />
+          {downloadingPdf ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
           Descargar PDF
-        </a>
+        </button>
 
         {/* Email PDF button */}
         {!showEmailInput ? (
@@ -1760,8 +1684,8 @@ function AssignmentWorkflowPanel({
           </button>
         )}
 
-        {/* Close button — only when evidence uploaded */}
-        {assignmentStatus === 'EVIDENCE_UPLOADED' && canAssign && (
+        {/* Close button — evidencia subida y ya pasó por Calidad (único camino de cierre) */}
+        {assignmentStatus === 'EVIDENCE_UPLOADED' && wo.status === 'QUALITY' && canClose && (
           <button
             onClick={onClose}
             disabled={isClosing}
@@ -1770,6 +1694,12 @@ function AssignmentWorkflowPanel({
             {isClosing ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
             Cerrar OT
           </button>
+        )}
+        {assignmentStatus === 'EVIDENCE_UPLOADED' && wo.status !== 'QUALITY' && (
+          <p className="text-xs text-slate-500 flex items-center gap-1.5">
+            <AlertTriangle size={12} className="text-amber-500 shrink-0" />
+            Evidencia recibida — falta enviar la OT a Calidad (arriba) antes de poder cerrarla.
+          </p>
         )}
       </div>
 
@@ -1807,7 +1737,6 @@ export default function WorkOrderDetailPage() {
   const qc = useQueryClient();
   const user = useAuthStore(s => s.user);
   const [showEdit, setShowEdit] = useState(false);
-  const [showStamp, setShowStamp] = useState(false);
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showEmailInput, setShowEmailInput] = useState(false);
@@ -1868,7 +1797,6 @@ export default function WorkOrderDetailPage() {
       toast.success(`OT ${label}`);
       qc.invalidateQueries({ queryKey: ['work-order', id] });
       qc.invalidateQueries({ queryKey: ['work-orders'] });
-      setShowStamp(false);
     },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'No se pudo cambiar el estado';
@@ -1917,7 +1845,10 @@ export default function WorkOrderDetailPage() {
 
   const stateMachine = ensureStateMachine(workOrderStateMachine, 'WorkOrderDetailPage');
 
-  const nextSteps = stateMachine.transitions[wo.status] ?? [];
+  // El cierre (CLOSED) tiene un único camino: el botón "Cerrar OT" del panel
+  // de asignación, que exige evidencia subida. Se excluye aquí para no tener
+  // dos botones de cierre con reglas distintas.
+  const nextSteps = (stateMachine.transitions[wo.status] ?? []).filter(target => target !== 'CLOSED');
   const lifecycleStatuses = getOrderedStatuses(stateMachine);
   const currentStatusClass = getStatusBadgeClass(stateMachine, wo.status);
   const StatusIcon = STATUS_ICONS[wo.status];
@@ -1978,6 +1909,7 @@ export default function WorkOrderDetailPage() {
           isSendingEmail={emailPdfMutation.isPending}
           currentUserId={user?.id}
           canAssign={user?.role === 'ADMIN' || user?.role === 'SUPERVISOR'}
+          canClose={user?.role === 'ADMIN' || user?.role === 'INSPECTOR'}
           showEmailInput={showEmailInput}
           setShowEmailInput={setShowEmailInput}
           emailTarget={emailTarget}
@@ -2089,24 +2021,16 @@ export default function WorkOrderDetailPage() {
                   const openUnactioned = wo.discrepancies.filter(
                     d => d.status === 'OPEN' && !d.resolutionNotes?.trim()
                   ).length;
-                  const blockedClose   = target === 'CLOSED'  && openUnactioned > 0;
-                  const blockedQuality = target === 'QUALITY' && openUnactioned > 0;
-                  const isBlocked      = blockedClose || blockedQuality;
+                  const isBlocked = target === 'QUALITY' && openUnactioned > 0;
                   return (
                     <button
                       key={target}
                       onClick={() => {
                         if (isBlocked) {
-                          const dest = target === 'QUALITY' ? 'enviar a Calidad' : 'cerrar la OT';
                           toast.error(
-                            `${openUnactioned} hallazgo${openUnactioned > 1 ? 's' : ''} sin acción correctiva. Resuélvelos antes de ${dest}.`
+                            `${openUnactioned} hallazgo${openUnactioned > 1 ? 's' : ''} sin acción correctiva. Resuélvelos antes de enviar a Calidad.`
                           );
                           setShowEdit(true);
-                          return;
-                        }
-                        // CLOSED requires digital stamp
-                        if (target === 'CLOSED') {
-                          setShowStamp(true);
                           return;
                         }
                         // REJECT (QUALITY → IN_PROGRESS) requires confirmation
@@ -2121,8 +2045,6 @@ export default function WorkOrderDetailPage() {
                       className={`w-full text-xs font-bold px-3 py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                         isBlocked
                           ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                          : target === 'CLOSED'
-                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                           : (currentStatus === 'QUALITY' && target === 'IN_PROGRESS')
                           ? 'bg-rose-600 hover:bg-rose-700 text-white'
                           : (target === 'DRAFT' || (currentStatus === 'IN_PROGRESS' && target === 'OPEN'))
@@ -2192,20 +2114,6 @@ export default function WorkOrderDetailPage() {
 
       {/* Edit / Read-only modal */}
       {showEdit && <EditWorkOrderModal wo={wo} onClose={() => setShowEdit(false)} />}
-
-      {/* Digital Stamp modal — intercepts CLOSED transition */}
-      {showStamp && (
-        <CloseStampModal
-          wo={wo}
-          onClose={() => setShowStamp(false)}
-          isPending={transitionMutation.isPending}
-          onConfirm={(licenseNumber) => {
-            // Store stamp in audit notes via toast + fire transition
-            toast.success(`Sello digital registrado — Lic. ${licenseNumber}`, { duration: 4000 });
-            transitionMutation.mutate('CLOSED');
-          }}
-        />
-      )}
 
       {/* Reject confirmation modal — QUALITY → IN_PROGRESS */}
       {showRejectConfirm && (

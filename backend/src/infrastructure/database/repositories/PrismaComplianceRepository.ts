@@ -61,6 +61,7 @@ export class PrismaComplianceRepository implements IComplianceRepository {
         task: { select: { code: true, ata: true, title: true, description: true, referenceType: true, referenceNumber: true } },
         component: { select: { id: true, partNumber: true, serialNumber: true } },
         inspectedBy: { select: { id: true, name: true } },
+        aircraft: { select: { id: true, registration: true, model: true, totalFlightHours: true, totalCycles: true } },
       },
     });
 
@@ -81,6 +82,7 @@ export class PrismaComplianceRepository implements IComplianceRepository {
 
     const where: Prisma.ComplianceWhereInput = {
       organizationId,
+      ...(filters.aircraftId && { aircraftId: filters.aircraftId }),
       ...(filters.taskId && { taskId: filters.taskId }),
       ...(filters.componentId && { componentId: filters.componentId }),
       ...(filters.status && { status: filters.status }),
@@ -93,11 +95,20 @@ export class PrismaComplianceRepository implements IComplianceRepository {
     };
 
     const [data, total] = await prisma.$transaction([
-      prisma.compliance.findMany({ where, skip, take: limit, orderBy: { performedAt: 'desc' } }),
+      prisma.compliance.findMany({
+        where, skip, take: limit, orderBy: { performedAt: 'desc' },
+        include: {
+          task: { select: { code: true, ata: true, title: true, description: true, referenceType: true, referenceNumber: true } },
+          component: { select: { id: true, partNumber: true, serialNumber: true } },
+          inspectedBy: { select: { id: true, name: true } },
+          performedBy: { select: { id: true, name: true } },
+          aircraft: { select: { id: true, registration: true, model: true, totalFlightHours: true, totalCycles: true } },
+        },
+      }),
       prisma.compliance.count({ where }),
     ]);
 
-    return { data: data.map(this.toEntity), total, page, limit, totalPages: Math.ceil(total / limit) };
+    return { data: data.map((r) => this.toEntityWithRelations(r)), total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   /** Append-only: no update or delete on compliance records */
@@ -134,11 +145,16 @@ export class PrismaComplianceRepository implements IComplianceRepository {
 
   /** Same numeric normalization as toEntity, plus whatever relations were `include`d. */
   private toEntityWithRelations(r: Record<string, unknown>): Compliance {
+    const aircraft = r.aircraft as { id: string; registration: string; model: string; totalFlightHours: unknown; totalCycles: number } | null | undefined;
     return {
       ...this.toEntity(r),
       task: (r.task as Compliance['task']) ?? null,
       component: (r.component as Compliance['component']) ?? null,
       inspectedBy: (r.inspectedBy as Compliance['inspectedBy']) ?? null,
+      performedBy: (r.performedBy as Compliance['performedBy']) ?? null,
+      aircraft: aircraft
+        ? { ...aircraft, totalFlightHours: Number(aircraft.totalFlightHours) }
+        : null,
     };
   }
 }
