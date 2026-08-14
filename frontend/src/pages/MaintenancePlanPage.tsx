@@ -1419,6 +1419,12 @@ export default function MaintenancePlanPage() {
     const s = searchParams.get('status') as PlanItemStatus | '';
     if (s) setFilterStatus(s);
   }, [searchParams]);
+
+  // Sync URL → selected aircraft when navigating here from another page (ej. detalle de ST)
+  useEffect(() => {
+    const aircraftId = searchParams.get('aircraftId') ?? searchParams.get('aircraft');
+    if (aircraftId) setSelectedId(aircraftId);
+  }, [searchParams]);
   const [modal, setModal] = useState<ModalState>(null);
   const selectWorkRequest = useWorkRequestStore((s) => s.selectWorkRequest);
   const getDraftWorkRequestByAircraft = useWorkRequestStore((s) => s.getDraftWorkRequestByAircraft);

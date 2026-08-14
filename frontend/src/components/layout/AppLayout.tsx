@@ -77,12 +77,34 @@ function initials(name?: string) {
 
 /** Provides notifications list + unread count, reactive to markRead calls */
 const NOTIF_READ_KEY = 'griselle-notif-read';
+const NOTIF_READ_CHANGED_EVENT = 'griselle-notif-read-changed';
+
+function readIdsFromStorage(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(NOTIF_READ_KEY) ?? '[]') as string[]); }
+  catch { return new Set(); }
+}
 
 function useHeaderNotifications() {
-  const [readIds, setReadIds] = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem(NOTIF_READ_KEY) ?? '[]') as string[]); }
-    catch { return new Set(); }
-  });
+  const [readIds, setReadIds] = useState<Set<string>>(readIdsFromStorage);
+
+  // Mantiene el badge sincronizado si se marca como leído desde /notificaciones
+  useEffect(() => {
+    const onReadChanged = () => setReadIds(readIdsFromStorage());
+    window.addEventListener(NOTIF_READ_CHANGED_EVENT, onReadChanged);
+    return () => window.removeEventListener(NOTIF_READ_CHANGED_EVENT, onReadChanged);
+  }, []);
+
+  // Persiste cambios locales fuera del render/actualizador de estado. Compara
+  // contenido (no solo referencia) para no re-disparar el evento que un
+  // cambio externo (de /notificaciones) acaba de aplicar — eso causaría un loop.
+  const lastSavedRef = useRef<string>(JSON.stringify([...readIds].sort()));
+  useEffect(() => {
+    const serialized = JSON.stringify([...readIds].sort());
+    if (serialized === lastSavedRef.current) return;
+    lastSavedRef.current = serialized;
+    localStorage.setItem(NOTIF_READ_KEY, serialized);
+    window.dispatchEvent(new Event(NOTIF_READ_CHANGED_EVENT));
+  }, [readIds]);
 
   const { data: aircraft = [] } = useQuery({
     queryKey: ['aircraft'],
@@ -120,7 +142,6 @@ function useHeaderNotifications() {
     setReadIds(prev => {
       const next = new Set(prev);
       next.add(id);
-      localStorage.setItem(NOTIF_READ_KEY, JSON.stringify([...next]));
       return next;
     });
   }, []);

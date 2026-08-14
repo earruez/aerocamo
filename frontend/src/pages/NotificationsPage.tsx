@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -29,6 +29,7 @@ export interface Notificacion {
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
 const READ_KEY = 'griselle-notif-read';
+const READ_CHANGED_EVENT = 'griselle-notif-read-changed';
 
 function loadReadIds(): Set<string> {
   try {
@@ -41,6 +42,7 @@ function loadReadIds(): Set<string> {
 
 function saveReadIds(ids: Set<string>): void {
   localStorage.setItem(READ_KEY, JSON.stringify([...ids]));
+  window.dispatchEvent(new Event(READ_CHANGED_EVENT));
 }
 
 // ─── Alert generator ──────────────────────────────────────────────────────────
@@ -294,6 +296,24 @@ export default function NotificationsPage() {
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
   const [filter, setFilter] = useState<FilterTab>('todas');
 
+  // Mantiene el estado sincronizado si el badge del header marca algo como leído
+  useEffect(() => {
+    const onReadChanged = () => setReadIds(loadReadIds());
+    window.addEventListener(READ_CHANGED_EVENT, onReadChanged);
+    return () => window.removeEventListener(READ_CHANGED_EVENT, onReadChanged);
+  }, []);
+
+  // Persiste cambios locales fuera del render/actualizador de estado. Compara
+  // contenido (no solo referencia) para no re-disparar el evento que un
+  // cambio externo (del header) acaba de aplicar — eso causaría un loop.
+  const lastSavedRef = useRef<string>(JSON.stringify([...readIds].sort()));
+  useEffect(() => {
+    const serialized = JSON.stringify([...readIds].sort());
+    if (serialized === lastSavedRef.current) return;
+    lastSavedRef.current = serialized;
+    saveReadIds(readIds);
+  }, [readIds]);
+
   // ── Data ────────────────────────────────────────────────────────────────────
   const { data: aircraft = [], isLoading: loadingAc } = useQuery({
     queryKey: ['aircraft'],
@@ -346,7 +366,6 @@ export default function NotificationsPage() {
     setReadIds(prev => {
       const next = new Set(prev);
       next.add(id);
-      saveReadIds(next);
       return next;
     });
   }, []);
@@ -355,7 +374,6 @@ export default function NotificationsPage() {
     setReadIds(prev => {
       const next = new Set(prev);
       allAlerts.forEach(n => next.add(n.id));
-      saveReadIds(next);
       return next;
     });
   }, [allAlerts]);
@@ -465,10 +483,13 @@ export default function NotificationsPage() {
               const cfg = TIPO_CONFIG[n.tipo];
               const Icon = cfg.icon;
               return (
-                <button
+                <div
                   key={n.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleClick(n)}
-                  className={`w-full text-left flex items-start gap-4 p-4 rounded-xl border transition-all duration-150 group hover:shadow-sm ${
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(n); } }}
+                  className={`w-full text-left flex items-start gap-4 p-4 rounded-xl border transition-all duration-150 group hover:shadow-sm cursor-pointer ${
                     n.leida
                       ? 'bg-white border-slate-200 opacity-60 hover:opacity-90 hover:border-slate-300'
                       : 'bg-white border-slate-200 shadow-sm hover:border-slate-300 hover:shadow-md'
@@ -515,7 +536,7 @@ export default function NotificationsPage() {
                       <Check size={13} />
                     </button>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>

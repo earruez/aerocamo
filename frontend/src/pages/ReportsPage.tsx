@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { aircraftApi } from '@api/aircraft.api';
-import { complianceApi } from '@api/compliance.api';
+import { maintenancePlanApi } from '@api/maintenancePlan.api';
 import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp } from 'lucide-react';
 
 function StatCard({ label, value, sub, Icon, color }: {
@@ -38,23 +38,23 @@ function HBar({ label, value, max, color }: { label: string; value: number; max:
 export default function ReportsPage() {
   const { data: aircraft = [], isLoading: loadingAc } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
 
-  const complianceQueries = useQuery({
-    queryKey: ['compliance-all-reports', aircraft.map(a => a.id).join(',')],
+  const planQueries = useQuery({
+    queryKey: ['maintenance-plan-all-reports', aircraft.map(a => a.id).join(',')],
     queryFn: async () => {
-      const results = await Promise.all(aircraft.map(a => complianceApi.latestForAircraft(a.id)));
-      return results.flatMap((recs, i) => recs.map(r => ({ ...r, _aircraft: aircraft[i] })));
+      const results = await Promise.all(aircraft.map(a => maintenancePlanApi.getForAircraft(a.id)));
+      return results.flatMap((items, i) => items.map(it => ({ ...it, aircraftId: aircraft[i].id })));
     },
     enabled: aircraft.length > 0,
   });
 
-  const records = complianceQueries.data ?? [];
+  const records = planQueries.data ?? [];
 
   const stats = useMemo(() => {
     const totalHours = aircraft.reduce((s, a) => s + Number(a.totalFlightHours), 0);
     const totalCycles = aircraft.reduce((s, a) => s + a.totalCycles, 0);
     const overdue   = records.filter(r => r.status === 'OVERDUE').length;
-    const deferred  = records.filter(r => r.status === 'DEFERRED').length;
-    const completed = records.filter(r => r.status === 'COMPLETED').length;
+    const dueSoon   = records.filter(r => r.status === 'DUE_SOON').length;
+    const completed = records.filter(r => r.status === 'OK').length;
 
     const byAircraft = aircraft.map(a => ({
       reg: a.registration,
@@ -64,14 +64,14 @@ export default function ReportsPage() {
 
     const statusPct = records.length > 0 ? {
       overdue:   Math.round((overdue / records.length) * 100),
-      deferred:  Math.round((deferred / records.length) * 100),
+      dueSoon:   Math.round((dueSoon / records.length) * 100),
       completed: Math.round((completed / records.length) * 100),
-    } : { overdue: 0, deferred: 0, completed: 0 };
+    } : { overdue: 0, dueSoon: 0, completed: 0 };
 
-    return { totalHours, totalCycles, overdue, deferred, completed, byAircraft, statusPct, totalRecords: records.length };
+    return { totalHours, totalCycles, overdue, dueSoon, completed, byAircraft, statusPct, totalRecords: records.length };
   }, [aircraft, records]);
 
-  const loading = loadingAc || complianceQueries.isLoading;
+  const loading = loadingAc || planQueries.isLoading;
 
   return (
     <div className="p-8 space-y-8">
@@ -97,7 +97,7 @@ export default function ReportsPage() {
               sub={`${stats.totalCycles.toLocaleString()} ciclos totales`} />
             <StatCard label="Tareas vencidas" value={stats.overdue} Icon={AlertTriangle} color="bg-rose-500"
               sub={`${stats.statusPct.overdue}% del total de tareas`} />
-            <StatCard label="Tareas completadas" value={stats.completed} Icon={CheckCircle} color="bg-emerald-500"
+            <StatCard label="Tareas al día" value={stats.completed} Icon={CheckCircle} color="bg-emerald-500"
               sub={`${stats.statusPct.completed}% del total de tareas`} />
           </div>
 
@@ -127,9 +127,9 @@ export default function ReportsPage() {
               <h3 className="text-sm font-semibold text-slate-700 mb-4">Distribución global de tareas</h3>
               <div className="space-y-4">
                 {[
-                  { label: 'Completadas', count: stats.completed,  color: 'bg-emerald-500', pct: stats.statusPct.completed },
-                  { label: 'Diferidas',   count: stats.deferred,   color: 'bg-amber-400',   pct: stats.statusPct.deferred  },
-                  { label: 'Vencidas',    count: stats.overdue,    color: 'bg-rose-500',    pct: stats.statusPct.overdue   },
+                  { label: 'Al día',            count: stats.completed, color: 'bg-emerald-500', pct: stats.statusPct.completed },
+                  { label: 'Próximas a vencer', count: stats.dueSoon,   color: 'bg-amber-400',   pct: stats.statusPct.dueSoon   },
+                  { label: 'Vencidas',          count: stats.overdue,   color: 'bg-rose-500',    pct: stats.statusPct.overdue   },
                 ].map(({ label, count, color, pct }) => (
                   <div key={label}>
                     <div className="flex justify-between text-sm mb-1.5">
