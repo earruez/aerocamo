@@ -19,9 +19,6 @@ const AMBER_HOURS = 10;
 const SUGGEST_DAYS = 90;
 const SUGGEST_HOURS = 50;
 
-/** Cuánto respeta el job un borrador que el usuario borró a propósito antes de volver a ofrecer la misma tarea. */
-const DISMISSAL_COOLDOWN_HOURS = 24;
-
 const WORK_REQUEST_FLOW_INCLUDE = {
   aircraft: true,
   responsible: true,
@@ -75,11 +72,6 @@ export class WorkRequestService {
         itemDescription: task.description,
       },
     };
-  }
-
-  private static isChapter0405(taskCode: string, referenceNumber: string | null): boolean {
-    const candidate = `${taskCode} ${referenceNumber ?? ''}`.toUpperCase();
-    return /(^|\s)(04|05)([\-./]|\s|$)/.test(candidate) || /ATA\s*(04|05)/.test(candidate);
   }
 
   private static async nextNumber(organizationId: string): Promise<string> {
@@ -860,113 +852,4 @@ export class WorkRequestService {
     });
   }
 
-  /**
-   * TaskId que el usuario borró explícitamente (vía remove()) para esta aeronave
-   * en las últimas DISMISSAL_COOLDOWN_HOURS. El job los respeta y no los vuelve
-   * a ofrecer de inmediato — sin esto, borrar un borrador no servía de nada: la
-   * siguiente corrida (5s después del próximo reinicio en dev, o el cron diario
-   * en producción) recreaba la misma ST para la misma tarea vencida.
-   */
-  private static async getRecentlyDismissedTaskIds(aircraftId: string, organizationId: string): Promise<Set<string>> {
-    const cutoff = new Date(Date.now() - DISMISSAL_COOLDOWN_HOURS * 60 * 60 * 1000);
-    const logs = await prisma.auditLog.findMany({
-      where: {
-        organizationId,
-        entityType: 'WorkRequest',
-        action: 'DELETE',
-        createdAt: { gte: cutoff },
-      },
-      select: { metadata: true },
-    });
-
-    const dismissed = new Set<string>();
-    for (const log of logs) {
-      const metadata = log.metadata as { aircraftId?: string; taskIds?: string[] } | null;
-      if (metadata?.aircraftId !== aircraftId) continue;
-      for (const taskId of metadata.taskIds ?? []) dismissed.add(taskId);
-    }
-    return dismissed;
-  }
-
-  static async runDailyAutoGenerationForAllOrganizations(): Promise<{ created: number; updated: number; scanned: number }> {
-    const aircraftList = await prisma.aircraft.findMany({
-      where: { isActive: true, status: { not: 'DECOMMISSIONED' } },
-      select: { id: true, organizationId: true },
-    });
-
-    let created = 0;
-    let updated = 0;
-    let scanned = 0;
-
-    for (const a of aircraftList) {
-      const plan = await this.aircraftRepo.getMaintenancePlan(a.id, a.organizationId);
-      const dismissedTaskIds = await this.getRecentlyDismissedTaskIds(a.id, a.organizationId);
-      const amber = plan.filter((item) => {
-        const byHours = item.hoursRemaining != null && item.hoursRemaining <= AMBER_HOURS;
-        const byDays = item.daysRemaining != null && item.daysRemaining <= AMBER_DAYS;
-        return (byHours || byDays || item.status === 'OVERDUE')
-          && this.isChapter0405(item.taskCode, item.referenceNumber)
-          && !dismissedTaskIds.has(item.taskId);
-      });
-
-      if (amber.length === 0) {
-        scanned += plan.length;
-        continue;
-      }
-
-      let draft = await this.getOpenDraftByAircraft(a.id, a.organizationId);
-      const hadDraft = !!draft;
-      if (!draft) {
-        const fallbackUser = await prisma.user.findFirst({
-          where: {
-            organizationId: a.organizationId,
-            isActive: true,
-            role: { in: ['ADMIN', 'SUPERVISOR'] },
-          },
-          select: { id: true },
-          orderBy: { createdAt: 'asc' },
-        });
-
-        if (!fallbackUser) {
-          scanned += plan.length;
-          continue;
-        }
-
-        draft = await this.createDraft({
-          aircraftId: a.id,
-          organizationId: a.organizationId,
-          createdById: fallbackUser.id,
-        });
-      }
-
-      // Lo que el borrador ya trae no se vuelve a agregar. skipDuplicates por sí
-      // solo no bastaba: omite filas que chocan con una restricción única, y no
-      // existía ninguna, así que cada corrida del job repetía las mismas tareas.
-      const existingTaskIds = new Set(
-        (await prisma.workRequestItem.findMany({
-          where: { workRequestId: draft.id, taskId: { not: null } },
-          select: { taskId: true },
-        })).map((row) => row.taskId as string),
-      );
-      const pending = amber.filter((item) => !existingTaskIds.has(item.taskId));
-
-      const result = pending.length === 0
-        ? { count: 0 }
-        : await prisma.workRequestItem.createMany({
-          data: await Promise.all(pending.map(async (item) => {
-            const { payload } = await this.createTaskSnapshot(item.taskId, a.organizationId);
-            return { workRequestId: draft.id, source: 'AUTO', ...payload };
-          })),
-          skipDuplicates: true,
-        });
-
-      if (result.count > 0) {
-        if (hadDraft) updated += result.count;
-        else created += 1;
-      }
-      scanned += plan.length;
-    }
-
-    return { created, updated, scanned };
-  }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { RegisterOTModal } from '../components/workRequests/RegisterOTModal';
 import { SendWorkRequestDialog, type DispatchSelection } from '../components/workRequests/SendWorkRequestDialog';
 import { useNavigate } from 'react-router-dom';
@@ -10,6 +11,7 @@ import { WorkRequestBadge } from '../components/workRequests/WorkRequestBadges';
 import { WorkRequestAttachments } from '../components/workRequests/WorkRequestAttachments';
 import { WorkRequestItemForm } from '../components/workRequests/WorkRequestItemForm';
 import { workRequestsApi } from '../api/workRequests.api';
+import { aircraftApi } from '../api/aircraft.api';
 import { adaptApiWorkRequest, upsertWorkRequestCache } from '../shared/workRequestApiAdapter';
 import {
   WORK_REQUEST_ITEM_STATUS_LABELS,
@@ -48,6 +50,8 @@ export default function WorkRequestDetailPage() {
   const setSearchText = useWorkRequestStore(s => s.setSearchText);
   const setWorkRequests = useWorkRequestStore(s => s.setWorkRequests);
   const workRequest = useWorkRequestStore(s => s.workRequests.find(w => w.id === selectedId));
+  const { data: aircraftList = [] } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
+  const aircraftRegistration = aircraftList.find(a => a.id === workRequest?.aircraftId)?.registration;
   const historyRef = useRef<HTMLDivElement | null>(null);
   const { data: workRequestStateMachine } = useWorkRequestStateMachine();
   const [notice, setNotice] = useState<string | null>(null);
@@ -419,7 +423,7 @@ export default function WorkRequestDetailPage() {
         <div className={`relative grid grid-cols-1 sm:grid-cols-3 ${viewDensity === 'compact' ? 'gap-2 text-xs' : 'gap-3 text-sm'}`}>
           <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5">
             <p className="text-[11px] text-slate-500">Aeronave</p>
-            <p className="font-semibold text-slate-900">{workRequest.aircraftId}</p>
+            <p className="font-semibold text-slate-900">{aircraftRegistration ?? workRequest.aircraftId}</p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5">
             <p className="text-[11px] text-slate-500">Prioridad</p>

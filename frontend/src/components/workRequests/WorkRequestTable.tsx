@@ -1,9 +1,11 @@
+import { useQuery } from '@tanstack/react-query';
 import { useWorkRequestStore } from '../../store/workRequestStore';
 import { WorkRequestBadge } from './WorkRequestBadges';
 import { saveAs } from 'file-saver';
 import { FolderOpen, SearchX } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { workRequestsApi } from '../../api/workRequests.api';
+import { aircraftApi } from '../../api/aircraft.api';
 import { adaptApiWorkRequest, upsertWorkRequestCache } from '../../shared/workRequestApiAdapter';
 import { canTransitionTo, getVisibleState } from '../../shared/workflowVisibleState';
 import { useWorkRequestStateMachine } from '../../shared/workflowStateMachineQueries';
@@ -35,6 +37,8 @@ export function WorkRequestTable() {
   const setFilterStatus = useWorkRequestStore((s) => s.setFilterStatus);
   const setSearchText = useWorkRequestStore((s) => s.setSearchText);
   const { data: stateMachine } = useWorkRequestStateMachine();
+  const { data: aircraftList = [] } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
+  const aircraftById = new Map(aircraftList.map((a) => [a.id, a]));
 
   if (!stateMachine) {
     return (
@@ -66,24 +70,15 @@ export function WorkRequestTable() {
     }
   };
 
-  const handleDownloadPdf = (workRequestId: string) => {
+  const handleDownloadPdf = async (workRequestId: string) => {
     const wr = workRequests.find((item) => item.id === workRequestId);
     if (!wr) return;
-
-    const content = [
-      'Solicitud de Trabajo (ST)',
-      '',
-      `N° ST: ${wr.folio}`,
-      `Aeronave: ${wr.aircraftId}`,
-      `Prioridad: ${wr.priority}`,
-      `Estado visible: ${toVisible(wr.status)}`,
-      '',
-      'Items:',
-      ...wr.items.map((i) => `- ${i.title} (${i.ataCode})`),
-    ].join('\n');
-
-    const blob = new Blob([content], { type: 'application/pdf' });
-    saveAs(blob, `${wr.folio}.pdf`);
+    try {
+      const blob = await workRequestsApi.downloadPdf(workRequestId);
+      saveAs(blob, `${wr.folio}.pdf`);
+    } catch {
+      toast.error('No se pudo descargar el PDF');
+    }
   };
 
   const filtered = workRequests.filter((wr) => {
@@ -125,7 +120,7 @@ export function WorkRequestTable() {
             <tr key={wr.id} className="hover:bg-slate-50/70 transition-colors">
               <td className={`${cellPadding} font-mono text-slate-800`}>{wr.folio}</td>
               <td className={`${cellPadding} text-slate-600`}>{wr.createdAt.slice(0, 10)}</td>
-              <td className={`${cellPadding} text-slate-700`}>{wr.aircraftId}</td>
+              <td className={`${cellPadding} text-slate-700`}>{aircraftById.get(wr.aircraftId)?.registration ?? wr.aircraftId}</td>
               <td className={`${cellPadding} text-slate-600`}>{getOriginLabel(wr.items.map((i) => i.sourceKind))}</td>
               <td className={`${cellPadding} text-center font-semibold text-slate-700`}>{wr.items.length}</td>
               <td className={`${cellPadding} text-center capitalize text-slate-700`}>{wr.priority}</td>
