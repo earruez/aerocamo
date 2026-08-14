@@ -42,6 +42,4 @@ router.post(
 	WorkRequestController.closeAndComply,
 );
 
-router.post('/jobs/run-daily', requireRoles('ADMIN'), WorkRequestController.runDailyJob);
-
 export { router as workRequestRoutes };

@@ -331,13 +331,6 @@ export class WorkRequestController {
     } catch (err) { next(err); }
   }
 
-  static async runDailyJob(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const data = await WorkRequestService.runDailyAutoGenerationForAllOrganizations();
-      res.json({ status: 'success', data });
-    } catch (err) { next(err); }
-  }
-
   static async closeAndComply(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const body = closeAndComplySchema.parse(req.body);
