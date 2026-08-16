@@ -3,7 +3,7 @@ import { useAuthStore } from '@store/authStore';
 import {
   Plane, Wrench, LayoutDashboard, LogOut, Settings,
   ClipboardList, BarChart2, Package, ChevronRight, ClipboardCheck, Bell, FileText, FileCheck2, Repeat, BookOpen,
-  ShieldCheck,
+  ShieldCheck, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -263,6 +263,8 @@ function TopBar({ notifications, unreadCount, markRead }: {
   );
 }
 
+const SIDEBAR_COLLAPSED_KEY = 'griselle-sidebar-collapsed';
+
 export default function AppLayout() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
@@ -270,18 +272,27 @@ export default function AppLayout() {
   const isSuperAdmin = user?.role === 'SUPER_ADMIN';
   const navSections = isSuperAdmin ? [PLATFORM_SECTION] : NAV_SECTIONS;
 
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch { /* noop */ }
+  }, [collapsed]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-50">
       {/* ── Sidebar ── */}
-      <aside className="w-56 bg-slate-950 flex flex-col shrink-0">
+      <aside className={`${collapsed ? 'w-14' : 'w-56'} bg-slate-950 flex flex-col shrink-0 transition-[width] duration-150`}>
         {/* Logo */}
         <div className="px-4 pt-5 pb-4">
-          <div className="flex items-center gap-2.5">
-            <AerocamoMark size={28} rounded="rounded-lg" className="shadow-md" />
-            <div>
-              <p className="text-[13px] font-bold text-white leading-none tracking-tight">Aerocamo</p>
-              <p className="text-[9.5px] text-slate-500 mt-0.5 leading-none">MRO Platform</p>
-            </div>
+          <div className={`flex items-center gap-2.5 ${collapsed ? 'justify-center' : ''}`}>
+            <AerocamoMark size={28} rounded="rounded-lg" className="shadow-md shrink-0" />
+            {!collapsed && (
+              <div>
+                <p className="text-[13px] font-bold text-white leading-none tracking-tight">Aerocamo</p>
+                <p className="text-[9.5px] text-slate-500 mt-0.5 leading-none">MRO Platform</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -289,18 +300,25 @@ export default function AppLayout() {
         <div className="mx-4 h-px bg-slate-800" />
 
         {/* Nav */}
-        <nav className="flex-1 px-2 py-3 space-y-px overflow-y-auto">
+        <nav className="flex-1 px-2 py-3 space-y-px overflow-y-auto overflow-x-hidden">
           {navSections.map((section) => (
             <div key={section.title} className="mb-3">
-              <p className="px-2.5 pt-1 pb-2 text-[9.5px] font-bold text-slate-600 uppercase tracking-[0.12em]">
-                {section.title}
-              </p>
+              {collapsed ? (
+                <div className="mx-1.5 mb-1.5 h-px bg-slate-800" />
+              ) : (
+                <p className="px-2.5 pt-1 pb-2 text-[9.5px] font-bold text-slate-600 uppercase tracking-[0.12em]">
+                  {section.title}
+                </p>
+              )}
               {section.items.map(({ to, label, icon: Icon }) => (
                 <NavLink
                   key={to}
                   to={to}
+                  title={collapsed ? label : undefined}
                   className={({ isActive }) =>
-                    `flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-[13px] font-medium transition-all duration-100 ${
+                    `group relative flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-[13px] font-medium transition-all duration-100 ${
+                      collapsed ? 'justify-center' : ''
+                    } ${
                       isActive
                         ? 'bg-brand-600/12 text-brand-400 '
                         : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-200'
@@ -309,11 +327,17 @@ export default function AppLayout() {
                 >
                   {({ isActive }) => (
                     <>
-                      <Icon size={14} className={isActive ? 'text-brand-400' : ''} />
-                      <span className="flex-1">{label}</span>
-                      {to === '/notificaciones' && unreadCount > 0 && (
+                      <Icon size={14} className={`shrink-0 ${isActive ? 'text-brand-400' : ''}`} />
+                      {!collapsed && <span className="flex-1">{label}</span>}
+                      {!collapsed && to === '/notificaciones' && unreadCount > 0 && (
                         <span className="min-w-[18px] h-[18px] rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center px-1 tabular-nums">
                           {unreadCount > 99 ? '99+' : unreadCount}
+                        </span>
+                      )}
+                      {collapsed && (
+                        <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-white opacity-0 shadow-lg transition-opacity duration-100 group-hover:opacity-100">
+                          {label}
+                          {to === '/notificaciones' && unreadCount > 0 && ` · ${unreadCount > 99 ? '99+' : unreadCount}`}
                         </span>
                       )}
                     </>
@@ -324,25 +348,58 @@ export default function AppLayout() {
           ))}
         </nav>
 
+        {/* Colapsar / expandir */}
+        <div className="px-2">
+          <button
+            onClick={() => setCollapsed((v) => !v)}
+            className={`group relative flex w-full items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-[12px] font-medium text-slate-500 hover:bg-slate-800/70 hover:text-slate-200 transition-colors ${
+              collapsed ? 'justify-center' : ''
+            }`}
+          >
+            {collapsed ? <PanelLeftOpen size={14} className="shrink-0" /> : <PanelLeftClose size={14} className="shrink-0" />}
+            {!collapsed && <span>Colapsar menú</span>}
+            {collapsed && (
+              <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-white opacity-0 shadow-lg transition-opacity duration-100 group-hover:opacity-100">
+                Expandir menú
+              </span>
+            )}
+          </button>
+        </div>
+
         {/* Footer: user */}
-        <div className="mx-4 h-px bg-slate-800" />
+        <div className="mx-4 mt-2 h-px bg-slate-800" />
         <div className="p-3">
-          <div className="flex items-center gap-2.5">
+          <div className={`flex items-center gap-2.5 ${collapsed ? 'justify-center' : ''}`}>
             <div className="w-6 h-6 bg-brand-700 rounded-md flex items-center justify-center text-[10px] font-bold text-white shrink-0">
               {initials(user?.name)}
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[12px] font-semibold text-slate-300 truncate leading-tight">{user?.name}</p>
-              <p className="text-[10px] text-slate-600 capitalize leading-tight">{user?.role?.toLowerCase()}</p>
-            </div>
+            {!collapsed && (
+              <div className="flex-1 min-w-0">
+                <p className="text-[12px] font-semibold text-slate-300 truncate leading-tight">{user?.name}</p>
+                <p className="text-[10px] text-slate-600 capitalize leading-tight">{user?.role?.toLowerCase()}</p>
+              </div>
+            )}
+            {!collapsed && (
+              <button
+                onClick={logout}
+                className="p-1 rounded text-slate-600 hover:text-slate-200 hover:bg-slate-700 transition-colors shrink-0"
+                title="Cerrar sesión"
+              >
+                <LogOut size={12} />
+              </button>
+            )}
+          </div>
+          {collapsed && (
             <button
               onClick={logout}
-              className="p-1 rounded text-slate-600 hover:text-slate-200 hover:bg-slate-700 transition-colors shrink-0"
-              title="Cerrar sesión"
+              className="group relative mt-2 flex w-full items-center justify-center p-1.5 rounded text-slate-600 hover:text-slate-200 hover:bg-slate-700 transition-colors"
             >
-              <LogOut size={12} />
+              <LogOut size={13} />
+              <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-white opacity-0 shadow-lg transition-opacity duration-100 group-hover:opacity-100">
+                Cerrar sesión
+              </span>
             </button>
-          </div>
+          )}
         </div>
       </aside>
 
