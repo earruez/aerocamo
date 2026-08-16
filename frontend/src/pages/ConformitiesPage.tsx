@@ -77,7 +77,7 @@ export default function ConformitiesPage() {
       </div>
 
       <div
-        className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto
+        className="bg-white rounded-xl border border-slate-200 shadow-card overflow-auto max-h-[70vh]
         [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-track]:bg-slate-100
         [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full
         [&::-webkit-scrollbar-thumb:hover]:bg-slate-500"
@@ -86,7 +86,7 @@ export default function ConformitiesPage() {
           Total: {result?.total ?? 0}
         </div>
         <table className="min-w-full divide-y divide-slate-100 text-sm">
-          <thead className="bg-slate-50">
+          <thead className="bg-slate-50 sticky top-0 z-10">
             <tr>
               <th className="table-header sticky left-0 z-10 bg-slate-50 w-[260px] min-w-[260px] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]">Tarea</th>
               <th className="table-header">Aeronave</th>

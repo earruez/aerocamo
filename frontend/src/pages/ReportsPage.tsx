@@ -1,8 +1,11 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { saveAs } from 'file-saver';
+import toast from 'react-hot-toast';
 import { aircraftApi } from '@api/aircraft.api';
 import { maintenancePlanApi } from '@api/maintenancePlan.api';
-import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp } from 'lucide-react';
+import { reportsApi } from '@api/reports.api';
+import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown } from 'lucide-react';
 
 function StatCard({ label, value, sub, Icon, color }: {
   label: string; value: string | number; sub?: string;
@@ -36,7 +39,20 @@ function HBar({ label, value, max, color }: { label: string; value: number; max:
 }
 
 export default function ReportsPage() {
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const { data: aircraft = [], isLoading: loadingAc } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
+
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true);
+    try {
+      const blob = await reportsApi.downloadFleetSummaryPdf();
+      saveAs(blob, `Informe-Ejecutivo-Flota-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch {
+      toast.error('No se pudo generar el PDF');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
 
   const planQueries = useQuery({
     queryKey: ['maintenance-plan-all-reports', aircraft.map(a => a.id).join(',')],
@@ -75,14 +91,24 @@ export default function ReportsPage() {
 
   return (
     <div className="p-8 space-y-8">
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 bg-brand-50 rounded-lg flex items-center justify-center">
-          <BarChart2 size={18} className="text-brand-600" />
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 bg-brand-50 rounded-lg flex items-center justify-center">
+            <BarChart2 size={18} className="text-brand-600" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">Reportes</h1>
+            <p className="text-sm text-slate-500">Resumen ejecutivo de la flota</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Reportes</h1>
-          <p className="text-sm text-slate-500">Resumen ejecutivo de la flota</p>
-        </div>
+        <button
+          onClick={handleDownloadPdf}
+          disabled={downloadingPdf}
+          className="btn-primary flex items-center gap-1.5"
+        >
+          <FileDown size={14} />
+          {downloadingPdf ? 'Generando…' : 'Descargar informe PDF'}
+        </button>
       </div>
 
       {loading && <p className="text-slate-400 text-sm">Cargando datos…</p>}
@@ -152,12 +178,12 @@ export default function ReportsPage() {
           </div>
 
           {/* Estado de flota */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-auto max-h-[70vh]">
             <div className="px-5 py-4 border-b border-slate-100">
               <h3 className="text-sm font-semibold text-slate-700">Estado de flota</h3>
             </div>
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-100">
+              <thead className="bg-slate-50 border-b border-slate-100 sticky top-0 z-10">
                 <tr>
                   <th className="table-header">Matrícula</th>
                   <th className="table-header">Modelo</th>

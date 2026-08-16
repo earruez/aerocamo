@@ -158,9 +158,9 @@ export function AircraftStatusReport({
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 overflow-x-auto">
+          <div className="rounded-xl border border-slate-200 overflow-auto max-h-[50vh]">
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
                 <tr>
                   <th className="table-header">Codigo ATA</th>
                   <th className="table-header">Descripcion</th>

@@ -75,7 +75,7 @@ export default function WorkRequestsPage() {
   return selectedId ? (
     <WorkRequestDetailPage />
   ) : (
-    <div className="p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
+    <div className="p-6 lg:p-8 space-y-6">
       <div className="bg-white border border-slate-200 rounded-2xl p-5 lg:p-6 shadow-sm">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center shrink-0">

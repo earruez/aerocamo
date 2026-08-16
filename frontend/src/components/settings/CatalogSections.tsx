@@ -270,9 +270,9 @@ export function CounterTypesSection() {
         </form>
       )}
 
-      <div className="overflow-x-auto">
+      <div className="overflow-auto max-h-[60vh]">
         <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-slate-600">
+          <thead className="bg-slate-50 text-slate-600 sticky top-0 z-10">
             <tr>
               <th className="text-left px-5 py-2 text-xs font-semibold">Código</th>
               <th className="text-left px-4 py-2 text-xs font-semibold">Nombre</th>
@@ -408,9 +408,9 @@ export function ManualsSection() {
         </form>
       )}
 
-      <div className="overflow-x-auto">
+      <div className="overflow-auto max-h-[60vh]">
         <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-slate-600">
+          <thead className="bg-slate-50 text-slate-600 sticky top-0 z-10">
             <tr>
               <th className="text-left px-5 py-2 text-xs font-semibold">Modelo</th>
               <th className="text-left px-4 py-2 text-xs font-semibold">Tipo</th>
@@ -516,9 +516,9 @@ export function RepairShopsSection() {
         </form>
       )}
 
-      <div className="overflow-x-auto">
+      <div className="overflow-auto max-h-[60vh]">
         <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-slate-600">
+          <thead className="bg-slate-50 text-slate-600 sticky top-0 z-10">
             <tr>
               <th className="text-left px-5 py-2 text-xs font-semibold">Código</th>
               <th className="text-left px-4 py-2 text-xs font-semibold">Taller</th>

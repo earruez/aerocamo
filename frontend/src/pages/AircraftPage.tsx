@@ -738,9 +738,9 @@ export default function AircraftPage() {
       <QuickCountersPanel aircraft={aircraftList} />
 
       {/* Table */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-auto max-h-[70vh]">
         <table className="min-w-full divide-y divide-slate-100 text-sm">
-          <thead className="bg-slate-50">
+          <thead className="bg-slate-50 sticky top-0 z-10">
             <tr>
               <th className="table-header w-8"></th>
               <th className="table-header">MAT</th>
