@@ -19,7 +19,8 @@ import { adaptApiWorkRequest } from '@/shared/workRequestApiAdapter';
 import { applySort, SortableHeader, toggleSort, type SortState } from '@/shared/tableSort';
 import {
   ClipboardCheck, AlertTriangle, Clock, CheckCircle2,
-  ChevronRight, Search, BookOpen, Calendar, Gauge, RefreshCw,
+  ChevronRight, Search, BookOpen, Calendar, Gauge, RefreshCw, Plane,
+  FileText, Eye, Package,
   Plus, Pencil, Trash2, X, Check,
   StickyNote,
 } from 'lucide-react';
@@ -1402,6 +1403,11 @@ export default function MaintenancePlanPage() {
   const [filterStatus, setFilterStatus] = useState<PlanItemStatus | ''>(searchParams.get('status') as PlanItemStatus | '' ?? '');
   const [normativeTab, setNormativeTab] = useState<NormativeTab>('PROGRAMA');
   const [equipmentTab, setEquipmentTab] = useState<EquipmentTab>('ALL');
+  // Flujo del filtro replicando el Access: primero Equipo, luego Categoría,
+  // recién ahí el resto de filtros finos. Cada paso queda abierto una vez
+  // que el usuario lo tocó — no se vuelve a esconder al cambiar de opción.
+  const [equipmentStepDone, setEquipmentStepDone] = useState(false);
+  const [categoryStepDone, setCategoryStepDone] = useState(false);
   const [recurrenceTab, setRecurrenceTab] = useState<RecurrenceTab>('ALL');
   const [applicabilityTab, setApplicabilityTab] = useState<ApplicabilityTab>('APPLIES');
   const [historyTask, setHistoryTask] = useState<MaintenancePlanItem | null>(null);
@@ -1417,7 +1423,13 @@ export default function MaintenancePlanPage() {
   // Sync URL → filter when navigating here from Dashboard
   useEffect(() => {
     const s = searchParams.get('status') as PlanItemStatus | '';
-    if (s) setFilterStatus(s);
+    if (s) {
+      setFilterStatus(s);
+      // Si llega con intención (ej. "Vencidas" del Dashboard), no lo hacemos
+      // pasar por Equipo → Categoría para llegar al filtro que ya pidió.
+      setEquipmentStepDone(true);
+      setCategoryStepDone(true);
+    }
   }, [searchParams]);
 
   // Sync URL → selected aircraft when navigating here from another page (ej. detalle de ST)
@@ -2343,173 +2355,201 @@ export default function MaintenancePlanPage() {
             </div>
           )}
 
-          {/* Filters */}
-          <div className="bg-white rounded-2xl border border-slate-200 px-6 py-4 shadow-sm">
-              <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Categoría</span>
-                {([
-                  { key: 'PROGRAMA', label: `Programa (${normativeCounts.total})` },
-                  { key: 'AD', label: `AD (${normativeCounts.ad})` },
-                  { key: 'SB', label: `SB (${normativeCounts.sb})` },
-                  { key: 'MIM', label: `MIM (${normativeCounts.mim})` },
-                  { key: 'INSPECCIONES', label: `Inspecciones (${normativeCounts.inspecciones})` },
-                  { key: 'COMPONENTES', label: `Componentes (${normativeCounts.componentes})` },
-                ] as const).map(tab => (
+          {/* Filters — replica el flujo del Access: primero Equipo, luego
+              Categoría, y recién ahí el resto de filtros finos. */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="bg-brand-50/70 px-6 py-4">
+              <div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
-                    key={tab.key}
-                    onClick={() => setNormativeTab(tab.key)}
-                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
-                      normativeTab === tab.key
-                        ? 'bg-brand-600 text-white border-brand-600'
-                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    onClick={() => { setEquipmentTab('AIRCRAFT'); setEquipmentStepDone(true); }}
+                    className={`flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-3.5 text-sm font-bold transition-colors ${
+                      equipmentTab === 'AIRCRAFT'
+                        ? 'border-brand-600 bg-brand-50 text-brand-700'
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300'
                     }`}
                   >
-                    {tab.label}
+                    <Plane size={16} /> Aeronave ({equipmentCounts.AIRCRAFT})
                   </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Equipo</span>
-                {([
-                  { key: 'ALL', label: `Todas (${equipmentCounts.ALL})` },
-                  { key: 'AIRCRAFT', label: `Aeronave (${equipmentCounts.AIRCRAFT})` },
-                  { key: 'ENGINE', label: `Motor (${equipmentCounts.ENGINE})` },
-                ] as const).map(tab => (
                   <button
-                    key={tab.key}
-                    onClick={() => setEquipmentTab(tab.key)}
-                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
-                      equipmentTab === tab.key
-                        ? 'bg-brand-600 text-white border-brand-600'
-                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    onClick={() => { setEquipmentTab('ENGINE'); setEquipmentStepDone(true); }}
+                    className={`flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-3.5 text-sm font-bold transition-colors ${
+                      equipmentTab === 'ENGINE'
+                        ? 'border-brand-600 bg-brand-50 text-brand-700'
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300'
                     }`}
                   >
-                    {tab.label}
+                    <Gauge size={16} /> Motor ({equipmentCounts.ENGINE})
                   </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Aplicabilidad</span>
-                {([
-                  { key: 'APPLIES', label: `Aplica (${applicabilityCounts.applies})` },
-                  { key: 'NOT_APPLIES', label: `No aplica (${applicabilityCounts.notApplies})` },
-                  { key: 'ALL', label: 'Todas' },
-                ] as const).map(tab => (
-                  <button
-                    key={tab.key}
-                    onClick={() => setApplicabilityTab(tab.key)}
-                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
-                      applicabilityTab === tab.key
-                        ? 'bg-brand-600 text-white border-brand-600'
-                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Recurrencia</span>
-                {([
-                  { key: 'ALL', label: 'Todas' },
-                  { key: 'REPETITIVE', label: `Repetitivas (${recurrenceCounts.repetitive})` },
-                  { key: 'ONE_TIME', label: `Cumplimiento único (${recurrenceCounts.oneTime})` },
-                ] as const).map(tab => (
-                  <button
-                    key={tab.key}
-                    onClick={() => setRecurrenceTab(tab.key)}
-                    className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
-                      recurrenceTab === tab.key
-                        ? 'bg-brand-600 text-white border-brand-600'
-                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Tipo de control</span>
-                {([
-                  { key: 'ALL', label: 'Todas' },
-                  { key: 'HORARIO', label: 'Horario', icon: Clock },
-                  { key: 'CALENDARIO', label: 'Calendario', icon: Calendar },
-                  { key: 'MIXTO', label: 'Mixto', icon: RefreshCw },
-                ] as Array<{ key: MaintenanceTypeTab; label: string; icon?: typeof Clock }>).map(tab => {
-                  const Icon = tab.icon;
-                  const active = maintenanceTab === tab.key;
-                  return (
-                    <button
-                      key={tab.key}
-                      onClick={() => setMaintenanceTab(tab.key)}
-                      className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 inline-flex items-center gap-1.5 ${
-                        active
-                          ? 'bg-slate-900 text-white border-slate-900'
-                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                      }`}
-                    >
-                      {Icon && <Icon size={12} />}
-                      {tab.label}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="flex items-center gap-2 mt-2.5 flex-wrap lg:flex-nowrap">
-                <div className="relative">
-                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                  <input
-                    type="text"
-                    placeholder="Buscar tarea…"
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    className="filter-input pl-8 w-56"
-                  />
                 </div>
-                <select
-                  value={filterStatus}
-                  onChange={e => setFilterStatus(e.target.value as PlanItemStatus | '')}
-                  className="filter-input cursor-pointer min-w-[170px]"
-                >
-                  <option value="">Todos los estados</option>
-                  <option value="OVERDUE">Vencidas</option>
-                  <option value="DUE_SOON">Próx. vencer</option>
-                  <option value="OK">Al día</option>
-                  <option value="NEVER_PERFORMED">Sin registro</option>
-                </select>
-                <label className="inline-flex items-center gap-2 text-xs text-slate-600 shrink-0">
-                  <input
-                    type="checkbox"
-                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-500"
-                    checked={onlyPendingAction}
-                    onChange={(e) => setOnlyPendingAction(e.target.checked)}
-                  />
-                  Solo pendientes de acción
-                </label>
-                {(search || filterStatus || normativeTab !== 'PROGRAMA' || equipmentTab !== 'ALL' || recurrenceTab !== 'ALL' || applicabilityTab !== 'APPLIES' || maintenanceTab !== 'ALL') && (
-                  <button
-                    onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('PROGRAMA'); setEquipmentTab('ALL'); setRecurrenceTab('ALL'); setApplicabilityTab('APPLIES'); setMaintenanceTab('ALL'); }}
-                    className="text-xs text-brand-600 hover:text-brand-700 font-semibold transition-colors"
-                  >
-                    Limpiar
-                  </button>
-                )}
                 <button
-                  onClick={() => { void undoLastApplicabilityChange(); }}
-                  disabled={!lastApplicabilityAction || Boolean(applicabilityBusyTaskId)}
-                  className="btn-secondary btn-xs"
-                  title={lastApplicabilityAction ? `Deshacer último cambio en ${lastApplicabilityAction.taskCode}` : 'No hay cambios para deshacer'}
+                  onClick={() => { setEquipmentTab('ALL'); setEquipmentStepDone(true); }}
+                  className={`mt-2 text-xs font-medium transition-colors ${
+                    equipmentTab === 'ALL' && equipmentStepDone
+                      ? 'text-brand-700 font-semibold'
+                      : 'text-slate-500 hover:text-brand-600'
+                  }`}
                 >
-                  Deshacer último cambio
+                  Ver todas las tareas ({equipmentCounts.ALL})
                 </button>
-                <span className="ml-auto text-xs text-slate-400">
-                  {filteredPlan.length} tarea{filteredPlan.length !== 1 ? 's' : ''}
-                </span>
               </div>
+
+              {equipmentStepDone && (
+                <div className="mt-3 pt-3 border-t border-brand-200/60">
+                  <div className="grid grid-cols-6 gap-2">
+                    {([
+                      { key: 'PROGRAMA', label: `Programa (${normativeCounts.total})`, icon: ClipboardCheck },
+                      { key: 'AD', label: `AD (${normativeCounts.ad})`, icon: AlertTriangle },
+                      { key: 'SB', label: `SB (${normativeCounts.sb})`, icon: FileText },
+                      { key: 'MIM', label: `MIM (${normativeCounts.mim})`, icon: BookOpen },
+                      { key: 'INSPECCIONES', label: `Inspecciones (${normativeCounts.inspecciones})`, icon: Eye },
+                      { key: 'COMPONENTES', label: `Componentes (${normativeCounts.componentes})`, icon: Package },
+                    ] as const).map(tab => {
+                      const Icon = tab.icon;
+                      return (
+                        <button
+                          key={tab.key}
+                          onClick={() => { setNormativeTab(tab.key); setCategoryStepDone(true); }}
+                          className={`flex items-center justify-center gap-1.5 text-sm font-bold px-2 py-2.5 rounded-xl border-2 transition-colors whitespace-nowrap ${
+                            normativeTab === tab.key
+                              ? 'border-brand-600 bg-brand-50 text-brand-700'
+                              : 'border-slate-200 text-slate-700 hover:border-slate-300'
+                          }`}
+                        >
+                          <Icon size={15} className="shrink-0" />
+                          {tab.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              </div>
+
+            {categoryStepDone && (
+              <div className="px-6 py-4 border-t border-slate-100 space-y-2.5">
+                  <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Aplicabilidad</span>
+                    {([
+                      { key: 'APPLIES', label: `Aplica (${applicabilityCounts.applies})` },
+                      { key: 'NOT_APPLIES', label: `No aplica (${applicabilityCounts.notApplies})` },
+                      { key: 'ALL', label: 'Todas' },
+                    ] as const).map(tab => (
+                      <button
+                        key={tab.key}
+                        onClick={() => setApplicabilityTab(tab.key)}
+                        className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
+                          applicabilityTab === tab.key
+                            ? 'bg-brand-600 text-white border-brand-600'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Recurrencia</span>
+                    {([
+                      { key: 'ALL', label: 'Todas' },
+                      { key: 'REPETITIVE', label: `Repetitivas (${recurrenceCounts.repetitive})` },
+                      { key: 'ONE_TIME', label: `Cumplimiento único (${recurrenceCounts.oneTime})` },
+                    ] as const).map(tab => (
+                      <button
+                        key={tab.key}
+                        onClick={() => setRecurrenceTab(tab.key)}
+                        className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
+                          recurrenceTab === tab.key
+                            ? 'bg-brand-600 text-white border-brand-600'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Tipo de control</span>
+                    {([
+                      { key: 'ALL', label: 'Todas' },
+                      { key: 'HORARIO', label: 'Horario', icon: Clock },
+                      { key: 'CALENDARIO', label: 'Calendario', icon: Calendar },
+                      { key: 'MIXTO', label: 'Mixto', icon: RefreshCw },
+                    ] as Array<{ key: MaintenanceTypeTab; label: string; icon?: typeof Clock }>).map(tab => {
+                      const Icon = tab.icon;
+                      const active = maintenanceTab === tab.key;
+                      return (
+                        <button
+                          key={tab.key}
+                          onClick={() => setMaintenanceTab(tab.key)}
+                          className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 inline-flex items-center gap-1.5 ${
+                            active
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {Icon && <Icon size={12} />}
+                          {tab.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
+                    <div className="relative">
+                      <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Buscar tarea…"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        className="filter-input pl-8 w-56"
+                      />
+                    </div>
+                    <select
+                      value={filterStatus}
+                      onChange={e => setFilterStatus(e.target.value as PlanItemStatus | '')}
+                      className="filter-input cursor-pointer min-w-[170px]"
+                    >
+                      <option value="">Todos los estados</option>
+                      <option value="OVERDUE">Vencidas</option>
+                      <option value="DUE_SOON">Próx. vencer</option>
+                      <option value="OK">Al día</option>
+                      <option value="NEVER_PERFORMED">Sin registro</option>
+                    </select>
+                    <label className="inline-flex items-center gap-2 text-xs text-slate-600 shrink-0">
+                      <input
+                        type="checkbox"
+                        className="rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                        checked={onlyPendingAction}
+                        onChange={(e) => setOnlyPendingAction(e.target.checked)}
+                      />
+                      Solo pendientes de acción
+                    </label>
+                    {(search || filterStatus || normativeTab !== 'PROGRAMA' || equipmentTab !== 'ALL' || recurrenceTab !== 'ALL' || applicabilityTab !== 'APPLIES' || maintenanceTab !== 'ALL') && (
+                      <button
+                        onClick={() => { setSearch(''); setFilterStatus(''); setNormativeTab('PROGRAMA'); setEquipmentTab('ALL'); setRecurrenceTab('ALL'); setApplicabilityTab('APPLIES'); setMaintenanceTab('ALL'); }}
+                        className="text-xs text-brand-600 hover:text-brand-700 font-semibold transition-colors"
+                      >
+                        Limpiar
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { void undoLastApplicabilityChange(); }}
+                      disabled={!lastApplicabilityAction || Boolean(applicabilityBusyTaskId)}
+                      className="btn-secondary btn-xs"
+                      title={lastApplicabilityAction ? `Deshacer último cambio en ${lastApplicabilityAction.taskCode}` : 'No hay cambios para deshacer'}
+                    >
+                      Deshacer último cambio
+                    </button>
+                    <span className="ml-auto text-xs text-slate-400">
+                      {filteredPlan.length} tarea{filteredPlan.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
           <div className="bg-white rounded-2xl border border-slate-200 px-6 py-3 shadow-sm flex flex-wrap items-center justify-between gap-2">
