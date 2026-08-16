@@ -2357,10 +2357,10 @@ export default function MaintenancePlanPage() {
 
           {/* Filters — replica el flujo del Access: primero Equipo, luego
               Categoría, y recién ahí el resto de filtros finos. */}
-          <div className="bg-white rounded-2xl border border-slate-200 px-6 py-4 shadow-sm">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="bg-brand-50/70 px-6 py-4">
               <div>
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Equipo</span>
-                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
                     onClick={() => { setEquipmentTab('AIRCRAFT'); setEquipmentStepDone(true); }}
                     className={`flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-3.5 text-sm font-bold transition-colors ${
@@ -2395,9 +2395,8 @@ export default function MaintenancePlanPage() {
               </div>
 
               {equipmentStepDone && (
-                <div className="mt-4 pt-4 border-t border-slate-100">
-                  <span className="text-xs font-bold uppercase tracking-wide text-slate-600">Categoría</span>
-                  <div className="mt-2 flex flex-wrap gap-2">
+                <div className="mt-3 pt-3 border-t border-brand-200/60">
+                  <div className="grid grid-cols-6 gap-2">
                     {([
                       { key: 'PROGRAMA', label: `Programa (${normativeCounts.total})`, icon: ClipboardCheck },
                       { key: 'AD', label: `AD (${normativeCounts.ad})`, icon: AlertTriangle },
@@ -2411,13 +2410,13 @@ export default function MaintenancePlanPage() {
                         <button
                           key={tab.key}
                           onClick={() => { setNormativeTab(tab.key); setCategoryStepDone(true); }}
-                          className={`inline-flex items-center gap-1.5 text-sm font-bold px-3.5 py-2 rounded-xl border-2 transition-colors ${
+                          className={`flex items-center justify-center gap-1.5 text-sm font-bold px-2 py-2.5 rounded-xl border-2 transition-colors whitespace-nowrap ${
                             normativeTab === tab.key
                               ? 'border-brand-600 bg-brand-50 text-brand-700'
                               : 'border-slate-200 text-slate-700 hover:border-slate-300'
                           }`}
                         >
-                          <Icon size={15} />
+                          <Icon size={15} className="shrink-0" />
                           {tab.label}
                         </button>
                       );
@@ -2425,9 +2424,10 @@ export default function MaintenancePlanPage() {
                   </div>
                 </div>
               )}
+              </div>
 
-              {categoryStepDone && (
-                <div className="mt-4 pt-4 border-t border-slate-100 space-y-2.5">
+            {categoryStepDone && (
+              <div className="px-6 py-4 border-t border-slate-100 space-y-2.5">
                   <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Aplicabilidad</span>
                     {([
