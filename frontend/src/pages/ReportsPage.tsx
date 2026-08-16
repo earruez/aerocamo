@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { aircraftApi } from '@api/aircraft.api';
 import { maintenancePlanApi } from '@api/maintenancePlan.api';
 import { reportsApi } from '@api/reports.api';
-import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown } from 'lucide-react';
+import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown, Wrench } from 'lucide-react';
 
 function StatCard({ label, value, sub, Icon, color }: {
   label: string; value: string | number; sub?: string;
@@ -38,21 +38,52 @@ function HBar({ label, value, max, color }: { label: string; value: number; max:
   );
 }
 
+function ReportDownloadCard({ Icon, title, description, onDownload, downloading }: {
+  Icon: React.ElementType; title: string; description: string;
+  onDownload: () => void; downloading: boolean;
+}) {
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-card p-5 flex flex-col gap-3">
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 rounded-lg bg-brand-50 flex items-center justify-center shrink-0">
+          <Icon size={16} className="text-brand-600" />
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+          <p className="text-xs text-slate-500 mt-0.5">{description}</p>
+        </div>
+      </div>
+      <button
+        onClick={onDownload}
+        disabled={downloading}
+        className="btn-secondary flex items-center justify-center gap-1.5 text-xs"
+      >
+        <FileDown size={13} />
+        {downloading ? 'Generando…' : 'Descargar PDF'}
+      </button>
+    </div>
+  );
+}
+
+type ReportId = 'fleet-summary' | 'fleet-lookahead' | 'labor-cost';
+
 export default function ReportsPage() {
-  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [downloadingReport, setDownloadingReport] = useState<ReportId | null>(null);
   const { data: aircraft = [], isLoading: loadingAc } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
 
-  const handleDownloadPdf = async () => {
-    setDownloadingPdf(true);
+  const downloadReport = async (id: ReportId, run: () => Promise<Blob>, filename: string) => {
+    setDownloadingReport(id);
     try {
-      const blob = await reportsApi.downloadFleetSummaryPdf();
-      saveAs(blob, `Informe-Ejecutivo-Flota-${new Date().toISOString().slice(0, 10)}.pdf`);
+      const blob = await run();
+      saveAs(blob, filename);
     } catch {
       toast.error('No se pudo generar el PDF');
     } finally {
-      setDownloadingPdf(false);
+      setDownloadingReport(null);
     }
   };
+
+  const today = new Date().toISOString().slice(0, 10);
 
   const planQueries = useQuery({
     queryKey: ['maintenance-plan-all-reports', aircraft.map(a => a.id).join(',')],
@@ -91,24 +122,39 @@ export default function ReportsPage() {
 
   return (
     <div className="p-8 space-y-8">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-brand-50 rounded-lg flex items-center justify-center">
-            <BarChart2 size={18} className="text-brand-600" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-900">Reportes</h1>
-            <p className="text-sm text-slate-500">Resumen ejecutivo de la flota</p>
-          </div>
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 bg-brand-50 rounded-lg flex items-center justify-center">
+          <BarChart2 size={18} className="text-brand-600" />
         </div>
-        <button
-          onClick={handleDownloadPdf}
-          disabled={downloadingPdf}
-          className="btn-primary flex items-center gap-1.5"
-        >
-          <FileDown size={14} />
-          {downloadingPdf ? 'Generando…' : 'Descargar informe PDF'}
-        </button>
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Reportes</h1>
+          <p className="text-sm text-slate-500">Resumen ejecutivo de la flota</p>
+        </div>
+      </div>
+
+      {/* Informes en PDF */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <ReportDownloadCard
+          Icon={FileDown}
+          title="Informe Ejecutivo de Flota"
+          description="Disponibilidad, horas y vencimientos por aeronave. Para presentar a gerencia."
+          downloading={downloadingReport === 'fleet-summary'}
+          onDownload={() => downloadReport('fleet-summary', reportsApi.downloadFleetSummaryPdf, `Informe-Ejecutivo-Flota-${today}.pdf`)}
+        />
+        <ReportDownloadCard
+          Icon={AlertTriangle}
+          title="Vencimientos de Flota"
+          description="Tareas vencidas y próximas a vencer en toda la flota, para planificar mantenimiento."
+          downloading={downloadingReport === 'fleet-lookahead'}
+          onDownload={() => downloadReport('fleet-lookahead', reportsApi.downloadFleetLookaheadPdf, `Vencimientos-Flota-${today}.pdf`)}
+        />
+        <ReportDownloadCard
+          Icon={Wrench}
+          title="Horas-Hombre por OT"
+          description="Horas y costo ESTIMADO de las órdenes de trabajo cerradas, según el plan de mantenimiento."
+          downloading={downloadingReport === 'labor-cost'}
+          onDownload={() => downloadReport('labor-cost', () => reportsApi.downloadWorkOrderLaborCostPdf(), `Horas-Hombre-OT-${today}.pdf`)}
+        />
       </div>
 
       {loading && <p className="text-slate-400 text-sm">Cargando datos…</p>}
