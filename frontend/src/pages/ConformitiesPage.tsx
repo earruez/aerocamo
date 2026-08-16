@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { FileCheck2, ChevronDown, Search } from 'lucide-react';
+import { saveAs } from 'file-saver';
+import toast from 'react-hot-toast';
+import { FileCheck2, ChevronDown, Search, FileDown } from 'lucide-react';
 import { aircraftApi } from '@api/aircraft.api';
 import { complianceApi } from '@api/compliance.api';
+import { reportsApi } from '@api/reports.api';
 
 const PAGE_SIZE = 100;
 
@@ -15,8 +18,23 @@ export default function ConformitiesPage() {
   const [selectedAircraftId, setSelectedAircraftId] = useState<string>('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   const { data: aircraft = [] } = useQuery({ queryKey: ['aircraft'], queryFn: aircraftApi.findAll });
+
+  const handleDownloadPdf = async () => {
+    if (!selectedAircraftId) return;
+    setDownloadingPdf(true);
+    try {
+      const blob = await reportsApi.downloadComplianceHistoryPdf(selectedAircraftId);
+      const reg = aircraft.find((a) => a.id === selectedAircraftId)?.registration ?? selectedAircraftId;
+      saveAs(blob, `Cumplimiento-Regulatorio-${reg}.pdf`);
+    } catch {
+      toast.error('No se pudo generar el PDF');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
 
   const { data: result, isLoading } = useQuery({
     queryKey: ['compliances', selectedAircraftId, page],
@@ -36,16 +54,27 @@ export default function ConformitiesPage() {
 
   return (
     <div className="p-8 space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 bg-brand-50 rounded-lg flex items-center justify-center">
-          <FileCheck2 size={18} className="text-brand-600" />
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 bg-brand-50 rounded-lg flex items-center justify-center">
+            <FileCheck2 size={18} className="text-brand-600" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">Conformidades</h1>
+            <p className="text-sm text-slate-500">
+              Libro de cumplimientos: tareas de mantenimiento firmadas al cerrar una ST o una OT.
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Conformidades</h1>
-          <p className="text-sm text-slate-500">
-            Libro de cumplimientos: tareas de mantenimiento firmadas al cerrar una ST o una OT.
-          </p>
-        </div>
+        <button
+          onClick={handleDownloadPdf}
+          disabled={!selectedAircraftId || downloadingPdf}
+          title={!selectedAircraftId ? 'Selecciona una aeronave para generar el informe' : undefined}
+          className="btn-primary flex items-center gap-1.5 shrink-0"
+        >
+          <FileDown size={14} />
+          {downloadingPdf ? 'Generando…' : 'Informe de cumplimiento (PDF)'}
+        </button>
       </div>
 
       {/* Filters */}

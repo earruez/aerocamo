@@ -349,7 +349,7 @@ export default function RemanentesPage() {
   const totalRowsCount = summary?.totalRows ?? visibleRows.length;
 
   return (
-    <div className="p-6 lg:p-8 space-y-6 max-w-[96rem] mx-auto">
+    <div className="p-6 lg:p-8 space-y-6">
       <div className="bg-white border border-slate-200 rounded-2xl p-5 lg:p-6 shadow-sm space-y-3">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>

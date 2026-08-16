@@ -1053,7 +1053,7 @@ export default function AircraftProfilePage() {
   const statusCls = STATUS_CLASSES[aircraft.status] ?? 'bg-slate-100 text-slate-600 border-slate-200';
 
   return (
-    <div className="p-6 lg:p-8 space-y-6 max-w-6xl mx-auto">
+    <div className="p-6 lg:p-8 space-y-6">
 
       {/* ── Breadcrumb & actions ── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
