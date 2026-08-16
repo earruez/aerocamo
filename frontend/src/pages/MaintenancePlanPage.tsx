@@ -20,6 +20,7 @@ import { applySort, SortableHeader, toggleSort, type SortState } from '@/shared/
 import {
   ClipboardCheck, AlertTriangle, Clock, CheckCircle2,
   ChevronRight, Search, BookOpen, Calendar, Gauge, RefreshCw, Plane,
+  FileText, Eye, Package,
   Plus, Pencil, Trash2, X, Check,
   StickyNote,
 } from 'lucide-react';
@@ -2394,28 +2395,34 @@ export default function MaintenancePlanPage() {
               </div>
 
               {equipmentStepDone && (
-                <div className="flex items-center gap-2 mt-4 pt-4 border-t border-slate-100 flex-wrap lg:flex-nowrap">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mr-1 shrink-0">Categoría</span>
-                  {([
-                    { key: 'PROGRAMA', label: `Programa (${normativeCounts.total})` },
-                    { key: 'AD', label: `AD (${normativeCounts.ad})` },
-                    { key: 'SB', label: `SB (${normativeCounts.sb})` },
-                    { key: 'MIM', label: `MIM (${normativeCounts.mim})` },
-                    { key: 'INSPECCIONES', label: `Inspecciones (${normativeCounts.inspecciones})` },
-                    { key: 'COMPONENTES', label: `Componentes (${normativeCounts.componentes})` },
-                  ] as const).map(tab => (
-                    <button
-                      key={tab.key}
-                      onClick={() => { setNormativeTab(tab.key); setCategoryStepDone(true); }}
-                      className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-colors shrink-0 ${
-                        normativeTab === tab.key
-                          ? 'bg-brand-600 text-white border-brand-600'
-                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
+                <div className="mt-4 pt-4 border-t border-slate-100">
+                  <span className="text-xs font-bold uppercase tracking-wide text-slate-600">Categoría</span>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {([
+                      { key: 'PROGRAMA', label: `Programa (${normativeCounts.total})`, icon: ClipboardCheck },
+                      { key: 'AD', label: `AD (${normativeCounts.ad})`, icon: AlertTriangle },
+                      { key: 'SB', label: `SB (${normativeCounts.sb})`, icon: FileText },
+                      { key: 'MIM', label: `MIM (${normativeCounts.mim})`, icon: BookOpen },
+                      { key: 'INSPECCIONES', label: `Inspecciones (${normativeCounts.inspecciones})`, icon: Eye },
+                      { key: 'COMPONENTES', label: `Componentes (${normativeCounts.componentes})`, icon: Package },
+                    ] as const).map(tab => {
+                      const Icon = tab.icon;
+                      return (
+                        <button
+                          key={tab.key}
+                          onClick={() => { setNormativeTab(tab.key); setCategoryStepDone(true); }}
+                          className={`inline-flex items-center gap-1.5 text-sm font-bold px-3.5 py-2 rounded-xl border-2 transition-colors ${
+                            normativeTab === tab.key
+                              ? 'border-brand-600 bg-brand-50 text-brand-700'
+                              : 'border-slate-200 text-slate-700 hover:border-slate-300'
+                          }`}
+                        >
+                          <Icon size={15} />
+                          {tab.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
