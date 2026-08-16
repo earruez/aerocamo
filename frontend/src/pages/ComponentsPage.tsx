@@ -9,7 +9,7 @@ import type { MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { complianceApi } from '@api/compliance.api';
 import { workRequestsApi } from '@api/workRequests.api';
 import { dueApi, type DueRow, type DueStatus } from '@api/due.api';
-import { Package, ChevronDown, X, Loader2 } from 'lucide-react';
+import { Package, ChevronDown, ChevronUp, History, X, Loader2 } from 'lucide-react';
 import { createSTFromSource } from '@/shared/createSTFromSource';
 import { useWorkRequestStore } from '../store/workRequestStore';
 import {
@@ -928,6 +928,7 @@ export default function ComponentsPage() {
   } | null>(null);
   const [initialRegistrationTask, setInitialRegistrationTask] = useState<MaintenancePlanItem | null>(null);
   const [expandedComponentId, setExpandedComponentId] = useState<string | null>(null);
+  const [showMovementHistory, setShowMovementHistory] = useState(false);
   const [scopeFilter, setScopeFilter] = useState<'ALL' | 'AIRCRAFT' | 'ENGINE'>('ALL');
   const [componentSearch, setComponentSearch] = useState('');
   const [componentApplications, setComponentApplications] = useState<ComponentApplication[]>(
@@ -1637,7 +1638,17 @@ export default function ComponentsPage() {
             <p className="text-sm text-slate-500">Vista de componente instalado, trazabilidad y vencimientos.</p>
           </div>
         </div>
-        <button className="btn-primary" onClick={() => setShowModal(true)}>+ Nuevo componente</button>
+        <div className="flex items-center gap-2">
+          <button
+            className="btn-secondary flex items-center gap-1.5 whitespace-nowrap"
+            onClick={() => setShowMovementHistory((v) => !v)}
+          >
+            <History size={14} />
+            Historial de movimientos
+            {showMovementHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          <button className="btn-primary" onClick={() => setShowModal(true)}>+ Nuevo componente</button>
+        </div>
       </div>
 
       <div className="filter-bar">
@@ -1960,57 +1971,59 @@ export default function ComponentsPage() {
       )}
 
 
-      <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
-        <div className="px-5 py-4 border-b border-slate-100">
-          <h2 className="text-sm font-bold text-slate-900">Historial de movimientos</h2>
-        </div>
-        <table className="min-w-full divide-y divide-slate-100 text-sm">
-          <thead className="bg-white sticky top-0 z-10 border-b border-slate-200">
-            <tr>
-              <SortableHeader label="Fecha" sortKey="fecha" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="Movimiento" sortKey="movimiento" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="P/N" sortKey="pn" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="S/N" sortKey="sn" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="Descripción" sortKey="descripcion" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="Posición" sortKey="posicion" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="Hrs aeronave" sortKey="hrsaeronave" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="Ciclos aeronave" sortKey="ciclosaeronave" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="Hrs componente" sortKey="hrscomponente" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="OT" sortKey="ot" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="Usuario" sortKey="usuario" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-              <SortableHeader label="Notas" sortKey="notas" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {loadingMovementHistory && (
-              <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-8">Cargando historial…</td></tr>
-            )}
-            {!loadingMovementHistory && sortedMovementHistory.length === 0 && (
-              <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-8">Sin movimientos registrados para esta aeronave.</td></tr>
-            )}
-            {sortedMovementHistory.map((row) => (
-              <tr key={row.id} className="hover:bg-slate-50 transition-colors">
-                <td className="table-cell text-xs text-slate-600">{new Date(row.movedAt).toLocaleString('es-MX')}</td>
-                <td className="table-cell text-xs text-slate-700">{movementTypeBadge(row.movementType)}</td>
-                <td className="table-cell text-xs text-slate-700 font-mono">{row.component?.partNumber ?? componentById.get(row.componentId)?.partNumber ?? '—'}</td>
-                <td className="table-cell text-xs text-slate-700 font-mono">{row.component?.serialNumber ?? componentById.get(row.componentId)?.serialNumber ?? '—'}</td>
-                <td className="table-cell text-xs text-slate-700">{row.component?.description ?? componentById.get(row.componentId)?.description ?? '—'}</td>
-                <td className="table-cell text-xs text-slate-700">{row.position ?? '—'}</td>
-                <td className="table-cell text-xs text-slate-700 tabular-nums">{Number(row.aircraftHoursAtMovement).toFixed(1)}</td>
-                <td className="table-cell text-xs text-slate-700 tabular-nums">{row.aircraftCyclesAtMovement}</td>
-                <td className="table-cell text-xs text-slate-700 tabular-nums">{Number(row.componentHoursAtMovement).toFixed(1)}</td>
-                <td className="table-cell text-xs text-slate-700">
-                  {row.workOrder?.number
-                    ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-progress">OT {row.workOrder.number}</span>
-                    : <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-neutral">Sin OT</span>}
-                </td>
-                <td className="table-cell text-xs text-slate-500">{row.performedBy?.name ?? '—'}</td>
-                <td className="table-cell text-xs text-slate-500 max-w-[260px]">{row.notes ?? '—'}</td>
+      {showMovementHistory && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
+          <div className="px-5 py-4 border-b border-slate-100">
+            <h2 className="text-sm font-bold text-slate-900">Historial de movimientos</h2>
+          </div>
+          <table className="min-w-full divide-y divide-slate-100 text-sm">
+            <thead className="bg-white sticky top-0 z-10 border-b border-slate-200">
+              <tr>
+                <SortableHeader label="Fecha" sortKey="fecha" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="Movimiento" sortKey="movimiento" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="P/N" sortKey="pn" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="S/N" sortKey="sn" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="Descripción" sortKey="descripcion" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="Posición" sortKey="posicion" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="Hrs aeronave" sortKey="hrsaeronave" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="Ciclos aeronave" sortKey="ciclosaeronave" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="Hrs componente" sortKey="hrscomponente" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="OT" sortKey="ot" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="Usuario" sortKey="usuario" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
+                <SortableHeader label="Notas" sortKey="notas" sort={movementSort} onSort={(k) => setMovementSort((p) => toggleSort(p, k))} className="table-header" />
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {loadingMovementHistory && (
+                <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-8">Cargando historial…</td></tr>
+              )}
+              {!loadingMovementHistory && sortedMovementHistory.length === 0 && (
+                <tr><td colSpan={12} className="table-cell text-center text-slate-400 py-8">Sin movimientos registrados para esta aeronave.</td></tr>
+              )}
+              {sortedMovementHistory.map((row) => (
+                <tr key={row.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="table-cell text-xs text-slate-600">{new Date(row.movedAt).toLocaleString('es-MX')}</td>
+                  <td className="table-cell text-xs text-slate-700">{movementTypeBadge(row.movementType)}</td>
+                  <td className="table-cell text-xs text-slate-700 font-mono">{row.component?.partNumber ?? componentById.get(row.componentId)?.partNumber ?? '—'}</td>
+                  <td className="table-cell text-xs text-slate-700 font-mono">{row.component?.serialNumber ?? componentById.get(row.componentId)?.serialNumber ?? '—'}</td>
+                  <td className="table-cell text-xs text-slate-700">{row.component?.description ?? componentById.get(row.componentId)?.description ?? '—'}</td>
+                  <td className="table-cell text-xs text-slate-700">{row.position ?? '—'}</td>
+                  <td className="table-cell text-xs text-slate-700 tabular-nums">{Number(row.aircraftHoursAtMovement).toFixed(1)}</td>
+                  <td className="table-cell text-xs text-slate-700 tabular-nums">{row.aircraftCyclesAtMovement}</td>
+                  <td className="table-cell text-xs text-slate-700 tabular-nums">{Number(row.componentHoursAtMovement).toFixed(1)}</td>
+                  <td className="table-cell text-xs text-slate-700">
+                    {row.workOrder?.number
+                      ? <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-progress">OT {row.workOrder.number}</span>
+                      : <span className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold badge-state-neutral">Sin OT</span>}
+                  </td>
+                  <td className="table-cell text-xs text-slate-500">{row.performedBy?.name ?? '—'}</td>
+                  <td className="table-cell text-xs text-slate-500 max-w-[260px]">{row.notes ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
         <div className="px-5 py-4 border-b border-slate-100">
