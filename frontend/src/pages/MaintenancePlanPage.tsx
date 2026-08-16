@@ -1116,9 +1116,9 @@ function TaskComplianceHistoryPanel({
           ) : history.length === 0 ? (
             <p className="py-8 text-center text-sm text-slate-400">Esta tarea aún no tiene cumplimientos registrados.</p>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <div className="overflow-auto max-h-[50vh] rounded-xl border border-slate-200">
               <table className="min-w-full divide-y divide-slate-100 text-sm">
-                <thead className="bg-slate-50">
+                <thead className="bg-slate-50 sticky top-0 z-10">
                   <tr>
                     <th className="table-header">Fecha</th>
                     <th className="table-header">Tipo</th>
@@ -2581,7 +2581,7 @@ export default function MaintenancePlanPage() {
           )}
 
           {/* Table */}
-          <div className="flex-1 overflow-auto bg-white rounded-2xl border border-slate-200 shadow-sm">
+          <div className="overflow-auto max-h-[70vh] bg-white rounded-2xl border border-slate-200 shadow-sm">
             {loadingPlan ? (
               <div className="flex items-center justify-center h-40 text-sm text-slate-400">
                 Cargando plan de mantenimiento…

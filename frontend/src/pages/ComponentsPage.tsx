@@ -929,6 +929,7 @@ export default function ComponentsPage() {
   const [initialRegistrationTask, setInitialRegistrationTask] = useState<MaintenancePlanItem | null>(null);
   const [expandedComponentId, setExpandedComponentId] = useState<string | null>(null);
   const [showMovementHistory, setShowMovementHistory] = useState(false);
+  const [showApplicationHistory, setShowApplicationHistory] = useState(false);
   const [scopeFilter, setScopeFilter] = useState<'ALL' | 'AIRCRAFT' | 'ENGINE'>('ALL');
   const [componentSearch, setComponentSearch] = useState('');
   const [componentApplications, setComponentApplications] = useState<ComponentApplication[]>(
@@ -1641,6 +1642,14 @@ export default function ComponentsPage() {
         <div className="flex items-center gap-2">
           <button
             className="btn-secondary flex items-center gap-1.5 whitespace-nowrap"
+            onClick={() => setShowApplicationHistory((v) => !v)}
+          >
+            <History size={14} />
+            Historial de aplicaciones
+            {showApplicationHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          <button
+            className="btn-secondary flex items-center gap-1.5 whitespace-nowrap"
             onClick={() => setShowMovementHistory((v) => !v)}
           >
             <History size={14} />
@@ -1701,7 +1710,7 @@ export default function ComponentsPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-auto max-h-[70vh]">
         <div className="px-5 py-4 border-b border-slate-100">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -1972,7 +1981,7 @@ export default function ComponentsPage() {
 
 
       {showMovementHistory && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-auto max-h-[70vh]">
           <div className="px-5 py-4 border-b border-slate-100">
             <h2 className="text-sm font-bold text-slate-900">Historial de movimientos</h2>
           </div>
@@ -2025,7 +2034,8 @@ export default function ComponentsPage() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-x-auto">
+      {showApplicationHistory && (
+      <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-auto max-h-[70vh]">
         <div className="px-5 py-4 border-b border-slate-100">
           <h2 className="text-sm font-bold text-slate-900">Historial de aplicaciones</h2>
         </div>
@@ -2066,6 +2076,7 @@ export default function ComponentsPage() {
           </tbody>
         </table>
       </div>
+      )}
 
       {showModal && <NewComponentModal onClose={() => setShowModal(false)} />}
 

@@ -312,7 +312,7 @@ export default function AircraftAlterationsPage() {
               {selectedAircraft.registration} · {sortedAlterations.length}
               {sortedAlterations.length !== counts.total ? ` de ${counts.total}` : ''} alteraciones
             </div>
-            <div className="overflow-x-auto">
+            <div className="overflow-auto max-h-[70vh]">
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50 text-slate-600 sticky top-0 z-10">
                   <tr>

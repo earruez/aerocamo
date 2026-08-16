@@ -302,9 +302,9 @@ function SemaphoreTable({
   const actionButtonPadding = viewDensity === 'compact' ? 'px-1.5 py-0.5' : 'px-2 py-0.5';
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200">
+    <div className="overflow-auto max-h-[60vh] rounded-xl border border-slate-200">
       <table className="min-w-full text-xs divide-y divide-slate-100">
-        <thead className="bg-slate-50">
+        <thead className="bg-slate-50 sticky top-0 z-10">
           <tr>
             <th className={`${headerPadding} text-left font-bold text-slate-500 uppercase tracking-wide ${tinyText}`}>ATA · Tarea</th>
             <th className={`${headerPadding} text-right font-bold text-slate-500 uppercase tracking-wide ${tinyText}`}>H restantes</th>
@@ -805,9 +805,9 @@ function AircraftUsageHistoryPanel({
               Aun no hay registros de uso para esta aeronave.
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <div className="overflow-auto max-h-[60vh] rounded-xl border border-slate-200">
               <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 border-b border-slate-200">
+                <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
                   <tr>
                     <th className="table-header">Fecha</th>
                     <th className="table-header text-right">Horas</th>

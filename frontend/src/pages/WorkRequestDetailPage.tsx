@@ -393,7 +393,7 @@ export default function WorkRequestDetailPage() {
   };
 
   return (
-    <div className={`${pagePadding} max-w-7xl mx-auto`}>
+    <div className={pagePadding}>
       <section className={`relative overflow-hidden bg-white rounded-2xl border border-slate-200 ${cardPadding} ${cardGap} shadow-sm`}>
         <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-r from-brand-50/80 via-sky-50/70 to-transparent pointer-events-none" />
 

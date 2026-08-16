@@ -456,7 +456,7 @@ export default function RemanentesPage() {
         </div>
 
         <div
-          className="overflow-x-auto [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-track]:bg-slate-100
+          className="overflow-auto max-h-[70vh] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar-track]:bg-slate-100
           [&::-webkit-scrollbar-thumb]:bg-slate-400 [&::-webkit-scrollbar-thumb]:rounded-full
           [&::-webkit-scrollbar-thumb:hover]:bg-slate-500"
         >
