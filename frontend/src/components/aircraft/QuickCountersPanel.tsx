@@ -21,6 +21,8 @@ type Draft = Record<string, string>;
 /**
  * Vive fija arriba de /aircraft (no como modal): registrar contadores es una
  * tarea diaria y taparla detrás de un botón + overlay solo agrega fricción.
+ * Con fondo de marca y formato compacto: al ser lo que más se usa en esta
+ * pantalla, tiene que notarse sin ocupar media pantalla.
  */
 export function QuickCountersPanel({ aircraft }: { aircraft: Aircraft[] }) {
   const qc = useQueryClient();
@@ -118,19 +120,19 @@ export function QuickCountersPanel({ aircraft }: { aircraft: Aircraft[] }) {
     const current = currentByKey.get(key);
     return (
       <div key={key}>
-        <label className="flex items-baseline justify-between text-[11px] font-semibold text-slate-600">
+        <label className="flex items-baseline justify-between text-[10px] font-semibold text-slate-600">
           <span>{displayCode(t)}</span>
           <span className="font-normal text-slate-400">{t.unit}</span>
         </label>
         <input
           value={draft[key] ?? ''}
           onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
-          className="input mt-0.5 text-sm tabular-nums"
+          className="input mt-0.5 text-xs py-1 tabular-nums"
           placeholder={current ? Number(current.value).toLocaleString('es-CL') : '—'}
           inputMode="decimal"
         />
-        <p className="mt-0.5 text-[10px] text-slate-400">
-          {current ? `Actual ${Number(current.value).toLocaleString('es-CL')} · ${current.date}` : 'Sin lectura previa'}
+        <p className="mt-0.5 text-[9px] text-slate-400 truncate">
+          {current ? current.date : 'Sin lectura previa'}
         </p>
       </div>
     );
@@ -139,42 +141,60 @@ export function QuickCountersPanel({ aircraft }: { aircraft: Aircraft[] }) {
   if (aircraft.length === 0) return null;
 
   return (
-    <div className="rounded-2xl bg-white shadow-card border border-slate-200">
-      <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-        <div className="flex items-center gap-2.5">
-          <Gauge size={17} className="text-brand-500" />
+    <div className="rounded-2xl bg-brand-50/70 border border-brand-200/70 shadow-sm">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-b border-brand-200/60">
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-7 h-7 rounded-lg bg-white border border-brand-200 flex items-center justify-center shrink-0">
+            <Gauge size={14} className="text-brand-600" />
+          </div>
           <div>
-            <h2 className="text-sm font-bold text-slate-900">Registrar contadores</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Deja en blanco lo que no cambió.</p>
+            <h2 className="text-xs font-bold text-slate-900 leading-tight">Registrar contadores</h2>
+            <p className="text-[10px] text-slate-500 leading-tight">Deja en blanco lo que no cambió</p>
           </div>
         </div>
+
+        <div className="relative min-w-[190px] max-w-xs">
+          <Plane size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <select
+            value={aircraftId}
+            onChange={(e) => setAircraftId(e.target.value)}
+            className="input pl-7 py-1.5 text-xs w-full"
+          >
+            {aircraft.map((a) => (
+              <option key={a.id} value={a.id}>{a.registration} — {a.model}</option>
+            ))}
+          </select>
+        </div>
+        <input
+          type="date"
+          value={readingDate}
+          onChange={(e) => setReadingDate(e.target.value)}
+          className="input py-1.5 text-xs w-36 shrink-0"
+        />
+
+        <span className="text-[11px] text-slate-500 shrink-0">
+          {filled.length > 0 ? `${filled.length} lectura${filled.length !== 1 ? 's' : ''} por registrar` : 'Nada por registrar'}
+        </span>
+        <button
+          type="button"
+          onClick={() => setShowAll((v) => !v)}
+          className="text-[11px] font-semibold text-brand-700 hover:underline shrink-0"
+        >
+          {showAll ? 'Ver solo los principales' : 'Ver todos los contadores'}
+        </button>
+
+        <button onClick={save} className="btn-primary btn-xs ml-auto shrink-0" disabled={saving || filled.length === 0}>
+          {saving ? 'Guardando…' : 'Registrar'}
+        </button>
       </div>
 
-      <div className="px-6 py-5 space-y-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="lg:col-span-2">
-            <label className="mb-1 block text-xs font-semibold text-slate-600">Aeronave</label>
-            <div className="relative">
-              <Plane size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <select value={aircraftId} onChange={(e) => setAircraftId(e.target.value)} className="input pl-8 text-sm">
-                {aircraft.map((a) => (
-                  <option key={a.id} value={a.id}>{a.registration} — {a.model}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-600">Fecha de lectura</label>
-            <input type="date" value={readingDate} onChange={(e) => setReadingDate(e.target.value)} className="input text-sm" />
-          </div>
-        </div>
-
+      <div className="px-4 py-3 space-y-2.5">
         {/* Bloque de aeronave, como en la pantalla del Access */}
-        <div className="rounded-xl border border-slate-200 overflow-hidden">
-          <p className="bg-slate-50 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600">
+        <div className="rounded-lg bg-white/80 border border-brand-200/50 overflow-hidden">
+          <p className="bg-brand-100/50 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-brand-700">
             Aeronave
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 px-4 py-3">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5 px-3 py-2">
             {aircraftTypes.length === 0
               ? <p className="text-xs text-slate-400">Sin contadores de aeronave configurados.</p>
               : aircraftTypes.map((t) => field(t, 'ac'))}
@@ -183,14 +203,14 @@ export function QuickCountersPanel({ aircraft }: { aircraft: Aircraft[] }) {
 
         {/* Un bloque por motor, con sus propios contadores */}
         {engines.map((en) => (
-          <div key={en.id} className="rounded-xl border border-slate-200 overflow-hidden">
-            <p className="bg-slate-50 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600">
+          <div key={en.id} className="rounded-lg bg-white/80 border border-brand-200/50 overflow-hidden">
+            <p className="bg-brand-100/50 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-brand-700">
               Motor {en.position}
               <span className="ml-2 font-normal normal-case tracking-normal text-slate-400">
                 {en.model} · S/N {en.serialNumber}
               </span>
             </p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 px-4 py-3">
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5 px-3 py-2">
               {engineTypes.length === 0
                 ? <p className="text-xs text-slate-400">Sin contadores de motor configurados.</p>
                 : engineTypes.map((t) => field(t, en.id))}
@@ -203,22 +223,6 @@ export function QuickCountersPanel({ aircraft }: { aircraft: Aircraft[] }) {
             Esta aeronave no tiene motores registrados, así que no se pueden cargar sus contadores.
           </p>
         )}
-      </div>
-
-      <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-6 py-3.5">
-        <span className="flex items-center gap-3 text-[11px] text-slate-500">
-          <span>{filled.length > 0 ? `${filled.length} lectura${filled.length !== 1 ? 's' : ''} por registrar` : 'Nada por registrar'}</span>
-          <button
-            type="button"
-            onClick={() => setShowAll((v) => !v)}
-            className="font-semibold text-brand-700 hover:underline"
-          >
-            {showAll ? 'Ver solo los principales' : 'Ver todos los contadores'}
-          </button>
-        </span>
-        <button onClick={save} className="btn-primary" disabled={saving || filled.length === 0}>
-          {saving ? 'Guardando…' : 'Registrar'}
-        </button>
       </div>
     </div>
   );
