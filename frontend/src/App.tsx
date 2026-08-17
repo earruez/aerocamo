@@ -20,6 +20,7 @@ import ConformitiesPage from '@pages/ConformitiesPage';
 import AircraftProfilePage from '@pages/AircraftProfilePage';
 import RemanentesPage from '@pages/RemanentesPage';
 import PlatformPage from '@pages/PlatformPage';
+import HelpPage from '@pages/HelpPage';
 import AppLayout from '@components/layout/AppLayout';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -77,6 +78,7 @@ export default function App() {
           <Route path="/remanentes" element={<RemanentesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/notificaciones" element={<NotificationsPage />} />
+          <Route path="/manual" element={<HelpPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

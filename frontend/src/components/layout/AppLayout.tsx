@@ -3,7 +3,7 @@ import { useAuthStore } from '@store/authStore';
 import {
   Plane, Wrench, LayoutDashboard, LogOut, Settings,
   ClipboardList, BarChart2, Package, ChevronRight, ClipboardCheck, Bell, FileText, FileCheck2, Repeat, BookOpen,
-  ShieldCheck, PanelLeftClose, PanelLeftOpen,
+  ShieldCheck, PanelLeftClose, PanelLeftOpen, HelpCircle,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -41,6 +41,7 @@ const NAV_SECTIONS = [
       { to: '/reports', label: 'Reportes', icon: BarChart2 },
       { to: '/notificaciones', label: 'Notificaciones', icon: Bell },
       { to: '/settings', label: 'Configuración', icon: Settings },
+      { to: '/manual', label: 'Manual de Uso', icon: HelpCircle },
     ],
   },
 ];
@@ -68,6 +69,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/notificaciones':   'Centro de Notificaciones',
   '/settings':         'Configuración',
   '/platform':         'Empresas y Usuarios',
+  '/manual':           'Manual de Uso',
 };
 
 function initials(name?: string) {
