@@ -5,8 +5,296 @@ import {
   BookOpen, Plus, Search, ChevronDown, Trash2, Edit3, Loader2,
   X, AlertCircle, Server, Code, Clock, ListChecks, Check
 } from 'lucide-react';
-import { libraryApi, type MaintenanceTemplate, type MaintenanceTemplateTask } from '@api/library.api';
+import {
+  libraryApi,
+  type MaintenanceTemplate,
+  type MaintenanceTemplateTask,
+  type CreateTemplateTaskInput,
+} from '@api/library.api';
 import { componentChapterLabel, isComponentChapterTask } from '@/shared/componentChapterRules';
+
+// ─── Task form (agregar / editar) ───────────────────────────────────────────────
+
+const INTERVAL_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'FLIGHT_HOURS', label: 'Horas de vuelo' },
+  { value: 'CYCLES', label: 'Ciclos' },
+  { value: 'CALENDAR_DAYS', label: 'Días calendario' },
+  { value: 'FLIGHT_HOURS_OR_CALENDAR', label: 'Horas o calendario (lo que ocurra primero)' },
+  { value: 'CYCLES_OR_CALENDAR', label: 'Ciclos o calendario (lo que ocurra primero)' },
+  { value: 'ON_CONDITION', label: 'Según condición' },
+];
+
+const REFERENCE_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'AMM', label: 'AMM — Manual de mantenimiento' },
+  { value: 'AD', label: 'AD — Directiva de aeronavegabilidad' },
+  { value: 'SB', label: 'SB — Boletín de servicio' },
+  { value: 'CMR', label: 'CMR — Requisito de mantenimiento certificado' },
+  { value: 'CDCCL', label: 'CDCCL' },
+  { value: 'MPD', label: 'MPD — Documento de planificación' },
+  { value: 'ETOPS', label: 'ETOPS' },
+  { value: 'INTERNAL', label: 'Interno' },
+];
+
+interface TaskFormValues {
+  code: string;
+  title: string;
+  description: string;
+  chapter: string;
+  section: string;
+  intervalType: string;
+  intervalHours: string;
+  intervalCycles: string;
+  intervalCalendarDays: string;
+  intervalCalendarMonths: string;
+  referenceNumber: string;
+  referenceType: string;
+  isMandatory: boolean;
+  requiresInspection: boolean;
+}
+
+const EMPTY_TASK_FORM: TaskFormValues = {
+  code: '',
+  title: '',
+  description: '',
+  chapter: '',
+  section: '',
+  intervalType: 'FLIGHT_HOURS_OR_CALENDAR',
+  intervalHours: '',
+  intervalCycles: '',
+  intervalCalendarDays: '',
+  intervalCalendarMonths: '',
+  referenceNumber: '',
+  referenceType: 'AMM',
+  isMandatory: false,
+  requiresInspection: false,
+};
+
+function taskToFormValues(task: MaintenanceTemplateTask): TaskFormValues {
+  return {
+    code: task.code,
+    title: task.title,
+    description: task.description,
+    chapter: task.chapter ?? '',
+    section: task.section ?? '',
+    intervalType: task.intervalType,
+    intervalHours: task.intervalHours != null ? String(task.intervalHours) : '',
+    intervalCycles: task.intervalCycles != null ? String(task.intervalCycles) : '',
+    intervalCalendarDays: task.intervalCalendarDays != null ? String(task.intervalCalendarDays) : '',
+    intervalCalendarMonths: task.intervalCalendarMonths != null ? String(task.intervalCalendarMonths) : '',
+    referenceNumber: task.referenceNumber ?? '',
+    referenceType: task.referenceType ?? 'AMM',
+    isMandatory: task.isMandatory ?? false,
+    requiresInspection: task.requiresInspection ?? false,
+  };
+}
+
+function formValuesToInput(values: TaskFormValues): CreateTemplateTaskInput {
+  return {
+    code: values.code.trim(),
+    title: values.title.trim(),
+    description: values.description.trim(),
+    chapter: values.chapter.trim() || undefined,
+    section: values.section.trim() || undefined,
+    intervalType: values.intervalType,
+    intervalHours: values.intervalHours !== '' ? Number(values.intervalHours) : undefined,
+    intervalCycles: values.intervalCycles !== '' ? Number(values.intervalCycles) : undefined,
+    intervalCalendarDays: values.intervalCalendarDays !== '' ? Number(values.intervalCalendarDays) : undefined,
+    intervalCalendarMonths: values.intervalCalendarMonths !== '' ? Number(values.intervalCalendarMonths) : undefined,
+    referenceNumber: values.referenceNumber.trim() || undefined,
+    referenceType: values.referenceType,
+    isMandatory: values.isMandatory,
+    requiresInspection: values.requiresInspection,
+  };
+}
+
+function TaskFormModal({
+  isNew,
+  initial,
+  isSaving,
+  onSave,
+  onClose,
+}: {
+  isNew: boolean;
+  initial: TaskFormValues;
+  isSaving: boolean;
+  onSave: (values: TaskFormValues) => void;
+  onClose: () => void;
+}) {
+  const [values, setValues] = useState<TaskFormValues>(initial);
+  const set = <K extends keyof TaskFormValues>(field: K, value: TaskFormValues[K]) =>
+    setValues((prev) => ({ ...prev, [field]: value }));
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!values.code.trim() || !values.title.trim() || !values.description.trim()) {
+      toast.error('Código, título y descripción son obligatorios');
+      return;
+    }
+    onSave(values);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl my-8">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <h2 className="text-base font-bold text-slate-900">{isNew ? 'Nueva tarea' : 'Editar tarea'}</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="form-label">Código <span className="text-rose-500">*</span></label>
+              <input
+                value={values.code}
+                onChange={(e) => set('code', e.target.value)}
+                className="filter-input w-full"
+                placeholder="DGAC-001"
+              />
+            </div>
+            <div>
+              <label className="form-label">Capítulo</label>
+              <input
+                value={values.chapter}
+                onChange={(e) => set('chapter', e.target.value)}
+                className="filter-input w-full"
+                placeholder="05"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="form-label">Título <span className="text-rose-500">*</span></label>
+            <input value={values.title} onChange={(e) => set('title', e.target.value)} className="filter-input w-full" />
+          </div>
+
+          <div>
+            <label className="form-label">Descripción <span className="text-rose-500">*</span></label>
+            <textarea
+              value={values.description}
+              onChange={(e) => set('description', e.target.value)}
+              className="filter-input w-full"
+              rows={3}
+            />
+          </div>
+
+          <div>
+            <label className="form-label">Sección</label>
+            <input value={values.section} onChange={(e) => set('section', e.target.value)} className="filter-input w-full" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="form-label">Tipo de intervalo</label>
+              <select
+                value={values.intervalType}
+                onChange={(e) => set('intervalType', e.target.value)}
+                className="filter-input w-full"
+              >
+                {INTERVAL_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="form-label">Tipo de referencia</label>
+              <select
+                value={values.referenceType}
+                onChange={(e) => set('referenceType', e.target.value)}
+                className="filter-input w-full"
+              >
+                {REFERENCE_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="form-label">Horas</label>
+              <input
+                type="number" min={0}
+                value={values.intervalHours}
+                onChange={(e) => set('intervalHours', e.target.value)}
+                className="filter-input w-full"
+                placeholder="100"
+              />
+            </div>
+            <div>
+              <label className="form-label">Ciclos</label>
+              <input
+                type="number" min={0}
+                value={values.intervalCycles}
+                onChange={(e) => set('intervalCycles', e.target.value)}
+                className="filter-input w-full"
+              />
+            </div>
+            <div>
+              <label className="form-label">Días calendario</label>
+              <input
+                type="number" min={0}
+                value={values.intervalCalendarDays}
+                onChange={(e) => set('intervalCalendarDays', e.target.value)}
+                className="filter-input w-full"
+              />
+            </div>
+            <div>
+              <label className="form-label">Meses calendario</label>
+              <input
+                type="number" min={0}
+                value={values.intervalCalendarMonths}
+                onChange={(e) => set('intervalCalendarMonths', e.target.value)}
+                className="filter-input w-full"
+                placeholder="12"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="form-label">N° de referencia</label>
+            <input
+              value={values.referenceNumber}
+              onChange={(e) => set('referenceNumber', e.target.value)}
+              className="filter-input w-full"
+              placeholder="AD-2024-05, SB-123, etc."
+            />
+          </div>
+
+          <div className="flex items-center gap-6">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={values.isMandatory}
+                onChange={(e) => set('isMandatory', e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              Obligatoria
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={values.requiresInspection}
+                onChange={(e) => set('requiresInspection', e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              Requiere inspección
+            </label>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>
+            <button type="submit" disabled={isSaving} className="btn-primary flex items-center gap-1.5">
+              {isSaving ? <Loader2 size={14} className="animate-spin" /> : null}
+              Guardar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 // ─── Template Card Component ────────────────────────────────────────────────────
 
@@ -40,7 +328,7 @@ function TemplateCard({ template, categoryLabel, onEdit, onDelete, isDeleting }:
           <button
             onClick={() => onEdit(template)}
             className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors"
-            title="Edit template"
+            title="Ver / editar tareas"
           >
             <Edit3 size={16} />
           </button>
@@ -48,7 +336,7 @@ function TemplateCard({ template, categoryLabel, onEdit, onDelete, isDeleting }:
             onClick={() => onDelete(template.id)}
             disabled={isDeleting}
             className="p-2 rounded-lg hover:bg-rose-50 text-rose-500 hover:text-rose-700 transition-colors disabled:opacity-50"
-            title="Delete template"
+            title="Eliminar plantilla"
           >
             {isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
           </button>
@@ -84,7 +372,52 @@ interface TaskDetailsModalProps {
 }
 
 function TaskDetailsModal({ template, onClose }: TaskDetailsModalProps) {
+  const qc = useQueryClient();
   const tasks = template.tasks ?? [];
+  const [editingTask, setEditingTask] = useState<MaintenanceTemplateTask | 'new' | null>(null);
+
+  const addTaskMutation = useMutation({
+    mutationFn: (input: CreateTemplateTaskInput) => libraryApi.addTask(template.id, input),
+    onSuccess: () => {
+      toast.success('Tarea agregada');
+      qc.invalidateQueries({ queryKey: ['library-templates'] });
+      setEditingTask(null);
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Error al agregar la tarea';
+      toast.error(msg);
+    },
+  });
+
+  const updateTaskMutation = useMutation({
+    mutationFn: ({ taskId, input }: { taskId: string; input: CreateTemplateTaskInput }) => libraryApi.updateTask(taskId, input),
+    onSuccess: () => {
+      toast.success('Tarea actualizada');
+      qc.invalidateQueries({ queryKey: ['library-templates'] });
+      setEditingTask(null);
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Error al actualizar la tarea';
+      toast.error(msg);
+    },
+  });
+
+  const deleteTaskMutation = useMutation({
+    mutationFn: (taskId: string) => libraryApi.deleteTask(taskId),
+    onSuccess: () => {
+      toast.success('Tarea eliminada');
+      qc.invalidateQueries({ queryKey: ['library-templates'] });
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Error al eliminar la tarea';
+      toast.error(msg);
+    },
+  });
+
+  const handleDelete = (task: MaintenanceTemplateTask) => {
+    if (!window.confirm(`¿Eliminar la tarea ${task.code} — ${task.title}? Esta acción no se puede deshacer.`)) return;
+    deleteTaskMutation.mutate(task.id);
+  };
 
   const groupedByChapter = (source: MaintenanceTemplateTask[]) => {
     const grouped = source.reduce((acc, task) => {
@@ -139,11 +472,30 @@ function TaskDetailsModal({ template, onClose }: TaskDetailsModalProps) {
                   <p className="text-[10px] text-slate-400 mt-1">Seccion: {task.section}</p>
                 )}
               </div>
-              {task.isMandatory && (
-                <div className="bg-rose-50 text-rose-700 px-2 py-1 rounded text-[10px] font-bold shrink-0">
-                  OBLIGATORIA
-                </div>
-              )}
+              <div className="flex items-center gap-1 shrink-0">
+                {task.isMandatory && (
+                  <div className="bg-rose-50 text-rose-700 px-2 py-1 rounded text-[10px] font-bold">
+                    OBLIGATORIA
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setEditingTask(task)}
+                  className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition-colors"
+                  title="Editar tarea"
+                >
+                  <Edit3 size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(task)}
+                  disabled={deleteTaskMutation.isPending}
+                  className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-500 hover:text-rose-600 transition-colors disabled:opacity-50"
+                  title="Eliminar tarea"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 pt-3 border-t border-slate-200">
@@ -200,12 +552,22 @@ function TaskDetailsModal({ template, onClose }: TaskDetailsModalProps) {
               </h2>
               <p className="text-sm text-slate-500">{tasks.length} tareas configuradas</p>
             </div>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
-            >
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setEditingTask('new')}
+                className="btn-primary flex items-center gap-1.5 text-xs"
+              >
+                <Plus size={13} />
+                Agregar tarea
+              </button>
+              <button
+                onClick={onClose}
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
           {/* Body */}
@@ -214,6 +576,14 @@ function TaskDetailsModal({ template, onClose }: TaskDetailsModalProps) {
               <div className="text-center py-8 text-slate-400">
                 <ListChecks size={32} className="mx-auto mb-2 opacity-50" />
                 <p>No hay tareas en esta plantilla</p>
+                <button
+                  type="button"
+                  onClick={() => setEditingTask('new')}
+                  className="btn-primary mt-4 inline-flex items-center gap-1.5 text-xs"
+                >
+                  <Plus size={13} />
+                  Agregar tarea
+                </button>
               </div>
             ) : (
               <div className="space-y-6">
@@ -252,6 +622,23 @@ function TaskDetailsModal({ template, onClose }: TaskDetailsModalProps) {
           </div>
         </div>
       </div>
+
+      {editingTask && (
+        <TaskFormModal
+          isNew={editingTask === 'new'}
+          initial={editingTask === 'new' ? EMPTY_TASK_FORM : taskToFormValues(editingTask)}
+          isSaving={addTaskMutation.isPending || updateTaskMutation.isPending}
+          onSave={(values) => {
+            const input = formValuesToInput(values);
+            if (editingTask === 'new') {
+              addTaskMutation.mutate(input);
+            } else {
+              updateTaskMutation.mutate({ taskId: editingTask.id, input });
+            }
+          }}
+          onClose={() => setEditingTask(null)}
+        />
+      )}
     </div>
   );
 }
@@ -262,12 +649,20 @@ export default function LibraryPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'manufacturer' | 'dgac' | 'motor' | 'easa'>('manufacturer');
-  const [selectedTemplate, setSelectedTemplate] = useState<MaintenanceTemplate | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['library-templates'],
     queryFn: libraryApi.findAll,
   });
+
+  // Se deriva del listado en vez de guardar una copia: así el modal de tareas
+  // refleja de inmediato los cambios (agregar/editar/eliminar tarea) sin cerrar
+  // y volver a abrir.
+  const selectedTemplate = useMemo(
+    () => templates.find((t) => t.id === selectedTemplateId) ?? null,
+    [templates, selectedTemplateId],
+  );
 
   const deleteTemplateMutation = useMutation({
     mutationFn: (id: string) => libraryApi.deleteTemplate(id),
@@ -402,7 +797,7 @@ export default function LibraryPage() {
               key={template.id}
               template={template}
               categoryLabel={activeTabLabel}
-              onEdit={setSelectedTemplate}
+              onEdit={(t) => setSelectedTemplateId(t.id)}
               onDelete={id => deleteTemplateMutation.mutate(id)}
               isDeleting={deleteTemplateMutation.isPending}
             />
@@ -414,7 +809,7 @@ export default function LibraryPage() {
       {selectedTemplate && (
         <TaskDetailsModal
           template={selectedTemplate}
-          onClose={() => setSelectedTemplate(null)}
+          onClose={() => setSelectedTemplateId(null)}
         />
       )}
     </div>
