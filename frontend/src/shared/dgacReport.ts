@@ -41,6 +41,40 @@ export function splitByEquipment(rows: MaintenancePlanItem[]): EquipmentGroups {
   };
 }
 
+function logoFormat(dataUri: string): 'PNG' | 'JPEG' | null {
+  if (dataUri.startsWith('data:image/png')) return 'PNG';
+  if (dataUri.startsWith('data:image/jpeg') || dataUri.startsWith('data:image/jpg')) return 'JPEG';
+  return null;
+}
+
+function loadImageSize(dataUri: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => reject(new Error('No se pudo leer el logo'));
+    img.src = dataUri;
+  });
+}
+
+/** Dibuja el logo de la organización en la esquina superior derecha, si existe. Un logo corrupto no debe romper el PDF. */
+async function drawOrganizationLogo(doc: jsPDF, logoDataUri: string | null | undefined, boxSize: number): Promise<void> {
+  if (!logoDataUri) return;
+  const format = logoFormat(logoDataUri);
+  if (!format) return;
+  try {
+    const { width, height } = await loadImageSize(logoDataUri);
+    const scale = Math.min(boxSize / width, boxSize / height);
+    const drawW = width * scale;
+    const drawH = height * scale;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const x = pageWidth - 40 - boxSize + (boxSize - drawW) / 2;
+    const y = 12 + (boxSize - drawH) / 2;
+    doc.addImage(logoDataUri, format, x, y, drawW, drawH);
+  } catch {
+    // Un logo corrupto o no soportado no debe romper la generación del documento.
+  }
+}
+
 function formatDate(value: string | null): string {
   if (!value) return MISSING_OPERATIONAL_CONTEXT_LABEL;
   return new Date(value).toLocaleDateString('es-CL');
@@ -146,16 +180,19 @@ function drawEquipmentSection(doc: jsPDF, title: string, sectionRows: Maintenanc
   return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
 }
 
-export function exportDgacStatusReportPdf(params: {
+export async function exportDgacStatusReportPdf(params: {
   registration: string;
   model: string;
   currentHours: number;
   category: CategoryFilter;
   rows: MaintenancePlanItem[];
-}): void {
-  const { registration, model, currentHours, category, rows } = params;
+  logoDataUri?: string | null;
+}): Promise<void> {
+  const { registration, model, currentHours, category, rows, logoDataUri } = params;
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const generatedAt = new Date();
+
+  await drawOrganizationLogo(doc, logoDataUri, 40);
 
   doc.setFontSize(14);
   doc.text(`Aircraft Status Report - DGAC (${categoryLabel(category)})`, 40, 42);
