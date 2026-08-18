@@ -292,10 +292,15 @@ export default function LibraryPage() {
     return tabConfig.find((tab) => tab.key === activeTab)?.label ?? '';
   }, [activeTab]);
 
+  // Las plantillas de DGAC/Motor/normativa país de origen usan esos nombres reservados
+  // como "manufacturer" para clasificarse. Cualquier otro fabricante real (EUROCOPTER,
+  // ROBINSON, BELL, etc.) cae en "Normativa de fabricante".
+  const RESERVED_CATEGORY_MANUFACTURERS = ['DGAC', 'MOTOR', 'EASA'];
+
   const templatesByTab = useMemo(() => {
     return templates.filter((template) => {
       const manufacturerUpper = template.manufacturer.toUpperCase();
-      if (activeTab === 'manufacturer') return manufacturerUpper === 'EUROCOPTER';
+      if (activeTab === 'manufacturer') return !RESERVED_CATEGORY_MANUFACTURERS.includes(manufacturerUpper);
       if (activeTab === 'dgac') return manufacturerUpper === 'DGAC';
       if (activeTab === 'motor') return manufacturerUpper === 'MOTOR';
       if (activeTab === 'easa') return manufacturerUpper === 'EASA';
