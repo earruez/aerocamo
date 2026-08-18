@@ -210,6 +210,11 @@ export const aircraftApi = {
     return data.data;
   },
 
+  async downloadCounterHistoryReportPdf(id: string): Promise<Blob> {
+    const { data } = await apiClient.get(`/aircraft/${id}/counter-history-report.pdf`, { responseType: 'blob' });
+    return data;
+  },
+
   async createCounterReading(id: string, input: {
     counterTypeId: string;
     engineId?: string | null;
