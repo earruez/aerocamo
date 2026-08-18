@@ -1295,16 +1295,25 @@ export default function AircraftProfilePage() {
         </div>
       </div>
 
-      {editingPlanCategory && (
+      {editingPlanCategory && (() => {
+        const currentTemplateIds = (assignedPlansByCategory.get(editingPlanCategory) ?? []).map((p) => p.templateId);
+        // Una plantilla ya asignada se sigue mostrando aunque ya no encaje en el
+        // filtro de categoría (ej. quedó mal asignada antes de este filtro), para
+        // que se pueda desmarcar desde la propia UI en vez de quedar invisible.
+        const selectableTemplates = activeLibraryTemplates.filter(
+          (t) => templateMatchesCategory(t, editingPlanCategory) || currentTemplateIds.includes(t.id),
+        );
+        return (
         <EditAssignedPlansModal
           category={editingPlanCategory}
-          templates={activeLibraryTemplates.filter((t) => templateMatchesCategory(t, editingPlanCategory))}
-          currentTemplateIds={(assignedPlansByCategory.get(editingPlanCategory) ?? []).map((p) => p.templateId)}
+          templates={selectableTemplates}
+          currentTemplateIds={currentTemplateIds}
           isSaving={assignPlansMutation.isPending}
           onSave={(templateIds) => assignPlansMutation.mutate({ category: editingPlanCategory, templateIds })}
           onClose={() => setEditingPlanCategory(null)}
         />
-      )}
+        );
+      })()}
 
       <AircraftDetailsCard aircraft={aircraft} canEdit={canChangeStatus} />
 
