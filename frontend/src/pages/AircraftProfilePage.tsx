@@ -25,7 +25,7 @@ import {
   type AircraftUsageHistory,
   type AircraftUsageSource,
 } from '@api/aircraft.api';
-import { libraryApi, type AssignedPlanCategory, type AircraftAssignedPlan, type MaintenanceTemplate } from '@api/library.api';
+import { libraryApi, templateMatchesCategory, type AssignedPlanCategory, type AircraftAssignedPlan, type MaintenanceTemplate } from '@api/library.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { AircraftStatusReport } from '@components/reports/AircraftStatusReport';
 import { useWorkRequestStore } from '../store/workRequestStore';
@@ -1298,7 +1298,7 @@ export default function AircraftProfilePage() {
       {editingPlanCategory && (
         <EditAssignedPlansModal
           category={editingPlanCategory}
-          templates={activeLibraryTemplates}
+          templates={activeLibraryTemplates.filter((t) => templateMatchesCategory(t, editingPlanCategory))}
           currentTemplateIds={(assignedPlansByCategory.get(editingPlanCategory) ?? []).map((p) => p.templateId)}
           isSaving={assignPlansMutation.isPending}
           onSave={(templateIds) => assignPlansMutation.mutate({ category: editingPlanCategory, templateIds })}

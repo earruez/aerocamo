@@ -82,6 +82,27 @@ export interface AircraftAssignedPlan {
   tasksCloned?: number;
 }
 
+// DGAC/MOTOR/EASA son nombres de fabricante reservados que en realidad marcan
+// la categoría (normativa nacional / componentes de motor / país de origen);
+// cualquier otro fabricante real cae en "Normativa de fabricante".
+const RESERVED_CATEGORY_MANUFACTURERS = ['DGAC', 'MOTOR', 'EASA'];
+
+export function templateMatchesCategory(template: MaintenanceTemplate, category: AssignedPlanCategory): boolean {
+  const manufacturerUpper = template.manufacturer.toUpperCase();
+  switch (category) {
+    case 'manufacturer':
+      return !RESERVED_CATEGORY_MANUFACTURERS.includes(manufacturerUpper);
+    case 'national_dgac':
+      return manufacturerUpper === 'DGAC';
+    case 'engine_components':
+      return manufacturerUpper === 'MOTOR';
+    case 'origin_country':
+      return manufacturerUpper === 'EASA';
+    default:
+      return false;
+  }
+}
+
 export const libraryApi = {
   /**
    * List all maintenance templates

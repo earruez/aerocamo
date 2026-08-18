@@ -5,7 +5,7 @@ import { toast } from 'react-hot-toast';
 import { Plane, X, Loader2, AlertTriangle, ChevronDown, ChevronRight, Clock, TrendingDown, Info, FileText, User } from 'lucide-react';
 import { QuickCountersPanel } from '../components/aircraft/QuickCountersPanel';
 import { aircraftApi, type Aircraft, type CreateAircraftInput } from '@api/aircraft.api';
-import { libraryApi, type AssignedPlanCategory, type MaintenanceTemplate } from '@api/library.api';
+import { libraryApi, templateMatchesCategory, type AssignedPlanCategory, type MaintenanceTemplate } from '@api/library.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { AircraftStatusReport } from '@components/reports/AircraftStatusReport';
 import { MISSING_OPERATIONAL_CONTEXT_LABEL } from '@/shared/operationalContext';
@@ -90,7 +90,7 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
     const grouped = {} as Record<AssignedPlanCategory, MaintenanceTemplate[]>;
 
     for (const category of categories) {
-      grouped[category] = [...activeTemplates];
+      grouped[category] = activeTemplates.filter((t) => templateMatchesCategory(t, category));
     }
 
     return grouped;
