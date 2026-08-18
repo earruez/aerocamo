@@ -9,6 +9,7 @@ export interface CounterReading {
   value: string;
   readingDate: string;
   notes: string | null;
+  folio: string | null;
   counterType: { id: string; code: string; name: string; unit: string; scope: string };
   engine: { id: string; position: string; model: string; serialNumber: string } | null;
   recordedBy: { id: string; name: string } | null;
@@ -215,6 +216,7 @@ export const aircraftApi = {
     value: number;
     readingDate: string;
     notes?: string | null;
+    folio?: string | null;
   }): Promise<CounterReading> {
     const { data } = await apiClient.post<{ status: string; data: CounterReading }>(
       `/aircraft/${id}/counter-readings`,
