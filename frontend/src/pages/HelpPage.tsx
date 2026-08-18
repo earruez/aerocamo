@@ -234,15 +234,15 @@ const GROUPS: ManualGroup[] = [
         num: 14,
         name: 'Reportes',
         tagline: 'KPIs en vivo e informes descargables',
-        what: 'Combina indicadores de flota en vivo (aeronaves, horas totales, tareas vencidas, tareas al día) con cuatro informes ejecutivos en PDF, listos para presentar fuera de la plataforma.',
+        what: 'Combina indicadores de flota en vivo (aeronaves, horas totales, tareas vencidas, tareas al día) con informes ejecutivos en PDF, listos para presentar fuera de la plataforma.',
         features: [
           'Informe Ejecutivo de Flota: disponibilidad, horas y vencimientos por aeronave, para gerencia.',
           'Vencimientos de Flota: tareas vencidas y próximas a vencer en toda la flota, para planificar mantenimiento.',
-          'Horas-Hombre por OT: horas y costo ESTIMADO de las órdenes cerradas, según el plan de mantenimiento — se etiqueta explícitamente como estimado porque la plataforma aún no captura horas reales por tarea.',
+          'Informe DGAC por Aeronave: elige una aeronave y una categoría (General, AD, SB, MIM, Inspecciones, Componentes) y descarga el Aircraft Status Report acotado a esas tareas.',
           'Cumplimiento Regulatorio por aeronave, descargable también desde Conformidades.',
           'Gráficos de tareas vencidas por aeronave y de distribución global de tareas (al día / próximas / vencidas).',
         ],
-        shots: [{ src: '/manual/16-reportes.jpg', caption: 'Reportes: KPIs de flota y los 4 informes en PDF' }],
+        shots: [{ src: '/manual/16-reportes.jpg', caption: 'Reportes: KPIs de flota e informes en PDF' }],
       },
       {
         id: 'notificaciones',

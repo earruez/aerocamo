@@ -11,6 +11,5 @@ router.use(authMiddleware, tenantMiddleware);
 router.get('/fleet-summary.pdf', ctrl.getFleetSummaryPdf);
 router.get('/compliance-history.pdf', ctrl.getComplianceHistoryPdf);
 router.get('/fleet-lookahead.pdf', ctrl.getFleetLookaheadPdf);
-router.get('/work-order-labor-cost.pdf', ctrl.getWorkOrderLaborCostPdf);
 
 export { router as reportsRoutes };
