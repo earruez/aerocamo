@@ -1,10 +1,19 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileDown, Paperclip, X } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { MISSING_OPERATIONAL_CONTEXT_LABEL } from '@/shared/operationalContext';
+import { classifyTaskCategory, TASK_CATEGORY_LABEL, type TaskCategory } from '@/shared/maintenanceCategory';
+
+type CategoryFilter = 'PROGRAMA' | TaskCategory;
+
+const CATEGORY_TABS: CategoryFilter[] = ['PROGRAMA', 'AD', 'SB', 'MIM', 'INSPECCIONES', 'COMPONENTES'];
+
+function categoryLabel(cat: CategoryFilter): string {
+  return cat === 'PROGRAMA' ? 'Programa completo' : TASK_CATEGORY_LABEL[cat];
+}
 
 interface AircraftStatusReportProps {
   aircraftId: string;
@@ -69,14 +78,29 @@ export function AircraftStatusReport({
     enabled: !!aircraftId,
   });
 
-  const rows = useMemo(() => data.filter((item) => item.isMandatory), [data]);
+  const [category, setCategory] = useState<CategoryFilter>('PROGRAMA');
+
+  const mandatoryRows = useMemo(() => data.filter((item) => item.isMandatory), [data]);
+
+  const categoryCounts = useMemo(() => {
+    const counts: Record<CategoryFilter, number> = {
+      PROGRAMA: mandatoryRows.length, AD: 0, SB: 0, MIM: 0, INSPECCIONES: 0, COMPONENTES: 0,
+    };
+    for (const item of mandatoryRows) counts[classifyTaskCategory(item)] += 1;
+    return counts;
+  }, [mandatoryRows]);
+
+  const rows = useMemo(
+    () => (category === 'PROGRAMA' ? mandatoryRows : mandatoryRows.filter((item) => classifyTaskCategory(item) === category)),
+    [mandatoryRows, category],
+  );
 
   const exportPdf = () => {
     const doc = new jsPDF({ unit: 'pt', format: 'a4' });
     const generatedAt = new Date();
 
     doc.setFontSize(14);
-    doc.text('Aircraft Status Report - DGAC', 40, 42);
+    doc.text(`Aircraft Status Report - DGAC (${categoryLabel(category)})`, 40, 42);
     doc.setFontSize(10);
     doc.text(`Aeronave: ${registration} (${model})`, 40, 60);
     doc.text(`Horas actuales: ${currentHours.toFixed(1)} FH`, 40, 74);
@@ -121,7 +145,7 @@ export function AircraftStatusReport({
       },
     });
 
-    doc.save(`DGAC_Aircraft_Status_${registration}.pdf`);
+    doc.save(`DGAC_Aircraft_Status_${registration}_${category}.pdf`);
   };
 
   return (
@@ -158,6 +182,26 @@ export function AircraftStatusReport({
             </div>
           </div>
 
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Categoría del informe</p>
+            <div className="flex flex-wrap gap-2">
+              {CATEGORY_TABS.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setCategory(cat)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                    category === cat
+                      ? 'bg-brand-600 text-white border-brand-600'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {categoryLabel(cat)} ({categoryCounts[cat]})
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="rounded-xl border border-slate-200 overflow-auto max-h-[50vh]">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
@@ -178,7 +222,9 @@ export function AircraftStatusReport({
                 )}
                 {!isLoading && rows.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="table-cell py-10 text-center text-slate-400">Sin tareas para esta aeronave.</td>
+                    <td colSpan={6} className="table-cell py-10 text-center text-slate-400">
+                      {category === 'PROGRAMA' ? 'Sin tareas para esta aeronave.' : `Sin tareas de la categoría «${categoryLabel(category)}» para esta aeronave.`}
+                    </td>
                   </tr>
                 )}
                 {!isLoading && rows.map((item) => (

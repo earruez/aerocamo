@@ -17,6 +17,7 @@ import { useWorkRequestStore } from '../store/workRequestStore';
 import { isActiveWorkRequestStatus } from '@/shared/workRequestTypes';
 import { adaptApiWorkRequest } from '@/shared/workRequestApiAdapter';
 import { applySort, SortableHeader, toggleSort, type SortState } from '@/shared/tableSort';
+import { classifyTaskCategory } from '@/shared/maintenanceCategory';
 import {
   ClipboardCheck, AlertTriangle, Clock, CheckCircle2,
   ChevronRight, Search, BookOpen, Calendar, Gauge, RefreshCw, Plane,
@@ -67,21 +68,8 @@ function classifyMaintenanceType(task: {
   return 'HORARIO';
 }
 
-/**
- * Categoría normativa de la tarea, en el vocabulario del Access:
- * AD y SB vienen del tipo de referencia; MIM es la normativa nacional (INTERNAL);
- * el resto son manual de fabricante, separados por isComponentControl entre
- * inspecciones y control de vida de componentes.
- *
- * El equipo (aeronave o motor) es un eje aparte: vive en equipmentScope, que
- * viene del equipo al que el Access asoció el ítem (AN / EN1).
- */
-function classifyTaskCategory(item: MaintenancePlanItem): 'AD' | 'SB' | 'MIM' | 'INSPECCIONES' | 'COMPONENTES' {
-  if (item.referenceType === 'AD') return 'AD';
-  if (item.referenceType === 'SB') return 'SB';
-  if (item.referenceType === 'INTERNAL') return 'MIM';
-  return item.isComponentControl ? 'COMPONENTES' : 'INSPECCIONES';
-}
+// El equipo (aeronave o motor) es un eje aparte: vive en equipmentScope, que
+// viene del equipo al que el Access asoció el ítem (AN / EN1).
 
 // ─── Status helpers ────────────────────────────────────────────────────────────
 const STATUS_ORDER: Record<PlanItemStatus, number> = { OVERDUE: 0, DUE_SOON: 1, NEVER_PERFORMED: 2, OK: 3 };
