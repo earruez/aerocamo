@@ -4,7 +4,7 @@
 //  Counters (TSN / Ciclos / CdN) · Semáforo de Vencimientos · Historial reciente
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -24,7 +24,10 @@ import {
   type AircraftEngine,
   type AircraftUsageHistory,
   type AircraftUsageSource,
+  type CounterReading,
 } from '@api/aircraft.api';
+import { organizationApi } from '@api/organization.api';
+import { buildCounterHistory, exportCounterHistoryPdf, formatDateOnly } from '../shared/counterHistoryReport';
 import { libraryApi, templateMatchesCategory, type AssignedPlanCategory, type AircraftAssignedPlan, type MaintenanceTemplate } from '@api/library.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { AircraftStatusReport } from '@components/reports/AircraftStatusReport';
@@ -586,17 +589,22 @@ function SmartSuggestionBanner({
 
 function AircraftUsageHistoryPanel({
   aircraftId,
+  registration,
+  model,
   currentHours,
   currentCycles,
   onClose,
 }: {
   aircraftId: string;
+  registration: string;
+  model: string;
   currentHours: number;
   currentCycles: number;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [form, setForm] = useState<{
     date: string;
     totalHours: string;
@@ -678,6 +686,32 @@ function AircraftUsageHistoryPanel({
     totalHours: currentHours,
     totalCycles: currentCycles,
     lastUpdatedAt: new Date().toISOString(),
+  };
+
+  const { data: counterReadings = [] } = useQuery({
+    queryKey: ['aircraft-counter-readings', aircraftId],
+    queryFn: () => aircraftApi.listCounterReadings(aircraftId),
+    staleTime: 30_000,
+  });
+
+  const { data: organization } = useQuery({ queryKey: ['organization'], queryFn: organizationApi.getCurrent });
+
+  const counterHistory = useMemo(() => buildCounterHistory(counterReadings), [counterReadings]);
+
+  const handleExportPdf = async () => {
+    setIsExportingPdf(true);
+    try {
+      await exportCounterHistoryPdf({
+        registration,
+        model,
+        result: counterHistory,
+        logoDataUri: organization?.logoDataUri,
+      });
+    } catch {
+      toast.error('No se pudo generar el informe');
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   return (
@@ -835,7 +869,111 @@ function AircraftUsageHistoryPanel({
             </div>
           )}
         </div>
+
+        <ConsolidatedCounterHistorySection
+          counterHistory={counterHistory}
+          isExportingPdf={isExportingPdf}
+          onExportPdf={handleExportPdf}
+        />
       </div>
+    </div>
+  );
+}
+
+// ─── Registro consolidado de contadores (aeronave y motor) ─────────────────────
+function ConsolidatedCounterHistorySection({
+  counterHistory,
+  isExportingPdf,
+  onExportPdf,
+}: {
+  counterHistory: ReturnType<typeof buildCounterHistory>;
+  isExportingPdf: boolean;
+  onExportPdf: () => void;
+}) {
+  const { rows, latest, columnGroups } = counterHistory;
+  const hasData = rows.length > 0;
+
+  return (
+    <div className="border-t border-slate-200 px-6 py-4">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <p className="text-sm font-semibold text-slate-800">Registro de horas / ciclos / aterrizajes — aeronave y motor</p>
+          <p className="text-xs text-slate-500">Efectivo y acumulado por contador (Horas Aeronave, Aterrizajes, Horas Motor, NG, NF)</p>
+        </div>
+        <button
+          className="btn-secondary text-xs gap-1"
+          onClick={onExportPdf}
+          disabled={!hasData || isExportingPdf}
+        >
+          {isExportingPdf ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+          Generar informe
+        </button>
+      </div>
+
+      {!hasData ? (
+        <div className="text-sm text-slate-500 border border-dashed border-slate-300 rounded-xl p-6 text-center">
+          Aun no hay lecturas de contadores (Horas Aeronave, Aterrizajes, Horas Motor, NG, NF) para esta aeronave.
+          Se cargan desde "Contadores" en la ficha de la aeronave.
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 mb-3">
+            {columnGroups.map((group) => (
+              <div key={group.key} className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-blue-700 font-semibold">{group.label}</p>
+                <p className="text-sm font-bold text-blue-900 tabular-nums">
+                  {latest[group.key] != null
+                    ? latest[group.key].accumulated.toLocaleString('es-CL', { maximumFractionDigits: 2 })
+                    : '—'}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="overflow-auto max-h-[50vh] rounded-xl border border-slate-200">
+            <table className="min-w-full text-xs">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-blue-700 text-white">
+                  <th rowSpan={2} className="table-header !text-white px-2 py-1.5 align-bottom">Fecha</th>
+                  {columnGroups.map((group) => (
+                    <th key={group.key} colSpan={2} className="table-header !text-white px-2 py-1.5 text-center border-l border-blue-500">
+                      {group.label}
+                    </th>
+                  ))}
+                </tr>
+                <tr className="bg-blue-50">
+                  {columnGroups.map((group) => (
+                    <Fragment key={group.key}>
+                      <th className="table-header px-2 py-1 text-right border-l border-blue-200">Efect.</th>
+                      <th className="table-header px-2 py-1 text-right">Acumul.</th>
+                    </Fragment>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {rows.map((row) => (
+                  <tr key={row.date}>
+                    <td className="table-cell text-slate-700">{formatDateOnly(row.date)}</td>
+                    {columnGroups.map((group) => {
+                      const cell = row.cells[group.key];
+                      return (
+                        <Fragment key={group.key}>
+                          <td className="table-cell text-right tabular-nums text-slate-600 border-l border-slate-100">
+                            {cell?.effective != null ? cell.effective.toLocaleString('es-CL', { maximumFractionDigits: 2 }) : '—'}
+                          </td>
+                          <td className="table-cell text-right tabular-nums font-semibold text-slate-800">
+                            {cell != null ? cell.accumulated.toLocaleString('es-CL', { maximumFractionDigits: 2 }) : '—'}
+                          </td>
+                        </Fragment>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1546,6 +1684,8 @@ export default function AircraftProfilePage() {
       {showUsageHistoryPanel && (
         <AircraftUsageHistoryPanel
           aircraftId={aircraft.id}
+          registration={aircraft.registration}
+          model={aircraft.model}
           currentHours={Number(aircraft.totalFlightHours)}
           currentCycles={Number(aircraft.totalCycles)}
           onClose={() => setShowUsageHistoryPanel(false)}
