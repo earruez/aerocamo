@@ -25,6 +25,7 @@ router.use(authMiddleware, tenantMiddleware);
 router.get('/', ctrl.findAll);
 router.get('/:id/counter-readings', ctrl.listCounterReadings);
 router.post('/:id/counter-readings', ctrl.createCounterReading);
+router.delete('/:id/counter-readings/:readingId', ctrl.deleteCounterReading);
 router.get('/:id/counter-history-report.pdf', ctrl.getCounterHistoryReportPdf);
 router.patch('/:id/status', ctrl.changeStatus);
 router.get('/:id/status-changes', ctrl.listStatusChanges);

@@ -210,6 +210,10 @@ export const aircraftApi = {
     return data.data;
   },
 
+  async deleteCounterReading(id: string, readingId: string): Promise<void> {
+    await apiClient.delete(`/aircraft/${id}/counter-readings/${readingId}`);
+  },
+
   async downloadCounterHistoryReportPdf(id: string): Promise<Blob> {
     const { data } = await apiClient.get(`/aircraft/${id}/counter-history-report.pdf`, { responseType: 'blob' });
     return data;
