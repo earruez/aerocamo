@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileDown, Paperclip, X, Plane, Cog } from 'lucide-react';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
+import { organizationApi } from '@api/organization.api';
 import {
   CATEGORY_TABS, categoryLabel, exportDgacStatusReportPdf, getRowClass,
   lastComplianceLabel, mandatoryRowsFor, categoryCountsFor, rowsForCategory, splitByEquipment,
@@ -91,14 +92,24 @@ export function AircraftStatusReport({
     enabled: !!aircraftId,
   });
 
+  const { data: organization } = useQuery({ queryKey: ['organization'], queryFn: organizationApi.getCurrent });
+
   const [category, setCategory] = useState<CategoryFilter>('PROGRAMA');
+  const [exporting, setExporting] = useState(false);
 
   const mandatoryRows = useMemo(() => mandatoryRowsFor(data), [data]);
   const categoryCounts = useMemo(() => categoryCountsFor(mandatoryRows), [mandatoryRows]);
   const rows = useMemo(() => rowsForCategory(mandatoryRows, category), [mandatoryRows, category]);
   const { aircraftRows, engineRows } = useMemo(() => splitByEquipment(rows), [rows]);
 
-  const exportPdf = () => exportDgacStatusReportPdf({ registration, model, currentHours, category, rows });
+  const exportPdf = async () => {
+    setExporting(true);
+    try {
+      await exportDgacStatusReportPdf({ registration, model, currentHours, category, rows, logoDataUri: organization?.logoDataUri });
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const emptyCategoryLabel = category === 'PROGRAMA'
     ? 'Sin tareas para este equipo.'
@@ -113,8 +124,8 @@ export function AircraftStatusReport({
             <p className="text-xs text-slate-500">Ficha clinica de aeronavegabilidad y cumplimiento DGAC</p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={exportPdf} className="btn-secondary inline-flex items-center gap-1.5">
-              <FileDown size={14} /> Exportar PDF — {categoryLabel(category)}
+            <button onClick={exportPdf} disabled={exporting} className="btn-secondary inline-flex items-center gap-1.5">
+              <FileDown size={14} /> {exporting ? 'Generando…' : `Exportar PDF — ${categoryLabel(category)}`}
             </button>
             <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-slate-100">
               <X size={16} className="text-slate-500" />

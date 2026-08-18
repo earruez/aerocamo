@@ -4,6 +4,7 @@ import { saveAs } from 'file-saver';
 import toast from 'react-hot-toast';
 import { aircraftApi, type Aircraft } from '@api/aircraft.api';
 import { maintenancePlanApi } from '@api/maintenancePlan.api';
+import { organizationApi } from '@api/organization.api';
 import { reportsApi } from '@api/reports.api';
 import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown, FileCheck2 } from 'lucide-react';
 import {
@@ -81,20 +82,23 @@ function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
     enabled: !!aircraftId,
   });
 
+  const { data: organization } = useQuery({ queryKey: ['organization'], queryFn: organizationApi.getCurrent });
+
   const mandatoryRows = useMemo(() => mandatoryRowsFor(data), [data]);
   const categoryCounts = useMemo(() => categoryCountsFor(mandatoryRows), [mandatoryRows]);
   const rows = useMemo(() => rowsForCategory(mandatoryRows, category), [mandatoryRows, category]);
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!selected) return;
     setDownloading(true);
     try {
-      exportDgacStatusReportPdf({
+      await exportDgacStatusReportPdf({
         registration: selected.registration,
         model: selected.model,
         currentHours: Number(selected.totalFlightHours),
         category,
         rows,
+        logoDataUri: organization?.logoDataUri,
       });
     } finally {
       setDownloading(false);
