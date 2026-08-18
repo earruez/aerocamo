@@ -70,74 +70,73 @@ export class TemplateCloneService {
       throw new Error('Unauthorized: aircraft does not belong to this organization');
     }
 
-    let tasksCloned = 0;
-
-    // For each task in the template, create a corresponding MaintenanceTask + AircraftTask
-    for (const templateTask of template.tasks) {
-      try {
-        // Create or find the maintenance task
-        const maintenanceTask = await prisma.maintenanceTask.upsert({
-          where: {
-            code_organizationId: {
-              code: templateTask.code,
-              organizationId,
-            },
-          },
-          update: {
-            // If task already exists, ensure it's active
-            isActive: true,
-          },
-          create: {
-            organizationId,
-            code: templateTask.code,
-            title: templateTask.title,
-            description: templateTask.description,
-            intervalType: templateTask.intervalType,
-            intervalHours: templateTask.intervalHours,
-            intervalCycles: templateTask.intervalCycles,
-            intervalCalendarDays: templateTask.intervalCalendarDays,
-            intervalCalendarMonths: templateTask.intervalCalendarMonths,
-            referenceNumber: templateTask.referenceNumber,
-            referenceType: templateTask.referenceType,
-            isMandatory: templateTask.isMandatory,
-            estimatedManHours: templateTask.estimatedManHours,
-            requiresInspection: templateTask.requiresInspection,
-            applicableModel: templateTask.applicableModel,
-            applicablePartNumber: templateTask.applicablePartNumber,
-          },
-        });
-
-        // Link the task to the aircraft
-        await prisma.aircraftTask.upsert({
-          where: {
-            aircraftId_taskId: {
-              aircraftId,
-              taskId: maintenanceTask.id,
-            },
-          },
-          update: { isActive: true },
-          create: {
-            aircraftId,
-            taskId: maintenanceTask.id,
-            isActive: true,
-          },
-        });
-
-        await BaselineComplianceService.ensureBaselineForTask(
-          aircraftId,
-          maintenanceTask.id,
-          organizationId,
-          undefined,
-        );
-
-        tasksCloned++;
-      } catch (err) {
-        console.error(`Failed to clone task ${templateTask.code}:`, err);
-        // Continue with next task instead of failing entirely
-      }
+    if (template.tasks.length === 0) {
+      return { tasksCloned: 0 };
     }
 
-    return { tasksCloned };
+    const codes = template.tasks.map((t) => t.code);
+
+    // Un upsert por tarea (con su propio ensureBaselineForTask secuencial) tarda
+    // minutos en plantillas grandes (250+ tareas = 1000+ round-trips a la DB uno
+    // por uno). Se agrupa en llamadas por lote y el baseline se ejecuta con
+    // concurrencia acotada en vez de tarea por tarea.
+    await prisma.maintenanceTask.createMany({
+      data: template.tasks.map((t) => ({
+        organizationId,
+        code: t.code,
+        title: t.title,
+        description: t.description,
+        intervalType: t.intervalType,
+        intervalHours: t.intervalHours,
+        intervalCycles: t.intervalCycles,
+        intervalCalendarDays: t.intervalCalendarDays,
+        intervalCalendarMonths: t.intervalCalendarMonths,
+        referenceNumber: t.referenceNumber,
+        referenceType: t.referenceType,
+        isMandatory: t.isMandatory,
+        estimatedManHours: t.estimatedManHours,
+        requiresInspection: t.requiresInspection,
+        applicableModel: t.applicableModel,
+        applicablePartNumber: t.applicablePartNumber,
+      })),
+      skipDuplicates: true,
+    });
+
+    await prisma.maintenanceTask.updateMany({
+      where: { organizationId, code: { in: codes }, isActive: false },
+      data: { isActive: true },
+    });
+
+    const maintenanceTasks = await prisma.maintenanceTask.findMany({
+      where: { organizationId, code: { in: codes } },
+      select: { id: true },
+    });
+    const taskIds = maintenanceTasks.map((t) => t.id);
+
+    await prisma.aircraftTask.createMany({
+      data: taskIds.map((taskId) => ({ aircraftId, taskId, isActive: true })),
+      skipDuplicates: true,
+    });
+
+    await prisma.aircraftTask.updateMany({
+      where: { aircraftId, taskId: { in: taskIds }, isActive: false },
+      data: { isActive: true },
+    });
+
+    const BASELINE_CONCURRENCY = 20;
+    for (let i = 0; i < taskIds.length; i += BASELINE_CONCURRENCY) {
+      const batch = taskIds.slice(i, i + BASELINE_CONCURRENCY);
+      const results = await Promise.allSettled(
+        batch.map((taskId) => BaselineComplianceService.ensureBaselineForTask(aircraftId, taskId, organizationId, undefined)),
+      );
+      results.forEach((result, idx) => {
+        if (result.status === 'rejected') {
+          console.error(`Failed to ensure baseline for task ${batch[idx]}:`, result.reason);
+        }
+      });
+    }
+
+    return { tasksCloned: taskIds.length };
   }
 
   /**
