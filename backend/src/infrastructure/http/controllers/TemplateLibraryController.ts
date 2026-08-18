@@ -203,6 +203,63 @@ templateLibraryRouter.post(
   }
 );
 
+// ─── POST /templates/:id/tasks/bulk ─ Agregar muchas tareas de una vez ──────────
+// Pensado para poblar una plantilla completa (p. ej. derivada de una aeronave real)
+// sin chocar con el rate limit de la API cuando son cientos de tareas.
+
+templateLibraryRouter.post(
+  '/templates/:id/tasks/bulk',
+  authMiddleware,
+  requireRoles('ADMIN', 'SUPERVISOR'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const orgId = req.organizationId;
+      const { id } = req.params;
+      const { tasks } = req.body as { tasks: CreateTemplateTaskInput[] };
+
+      if (!Array.isArray(tasks) || tasks.length === 0) {
+        return res.status(400).json({ message: 'tasks must be a non-empty array' });
+      }
+
+      const template = await prisma.maintenanceTemplate.findUnique({ where: { id } });
+      if (!template) {
+        return res.status(404).json({ message: 'Template not found' });
+      }
+      if (template.organizationId !== orgId) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+
+      const result = await prisma.maintenanceTemplateTask.createMany({
+        data: tasks.map((taskData) => ({
+          templateId: id,
+          code: taskData.code,
+          title: taskData.title,
+          description: taskData.description,
+          chapter: taskData.chapter || undefined,
+          section: taskData.section || undefined,
+          intervalType: taskData.intervalType,
+          intervalHours: taskData.intervalHours != null ? new Prisma.Decimal(taskData.intervalHours) : undefined,
+          intervalCycles: taskData.intervalCycles || undefined,
+          intervalCalendarDays: taskData.intervalCalendarDays || undefined,
+          intervalCalendarMonths: taskData.intervalCalendarMonths || undefined,
+          referenceNumber: taskData.referenceNumber || undefined,
+          referenceType: (taskData.referenceType || 'AMM') as any,
+          isMandatory: taskData.isMandatory || false,
+          estimatedManHours: taskData.estimatedManHours != null ? new Prisma.Decimal(taskData.estimatedManHours) : undefined,
+          requiresInspection: taskData.requiresInspection || false,
+          applicableModel: taskData.applicableModel || undefined,
+          applicablePartNumber: taskData.applicablePartNumber || undefined,
+        })),
+        skipDuplicates: true,
+      });
+
+      res.status(201).json({ requested: tasks.length, created: result.count, skipped: tasks.length - result.count });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // ─── PUT /templates/tasks/:taskId ─ Actualizar tarea de template ────────────────
 
 templateLibraryRouter.put(
