@@ -4,7 +4,7 @@
 //  Counters (TSN / Ciclos / CdN) · Semáforo de Vencimientos · Historial reciente
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { Fragment, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -881,6 +881,10 @@ function AircraftUsageHistoryPanel({
 }
 
 // ─── Registro consolidado de contadores (aeronave y motor) ─────────────────────
+function fmtCounter(value: number | null | undefined): string {
+  return value == null ? '—' : value.toLocaleString('es-CL', { maximumFractionDigits: 2 });
+}
+
 function ConsolidatedCounterHistorySection({
   counterHistory,
   isExportingPdf,
@@ -890,15 +894,25 @@ function ConsolidatedCounterHistorySection({
   isExportingPdf: boolean;
   onExportPdf: () => void;
 }) {
-  const { rows, latest, columnGroups } = counterHistory;
+  const { rows, summary, hasCargoData, hasTorqueData } = counterHistory;
   const hasData = rows.length > 0;
+
+  const summaryLines: Array<[string, number | null]> = [
+    ['Horas Aeronave', summary.aircraftHours],
+    ['Horas Motor', summary.motorHours],
+    ['N g', summary.ng],
+    ['N f', summary.nf],
+    ['Landings', summary.landings],
+    ['Cargas', summary.cargo],
+    ['Ciclos Aeronave', summary.aircraftCycles],
+  ];
 
   return (
     <div className="border-t border-slate-200 px-6 py-4">
       <div className="flex items-center justify-between gap-3 mb-3">
         <div>
           <p className="text-sm font-semibold text-slate-800">Registro de horas / ciclos / aterrizajes — aeronave y motor</p>
-          <p className="text-xs text-slate-500">Efectivo y acumulado por contador (Horas Aeronave, Aterrizajes, Horas Motor, NG, NF)</p>
+          <p className="text-xs text-slate-500">Mismo formato que la bitácora física: fecha, folio y efectivo/acumulado por contador</p>
         </div>
         <button
           className="btn-secondary text-xs gap-1"
@@ -917,56 +931,74 @@ function ConsolidatedCounterHistorySection({
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 mb-3">
-            {columnGroups.map((group) => (
-              <div key={group.key} className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-blue-700 font-semibold">{group.label}</p>
-                <p className="text-sm font-bold text-blue-900 tabular-nums">
-                  {latest[group.key] != null
-                    ? latest[group.key].accumulated.toLocaleString('es-CL', { maximumFractionDigits: 2 })
-                    : '—'}
-                </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 mb-3 max-w-2xl">
+            {summaryLines.map(([label, value]) => (
+              <div key={label} className="flex items-center justify-between gap-2 rounded border border-blue-100 bg-blue-50 px-2.5 py-1.5">
+                <span className="text-[11px] font-semibold text-blue-800">{label} :</span>
+                <span className="text-xs font-bold text-blue-950 tabular-nums">{fmtCounter(value)}</span>
               </div>
             ))}
           </div>
+
+          {(!hasCargoData || !hasTorqueData) && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-3">
+              {!hasCargoData && !hasTorqueData
+                ? 'Aún no hay lecturas de Carga Externa ni Ciclos de Torque — esas columnas se completan cuando empieces a registrarlas en "Contadores".'
+                : !hasCargoData
+                  ? 'Aún no hay lecturas de Carga Externa — esa columna se completa cuando empieces a registrarla en "Contadores".'
+                  : 'Aún no hay lecturas de Ciclos de Torque — esa columna se completa cuando empieces a registrarla en "Contadores".'}
+            </p>
+          )}
 
           <div className="overflow-auto max-h-[50vh] rounded-xl border border-slate-200">
             <table className="min-w-full text-xs">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-blue-700 text-white">
                   <th rowSpan={2} className="table-header !text-white px-2 py-1.5 align-bottom">Fecha</th>
-                  {columnGroups.map((group) => (
-                    <th key={group.key} colSpan={2} className="table-header !text-white px-2 py-1.5 text-center border-l border-blue-500">
-                      {group.label}
-                    </th>
-                  ))}
+                  <th rowSpan={2} className="table-header !text-white px-2 py-1.5 align-bottom border-l border-blue-500">Folio Nº</th>
+                  <th colSpan={3} className="table-header !text-white px-2 py-1.5 text-center border-l border-blue-500">Hora Funcionamiento</th>
+                  <th colSpan={2} className="table-header !text-white px-2 py-1.5 text-center border-l border-blue-500">Ciclos NG</th>
+                  <th colSpan={2} className="table-header !text-white px-2 py-1.5 text-center border-l border-blue-500">Ciclos NF</th>
+                  <th colSpan={2} className="table-header !text-white px-2 py-1.5 text-center border-l border-blue-500">Aterrizajes</th>
+                  <th colSpan={2} className="table-header !text-white px-2 py-1.5 text-center border-l border-blue-500">Carga Externa</th>
+                  <th colSpan={2} className="table-header !text-white px-2 py-1.5 text-center border-l border-blue-500">Ciclos de Torque</th>
+                  <th rowSpan={2} className="table-header !text-white px-2 py-1.5 align-bottom border-l border-blue-500">Control Mantto. / Firma Responsable</th>
                 </tr>
                 <tr className="bg-blue-50">
-                  {columnGroups.map((group) => (
-                    <Fragment key={group.key}>
-                      <th className="table-header px-2 py-1 text-right border-l border-blue-200">Efect.</th>
-                      <th className="table-header px-2 py-1 text-right">Acumul.</th>
-                    </Fragment>
-                  ))}
+                  <th className="table-header px-2 py-1 text-right border-l border-blue-200">Efect.</th>
+                  <th className="table-header px-2 py-1 text-right">Aeronave</th>
+                  <th className="table-header px-2 py-1 text-right">Motor</th>
+                  <th className="table-header px-2 py-1 text-right border-l border-blue-200">Efect.</th>
+                  <th className="table-header px-2 py-1 text-right">Acumul.</th>
+                  <th className="table-header px-2 py-1 text-right border-l border-blue-200">Efect.</th>
+                  <th className="table-header px-2 py-1 text-right">Acumul.</th>
+                  <th className="table-header px-2 py-1 text-right border-l border-blue-200">Efect.</th>
+                  <th className="table-header px-2 py-1 text-right">Acumul.</th>
+                  <th className="table-header px-2 py-1 text-right border-l border-blue-200">Hoy</th>
+                  <th className="table-header px-2 py-1 text-right">Acumul.</th>
+                  <th className="table-header px-2 py-1 text-right border-l border-blue-200">Hoy</th>
+                  <th className="table-header px-2 py-1 text-right">Acumul.</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {rows.map((row) => (
                   <tr key={row.date}>
                     <td className="table-cell text-slate-700">{formatDateOnly(row.date)}</td>
-                    {columnGroups.map((group) => {
-                      const cell = row.cells[group.key];
-                      return (
-                        <Fragment key={group.key}>
-                          <td className="table-cell text-right tabular-nums text-slate-600 border-l border-slate-100">
-                            {cell?.effective != null ? cell.effective.toLocaleString('es-CL', { maximumFractionDigits: 2 }) : '—'}
-                          </td>
-                          <td className="table-cell text-right tabular-nums font-semibold text-slate-800">
-                            {cell != null ? cell.accumulated.toLocaleString('es-CL', { maximumFractionDigits: 2 }) : '—'}
-                          </td>
-                        </Fragment>
-                      );
-                    })}
+                    <td className="table-cell text-slate-700 border-l border-slate-100">{row.folio ?? '—'}</td>
+                    <td className="table-cell text-right tabular-nums text-slate-600 border-l border-slate-100">{fmtCounter(row.hourEffective)}</td>
+                    <td className="table-cell text-right tabular-nums font-semibold text-slate-800">{fmtCounter(row.aircraftHoursAccum)}</td>
+                    <td className="table-cell text-right tabular-nums font-semibold text-slate-800">{fmtCounter(row.motorHoursAccum)}</td>
+                    <td className="table-cell text-right tabular-nums text-slate-600 border-l border-slate-100">{fmtCounter(row.ngEffective)}</td>
+                    <td className="table-cell text-right tabular-nums font-semibold text-slate-800">{fmtCounter(row.ngAccum)}</td>
+                    <td className="table-cell text-right tabular-nums text-slate-600 border-l border-slate-100">{fmtCounter(row.nfEffective)}</td>
+                    <td className="table-cell text-right tabular-nums font-semibold text-slate-800">{fmtCounter(row.nfAccum)}</td>
+                    <td className="table-cell text-right tabular-nums text-slate-600 border-l border-slate-100">{fmtCounter(row.landingsEffective)}</td>
+                    <td className="table-cell text-right tabular-nums font-semibold text-slate-800">{fmtCounter(row.landingsAccum)}</td>
+                    <td className="table-cell text-right tabular-nums text-slate-600 border-l border-slate-100">{fmtCounter(row.cargoToday)}</td>
+                    <td className="table-cell text-right tabular-nums font-semibold text-slate-800">{fmtCounter(row.cargoAccum)}</td>
+                    <td className="table-cell text-right tabular-nums text-slate-600 border-l border-slate-100">{fmtCounter(row.torqueToday)}</td>
+                    <td className="table-cell text-right tabular-nums font-semibold text-slate-800">{fmtCounter(row.torqueAccum)}</td>
+                    <td className="table-cell border-l border-slate-100">&nbsp;</td>
                   </tr>
                 ))}
               </tbody>

@@ -257,6 +257,7 @@ export class AircraftController {
         value: z.coerce.number().min(0),
         readingDate: z.coerce.date(),
         notes: z.string().max(1000).nullable().optional(),
+        folio: z.string().max(50).nullable().optional(),
       }).parse(req.body);
 
       const aircraft = await prisma.aircraft.findFirst({
@@ -307,6 +308,7 @@ export class AircraftController {
             value: body.value,
             readingDate: body.readingDate,
             notes: body.notes ?? null,
+            folio: body.folio ?? null,
             recordedById: req.currentUser.id,
           },
           include: { counterType: { select: { code: true, name: true, unit: true } } },

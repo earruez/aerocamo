@@ -702,6 +702,8 @@ model CounterReading {
   readingDate DateTime @db.Date
   source      String   @default("manual") @db.VarChar(30)
   notes       String?
+  /// Folio correlativo de la bitácora física, asignado a mano por el operador.
+  folio       String?  @db.VarChar(50)
 
   recordedById String?  @db.Uuid
   createdAt    DateTime @default(now())

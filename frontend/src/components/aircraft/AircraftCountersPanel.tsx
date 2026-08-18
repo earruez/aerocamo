@@ -21,7 +21,7 @@ export function AircraftCountersPanel({
 }) {
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ counterTypeId: '', engineId: '', value: '', readingDate: today(), notes: '' });
+  const [form, setForm] = useState({ counterTypeId: '', engineId: '', value: '', readingDate: today(), notes: '', folio: '' });
 
   const { data: types = [] } = useQuery({
     queryKey: ['catalog-counter-types'],
@@ -62,13 +62,14 @@ export function AircraftCountersPanel({
       value: Number(form.value),
       readingDate: form.readingDate,
       notes: form.notes.trim() || null,
+      folio: form.folio.trim() || null,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['aircraft-counter-readings', aircraftId] });
       qc.invalidateQueries({ queryKey: ['aircraft'] });
       qc.invalidateQueries({ queryKey: ['maintenance-plan'] });
       setAdding(false);
-      setForm({ counterTypeId: '', engineId: '', value: '', readingDate: today(), notes: '' });
+      setForm({ counterTypeId: '', engineId: '', value: '', readingDate: today(), notes: '', folio: '' });
       toast.success('Lectura registrada');
     },
     onError: (err) => {
@@ -104,7 +105,7 @@ export function AircraftCountersPanel({
           onSubmit={(e) => { e.preventDefault(); if (canSave) save.mutate(); }}
           className="border-b border-slate-100 bg-slate-50 px-5 py-4 space-y-3"
         >
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
             <select
               value={form.counterTypeId}
               onChange={(e) => setForm({ ...form, counterTypeId: e.target.value, engineId: '' })}
@@ -141,6 +142,12 @@ export function AircraftCountersPanel({
               value={form.readingDate}
               onChange={(e) => setForm({ ...form, readingDate: e.target.value })}
               className="input text-sm"
+            />
+            <input
+              value={form.folio}
+              onChange={(e) => setForm({ ...form, folio: e.target.value })}
+              className="input text-sm"
+              placeholder="Folio bitácora"
             />
           </div>
 
@@ -195,6 +202,7 @@ export function AircraftCountersPanel({
                     {r.engine ? ` · Motor ${r.engine.position}` : ''}
                     {' '}<span className="tabular-nums">{Number(r.value).toLocaleString('es-CL')}</span>
                     <span className="text-slate-400"> {r.counterType.unit}</span>
+                    {r.folio && <span className="text-slate-400"> · Folio {r.folio}</span>}
                   </span>
                   <span className="text-[11px] text-slate-400 shrink-0">
                     {r.readingDate.slice(0, 10)}{r.recordedBy ? ` · ${r.recordedBy.name}` : ''}
