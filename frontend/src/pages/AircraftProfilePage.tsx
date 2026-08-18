@@ -11,7 +11,9 @@ import {
   ArrowLeft, Plane, Clock, AlertTriangle, CheckCircle2,
   FileText, Paperclip, ClipboardList, Activity,
   Calendar, Gauge, RotateCcw, Zap, ExternalLink, Plus,
+  Pencil, X, Loader2,
 } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 import { AircraftStatusControl } from '../components/aircraft/AircraftStatusControl';
 import { AircraftCountersPanel } from '../components/aircraft/AircraftCountersPanel';
 import { AircraftDetailsCard } from '../components/aircraft/AircraftDetailsCard';
@@ -23,7 +25,7 @@ import {
   type AircraftUsageHistory,
   type AircraftUsageSource,
 } from '@api/aircraft.api';
-import { libraryApi, type AssignedPlanCategory, type AircraftAssignedPlan } from '@api/library.api';
+import { libraryApi, type AssignedPlanCategory, type AircraftAssignedPlan, type MaintenanceTemplate } from '@api/library.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { AircraftStatusReport } from '@components/reports/AircraftStatusReport';
 import { useWorkRequestStore } from '../store/workRequestStore';
@@ -838,12 +840,85 @@ function AircraftUsageHistoryPanel({
   );
 }
 
+// ─── Edit assigned plans modal ─────────────────────────────────────────────────
+function EditAssignedPlansModal({
+  category,
+  templates,
+  currentTemplateIds,
+  isSaving,
+  onSave,
+  onClose,
+}: {
+  category: AssignedPlanCategory;
+  templates: MaintenanceTemplate[];
+  currentTemplateIds: string[];
+  isSaving: boolean;
+  onSave: (templateIds: string[]) => void;
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<string[]>(currentTemplateIds);
+
+  const toggle = (templateId: string) => {
+    setSelected((prev) => (prev.includes(templateId) ? prev.filter((id) => id !== templateId) : [...prev, templateId]));
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <h2 className="text-base font-bold text-slate-900">{ASSIGNED_PLAN_CATEGORY_LABELS[category]}</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-6 space-y-3">
+          <p className="text-xs text-slate-400">Puedes marcar más de una plantilla para esta categoría.</p>
+          {templates.length === 0 ? (
+            <p className="text-sm text-slate-400">Sin plantillas disponibles</p>
+          ) : (
+            <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-72 overflow-y-auto">
+              {templates.map((template) => (
+                <label
+                  key={template.id}
+                  className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(template.id)}
+                    onChange={() => toggle(template.id)}
+                    className="rounded border-slate-300"
+                  />
+                  <span>{template.manufacturer} {template.model} - {template.description ?? template.version}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 px-6 pb-6">
+          <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={() => onSave(selected)}
+            className="btn-primary flex items-center gap-1.5"
+          >
+            {isSaving ? <Loader2 size={14} className="animate-spin" /> : null}
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function AircraftProfilePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [showStatusReport, setShowStatusReport] = useState(false);
   const [showUsageHistoryPanel, setShowUsageHistoryPanel] = useState(false);
+  const [editingPlanCategory, setEditingPlanCategory] = useState<AssignedPlanCategory | null>(null);
   const workRequests = useWorkRequestStore((s) => s.workRequests);
   const userRole = useAuthStore((s) => s.user?.role);
   const viewDensity = useWorkRequestStore((s) => s.viewDensity);
@@ -868,6 +943,30 @@ export default function AircraftProfilePage() {
     queryFn: () => libraryApi.getAircraftAssignedPlans(id!),
     enabled: !!id,
     staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: libraryTemplates = [] } = useQuery({
+    queryKey: ['library-templates-for-aircraft-assign'],
+    queryFn: libraryApi.findAll,
+    staleTime: 5 * 60 * 1000,
+  });
+  const activeLibraryTemplates = useMemo(
+    () => libraryTemplates.filter((t) => t.isActive),
+    [libraryTemplates],
+  );
+
+  const assignPlansMutation = useMutation({
+    mutationFn: (input: { category: AssignedPlanCategory; templateIds: string[] }) =>
+      libraryApi.assignBundleToAircraft(id!, [input]),
+    onSuccess: () => {
+      toast.success('Planes de mantenimiento actualizados');
+      qc.invalidateQueries({ queryKey: ['aircraft-assigned-plans', id] });
+      setEditingPlanCategory(null);
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Error al actualizar los planes';
+      toast.error(msg);
+    },
   });
 
   const { data: aircraftEngines = [] } = useQuery({
@@ -927,9 +1026,11 @@ export default function AircraftProfilePage() {
   const dueSoonCnt = plan.filter(p => p.status === 'DUE_SOON').length;
 
   const assignedPlansByCategory = useMemo(() => {
-    const map = new Map<AssignedPlanCategory, AircraftAssignedPlan>();
+    const map = new Map<AssignedPlanCategory, AircraftAssignedPlan[]>();
     for (const assignment of assignedPlansData?.assignments ?? []) {
-      map.set(assignment.category, assignment);
+      const list = map.get(assignment.category) ?? [];
+      list.push(assignment);
+      map.set(assignment.category, list);
     }
     return map;
   }, [assignedPlansData]);
@@ -1160,18 +1261,50 @@ export default function AircraftProfilePage() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {(['manufacturer', 'national_dgac', 'engine_components', 'origin_country'] as AssignedPlanCategory[]).map((category) => {
-            const assigned = assignedPlansByCategory.get(category);
+            const assigned = assignedPlansByCategory.get(category) ?? [];
             return (
               <div key={category} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{ASSIGNED_PLAN_CATEGORY_LABELS[category]}</p>
-                <p className="text-sm font-semibold text-slate-900 mt-1">
-                  {assigned?.templateLabel ?? MISSING_OPERATIONAL_CONTEXT_LABEL}
-                </p>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{ASSIGNED_PLAN_CATEGORY_LABELS[category]}</p>
+                  <button
+                    type="button"
+                    onClick={() => setEditingPlanCategory(category)}
+                    className="text-slate-400 hover:text-brand-600 transition-colors shrink-0"
+                    title="Editar planes de esta categoría"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                </div>
+                {assigned.length === 0 ? (
+                  <p className="text-sm font-semibold text-slate-900 mt-1">{MISSING_OPERATIONAL_CONTEXT_LABEL}</p>
+                ) : (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {assigned.map((plan) => (
+                      <span
+                        key={plan.templateId}
+                        className="text-xs font-medium bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-lg"
+                      >
+                        {plan.templateLabel}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       </div>
+
+      {editingPlanCategory && (
+        <EditAssignedPlansModal
+          category={editingPlanCategory}
+          templates={activeLibraryTemplates}
+          currentTemplateIds={(assignedPlansByCategory.get(editingPlanCategory) ?? []).map((p) => p.templateId)}
+          isSaving={assignPlansMutation.isPending}
+          onSave={(templateIds) => assignPlansMutation.mutate({ category: editingPlanCategory, templateIds })}
+          onClose={() => setEditingPlanCategory(null)}
+        />
+      )}
 
       <AircraftDetailsCard aircraft={aircraft} canEdit={canChangeStatus} />
 

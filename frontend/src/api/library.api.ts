@@ -71,7 +71,7 @@ export type AssignedPlanCategory = 'manufacturer' | 'national_dgac' | 'engine_co
 
 export interface AircraftAssignedPlanInput {
   category: AssignedPlanCategory;
-  templateId: string;
+  templateIds: string[];
 }
 
 export interface AircraftAssignedPlan {
@@ -165,7 +165,7 @@ export const libraryApi = {
   },
 
   /**
-   * Assign one maintenance plan template per category to an aircraft.
+   * Assign one or more maintenance plan templates per category to an aircraft.
    */
   async assignBundleToAircraft(
     aircraftId: string,

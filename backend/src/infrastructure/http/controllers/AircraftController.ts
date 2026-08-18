@@ -33,7 +33,7 @@ const createSchema = z.object({
   insuranceExpiryDate: z.coerce.date().optional().nullable(),
   assignedPlans: z.array(z.object({
     category: z.enum(['manufacturer', 'national_dgac', 'engine_components', 'origin_country']),
-    templateId: z.string().uuid(),
+    templateIds: z.array(z.string().uuid()).min(1),
   })).optional().default([]),
 });
 
