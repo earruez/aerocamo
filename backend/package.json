@@ -62,6 +62,8 @@
     "prisma:apply:work-order-access-fields": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260811_work_order_access_fields.sql",
     "import:access:ot": "tsx prisma/import_access_ot.ts",
     "prisma:apply:aircraft-owner-year": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260811_aircraft_owner_year.sql",
+    "prisma:apply:aircraft-assigned-plan-multi": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260818_aircraft_assigned_plan_multi.sql",
+    "prisma:apply:aircraft-assigned-plan-multi-fix": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260818_aircraft_assigned_plan_multi_fix.sql",
     "import:access:aeronaves": "tsx prisma/import_access_aeronaves.ts"
   },
   "dependencies": {

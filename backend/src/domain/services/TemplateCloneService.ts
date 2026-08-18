@@ -9,7 +9,7 @@ export type PlanCategory = 'manufacturer' | 'national_dgac' | 'engine_components
 
 export interface AssignPlanByCategoryInput {
   category: PlanCategory;
-  templateId: string;
+  templateIds: string[];
 }
 
 type AssignActor = {
@@ -217,6 +217,15 @@ export class TemplateCloneService {
       throw new ValidationError(`Category '${duplicateCategory}' is repeated`);
     }
 
+    for (const assignment of input.assignments) {
+      if (!Array.isArray(assignment.templateIds)) {
+        throw new ValidationError(`Invalid templateIds: must be an array for category '${assignment.category}'`);
+      }
+      if (new Set(assignment.templateIds).size !== assignment.templateIds.length) {
+        throw new ValidationError(`templateIds has a repeated template for category '${assignment.category}'`);
+      }
+    }
+
     const aircraft = await prisma.aircraft.findUnique({ where: { id: input.aircraftId } });
     if (!aircraft) {
       throw new NotFoundError('Aircraft', input.aircraftId);
@@ -225,87 +234,128 @@ export class TemplateCloneService {
       throw new ForbiddenError('Forbidden');
     }
 
-    const templateIds = Array.from(new Set(input.assignments.map((a) => a.templateId)));
-    const templates = await prisma.maintenanceTemplate.findMany({
-      where: {
-        id: { in: templateIds },
-        organizationId: input.organizationId,
-        isActive: true,
-      },
-      select: { id: true, manufacturer: true, model: true, description: true, version: true },
-    });
+    const desiredTemplateIds = Array.from(new Set(input.assignments.flatMap((a) => a.templateIds)));
+    const templates = desiredTemplateIds.length > 0
+      ? await prisma.maintenanceTemplate.findMany({
+          where: {
+            id: { in: desiredTemplateIds },
+            organizationId: input.organizationId,
+            isActive: true,
+          },
+          select: { id: true, manufacturer: true, model: true, description: true, version: true },
+        })
+      : [];
 
-    if (templates.length !== templateIds.length) {
+    if (templates.length !== desiredTemplateIds.length) {
       throw new ValidationError('One or more templates are invalid or inactive for this organization');
     }
 
     const templateById = new Map(templates.map((t) => [t.id, t]));
+    const labelFor = (templateId: string) => {
+      const t = templateById.get(templateId)!;
+      return `${t.manufacturer} ${t.model} - ${t.description ?? t.version}`;
+    };
+
     const clonedByTemplateId = new Map<string, number>();
-    for (const templateId of templateIds) {
+    for (const templateId of desiredTemplateIds) {
       const result = await this.cloneTemplateToAircraft(templateId, input.aircraftId, input.organizationId);
       clonedByTemplateId.set(templateId, result.tasksCloned);
     }
 
-    const saved = [] as Array<{
+    // Solo se tocan las filas de las categorías incluidas en esta solicitud; el resto
+    // de categorías de la aeronave quedan intactas.
+    const existingRows = await prisma.aircraftAssignedPlan.findMany({
+      where: { aircraftId: input.aircraftId, category: { in: categories } },
+    });
+    const existingByCategory = new Map<PlanCategory, typeof existingRows>();
+    for (const row of existingRows) {
+      const category = row.category as PlanCategory;
+      const list = existingByCategory.get(category) ?? [];
+      list.push(row);
+      existingByCategory.set(category, list);
+    }
+
+    const saved: Array<{
       category: PlanCategory;
       templateId: string;
       templateLabel: string;
       assignedAt: Date;
       tasksCloned: number;
-    }>;
+    }> = [];
 
     for (const assignment of input.assignments) {
-      const template = templateById.get(assignment.templateId)!;
-      const record = await prisma.aircraftAssignedPlan.upsert({
-        where: {
-          aircraftId_category: {
+      const desiredIds = new Set(assignment.templateIds);
+      const existing = existingByCategory.get(assignment.category) ?? [];
+      const existingIds = new Set(existing.map((row) => row.templateId));
+      const toRemove = existing.filter((row) => !desiredIds.has(row.templateId));
+      const toAddIds = assignment.templateIds.filter((id) => !existingIds.has(id));
+
+      if (toRemove.length > 0) {
+        await prisma.aircraftAssignedPlan.deleteMany({ where: { id: { in: toRemove.map((r) => r.id) } } });
+        if (input.actor) {
+          for (const removed of toRemove) {
+            await auditLogService.log({
+              organizationId: input.organizationId,
+              entityType: 'Aircraft',
+              entityId: input.aircraftId,
+              action: 'MAINTENANCE_PLAN_CATEGORY_UNASSIGNED',
+              previousValue: { category: assignment.category, templateId: removed.templateId },
+              newValue: null,
+              userId: input.actor.id,
+              userEmail: input.actor.email,
+              userRole: input.actor.role,
+              metadata: {
+                assignmentCategory: assignment.category,
+                unassignedTemplateId: removed.templateId,
+              },
+            });
+          }
+        }
+      }
+
+      for (const templateId of toAddIds) {
+        const record = await prisma.aircraftAssignedPlan.create({
+          data: {
+            organizationId: input.organizationId,
             aircraftId: input.aircraftId,
             category: assignment.category,
+            templateId,
+            assignedById: input.actor?.id ?? null,
           },
-        },
-        update: {
-          templateId: assignment.templateId,
-          assignedById: input.actor?.id ?? null,
-        },
-        create: {
-          organizationId: input.organizationId,
-          aircraftId: input.aircraftId,
+        });
+        existing.push(record);
+
+        if (input.actor) {
+          await auditLogService.log({
+            organizationId: input.organizationId,
+            entityType: 'Aircraft',
+            entityId: input.aircraftId,
+            action: 'MAINTENANCE_PLAN_CATEGORY_ASSIGNED',
+            previousValue: null,
+            newValue: {
+              category: assignment.category,
+              templateId,
+              templateLabel: labelFor(templateId),
+            },
+            userId: input.actor.id,
+            userEmail: input.actor.email,
+            userRole: input.actor.role,
+            metadata: {
+              assignmentCategory: assignment.category,
+              assignedTemplateId: templateId,
+            },
+          });
+        }
+      }
+
+      const finalRows = existing.filter((row) => desiredIds.has(row.templateId));
+      for (const row of finalRows) {
+        saved.push({
           category: assignment.category,
-          templateId: assignment.templateId,
-          assignedById: input.actor?.id ?? null,
-        },
-      });
-
-      const templateLabel = `${template.manufacturer} ${template.model} - ${template.description ?? template.version}`;
-      const tasksCloned = clonedByTemplateId.get(assignment.templateId) ?? 0;
-
-      saved.push({
-        category: assignment.category,
-        templateId: assignment.templateId,
-        templateLabel,
-        assignedAt: record.updatedAt,
-        tasksCloned,
-      });
-
-      if (input.actor) {
-        await auditLogService.log({
-          organizationId: input.organizationId,
-          entityType: 'Aircraft',
-          entityId: input.aircraftId,
-          action: 'MAINTENANCE_PLAN_CATEGORY_ASSIGNED',
-          previousValue: null,
-          newValue: {
-            category: assignment.category,
-            templateId: assignment.templateId,
-            templateLabel,
-          },
-          userId: input.actor.id,
-          userEmail: input.actor.email,
-          userRole: input.actor.role,
-          metadata: {
-            assignmentCategory: assignment.category,
-            assignedTemplateId: assignment.templateId,
-          },
+          templateId: row.templateId,
+          templateLabel: labelFor(row.templateId),
+          assignedAt: row.updatedAt,
+          tasksCloned: clonedByTemplateId.get(row.templateId) ?? 0,
         });
       }
     }

@@ -47,12 +47,22 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
     origin_country: 'Normativa país de origen (EASA)',
   };
 
-  const [selectedTemplatesByCategory, setSelectedTemplatesByCategory] = useState<Record<AssignedPlanCategory, string>>({
-    manufacturer: '',
-    national_dgac: '',
-    engine_components: '',
-    origin_country: '',
+  const [selectedTemplatesByCategory, setSelectedTemplatesByCategory] = useState<Record<AssignedPlanCategory, string[]>>({
+    manufacturer: [],
+    national_dgac: [],
+    engine_components: [],
+    origin_country: [],
   });
+
+  const toggleTemplateForCategory = (category: AssignedPlanCategory, templateId: string) => {
+    setSelectedTemplatesByCategory((prev) => {
+      const current = prev[category];
+      const next = current.includes(templateId)
+        ? current.filter((id) => id !== templateId)
+        : [...current, templateId];
+      return { ...prev, [category]: next };
+    });
+  };
 
   const [form, setForm] = useState<CreateAircraftInput>({
     registration: '',
@@ -93,9 +103,9 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
     setSelectedTemplatesByCategory((prev) => {
       const next = { ...prev };
       for (const category of categories) {
-        if (next[category]) continue;
+        if (next[category].length > 0) continue;
         const candidate = templatesByCategory[category]?.[0];
-        if (candidate) next[category] = candidate.id;
+        if (candidate) next[category] = [candidate.id];
       }
       return next;
     });
@@ -103,9 +113,9 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const assignments = (Object.entries(selectedTemplatesByCategory) as Array<[AssignedPlanCategory, string]>)
-        .filter(([, templateId]) => Boolean(templateId))
-        .map(([category, templateId]) => ({ category, templateId }));
+      const assignments = (Object.entries(selectedTemplatesByCategory) as Array<[AssignedPlanCategory, string[]]>)
+        .filter(([, templateIds]) => templateIds.length > 0)
+        .map(([category, templateIds]) => ({ category, templateIds }));
 
       // Un campo vacío es "sin dato", no una cadena vacía: el backend rechaza
       // un año o una fecha en blanco.
@@ -288,21 +298,30 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
 
           <div className="space-y-3">
             <p className="form-label">Planes base por categoría</p>
+            <p className="text-xs text-slate-400 -mt-2">Puedes marcar más de una plantilla por categoría.</p>
             {(['manufacturer', 'national_dgac', 'engine_components', 'origin_country'] as AssignedPlanCategory[]).map((category) => (
               <div key={category}>
                 <label className="form-label">{PLAN_CATEGORY_LABELS[category]}</label>
-                <select
-                  value={selectedTemplatesByCategory[category]}
-                  onChange={(e) => setSelectedTemplatesByCategory((prev) => ({ ...prev, [category]: e.target.value }))}
-                  className="filter-input w-full"
-                >
-                  <option value="">Sin asignar por ahora</option>
-                  {(templatesByCategory[category] ?? []).map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.manufacturer} {template.model} - {template.description ?? template.version}
-                    </option>
-                  ))}
-                </select>
+                {(templatesByCategory[category] ?? []).length === 0 ? (
+                  <p className="text-xs text-slate-400">Sin plantillas disponibles</p>
+                ) : (
+                  <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-36 overflow-y-auto">
+                    {(templatesByCategory[category] ?? []).map((template) => (
+                      <label
+                        key={template.id}
+                        className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedTemplatesByCategory[category].includes(template.id)}
+                          onChange={() => toggleTemplateForCategory(category, template.id)}
+                          className="rounded border-slate-300"
+                        />
+                        <span>{template.manufacturer} {template.model} - {template.description ?? template.version}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

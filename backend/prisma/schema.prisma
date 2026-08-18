@@ -795,7 +795,7 @@ model AircraftAssignedPlan {
   template       MaintenanceTemplate  @relation(fields: [templateId], references: [id], onDelete: Restrict)
   assignedBy     User?                @relation(fields: [assignedById], references: [id], onDelete: SetNull)
 
-  @@unique([aircraftId, category])
+  @@unique([aircraftId, category, templateId])
   @@index([organizationId, aircraftId])
   @@index([templateId])
   @@map("aircraft_assigned_plans")

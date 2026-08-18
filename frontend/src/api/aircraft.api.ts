@@ -55,7 +55,7 @@ export interface CreateAircraftInput {
   coaExpiryDate?: string | null;
   assignedPlans?: Array<{
     category: 'manufacturer' | 'national_dgac' | 'engine_components' | 'origin_country';
-    templateId: string;
+    templateIds: string[];
   }>;
 }
 
