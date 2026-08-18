@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Gauge, Plus, X } from 'lucide-react';
+import { Gauge, Plus, X, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { aircraftApi, type AircraftEngine } from '@api/aircraft.api';
 import { catalogsApi } from '@api/catalogs.api';
@@ -80,6 +80,27 @@ export function AircraftCountersPanel({
 
   const canSave = form.counterTypeId && form.value !== '' && Number.isFinite(Number(form.value))
     && (!needsEngine || form.engineId);
+
+  const removeReading = useMutation({
+    mutationFn: (readingId: string) => aircraftApi.deleteCounterReading(aircraftId, readingId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['aircraft-counter-readings', aircraftId] });
+      qc.invalidateQueries({ queryKey: ['aircraft'] });
+      qc.invalidateQueries({ queryKey: ['aircraft-engines', aircraftId] });
+      qc.invalidateQueries({ queryKey: ['maintenance-plan'] });
+      qc.invalidateQueries({ queryKey: ['aircraft-usage-history', aircraftId] });
+      toast.success('Lectura eliminada');
+    },
+    onError: (err) => {
+      const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(detail ?? 'No se pudo eliminar la lectura');
+    },
+  });
+
+  const handleDeleteReading = (reading: { id: string; counterType: { code: string }; value: string; readingDate: string }) => {
+    if (!window.confirm(`¿Eliminar la lectura de ${reading.counterType.code} (${Number(reading.value).toLocaleString('es-CL')}) del ${reading.readingDate.slice(0, 10)}? Esta acción no se puede deshacer.`)) return;
+    removeReading.mutate(reading.id);
+  };
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
@@ -204,8 +225,19 @@ export function AircraftCountersPanel({
                     <span className="text-slate-400"> {r.counterType.unit}</span>
                     {r.folio && <span className="text-slate-400"> · Folio {r.folio}</span>}
                   </span>
-                  <span className="text-[11px] text-slate-400 shrink-0">
-                    {r.readingDate.slice(0, 10)}{r.recordedBy ? ` · ${r.recordedBy.name}` : ''}
+                  <span className="flex items-center gap-2 shrink-0">
+                    <span className="text-[11px] text-slate-400">
+                      {r.readingDate.slice(0, 10)}{r.recordedBy ? ` · ${r.recordedBy.name}` : ''}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteReading(r)}
+                      disabled={removeReading.isPending}
+                      className="p-1 rounded hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors disabled:opacity-50"
+                      title="Eliminar lectura"
+                    >
+                      <Trash2 size={12} />
+                    </button>
                   </span>
                 </li>
               ))}

@@ -370,6 +370,59 @@ export class AircraftController {
     } catch (err) { next(err); }
   };
 
+  /**
+   * Borra una lectura de contador cargada por error. Si esa lectura había
+   * actualizado el campo legado (horas/ciclos de aeronave o motor), se
+   * recalcula contra la lectura que ahora queda como más reciente — así no
+   * queda un número viejo/erróneo pegado en la aeronave o el motor.
+   */
+  deleteCounterReading = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const reading = await prisma.counterReading.findFirst({
+        where: {
+          id: req.params.readingId,
+          organizationId: req.organizationId,
+          OR: [{ aircraftId: req.params.id }, { engine: { aircraftId: req.params.id } }],
+        },
+        include: { counterType: true },
+      });
+      if (!reading) throw new NotFoundError('CounterReading', req.params.readingId);
+
+      await prisma.$transaction(async (tx) => {
+        await tx.counterReading.delete({ where: { id: reading.id } });
+
+        if (reading.counterType.legacyField === 'aircraftHours' || reading.counterType.legacyField === 'aircraftCycles') {
+          await tx.aircraftUsageLog.deleteMany({
+            where: {
+              organizationId: req.organizationId,
+              aircraftId: req.params.id,
+              date: reading.readingDate,
+              notes: `Registrado desde el contador ${reading.counterType.code}`,
+            },
+          });
+          const latestLog = await tx.aircraftUsageLog.findFirst({
+            where: { organizationId: req.organizationId, aircraftId: req.params.id },
+            orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+          });
+          if (latestLog) {
+            await tx.aircraft.update({
+              where: { id: req.params.id },
+              data: { totalFlightHours: latestLog.totalHours, totalCycles: latestLog.totalCycles },
+            });
+          }
+        }
+
+        if ((reading.counterType.legacyField === 'engineHours' || reading.counterType.legacyField === 'engineCycles') && reading.engineId) {
+          await tx.aircraftEngineUsageLog.deleteMany({
+            where: { organizationId: req.organizationId, engineId: reading.engineId, date: reading.readingDate },
+          });
+        }
+      });
+
+      res.status(204).send();
+    } catch (err) { next(err); }
+  };
+
   getMaintenancePlan = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const includeNotApplicable = String(req.query.includeNotApplicable ?? '') === 'true';
