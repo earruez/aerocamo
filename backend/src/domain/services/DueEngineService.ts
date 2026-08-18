@@ -357,8 +357,13 @@ export class DueEngineService {
           nextDueValue = item.nextDueHours;
           remainingValue = item.nextDueHours != null ? item.nextDueHours - currentHours : null;
         } else if (d.method === 'C') {
+          // item.cyclesRemaining ya lo calculó PrismaAircraftRepository contra el
+          // contador correcto por equipo (célula o motor específico vía
+          // EquipmentCounterSlot/CounterReading) — no contra aircraft.totalCycles
+          // a secas, que es incorrecto para tareas de motor (ver comentario en
+          // PrismaAircraftRepository.getMaintenancePlan).
           nextDueValue = item.nextDueCycles;
-          remainingValue = item.nextDueCycles != null ? item.nextDueCycles - currentCycles : null;
+          remainingValue = item.cyclesRemaining;
         } else if (d.method === 'N1' || d.method === 'N2') {
           const engineCounter = engineCounters[d.method];
           const useHoursForDimension = item.nextDueHours != null && item.nextDueCycles == null;
