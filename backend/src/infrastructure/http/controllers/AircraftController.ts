@@ -12,6 +12,7 @@ import { aircraftUsageService } from '../../../domain/services/AircraftUsageServ
 import { TemplateCloneService } from '../../../domain/services/TemplateCloneService';
 import { dueEngineService } from '../../../domain/services/DueEngineService';
 import { RemanentesDocumentService } from '../../../domain/services/RemanentesDocumentService';
+import { CounterHistoryDocumentService } from '../../../domain/services/CounterHistoryDocumentService';
 import { prisma } from '../../database/prisma.client';
 import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
 
@@ -562,6 +563,16 @@ export class AircraftController {
       const pdf = await RemanentesDocumentService.renderPdf(req.organizationId, report);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="Remanentes-${report.aircraft.registration}.pdf"`);
+      res.send(pdf);
+    } catch (err) { next(err); }
+  };
+
+  getCounterHistoryReportPdf = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const pdf = await CounterHistoryDocumentService.generateReport(req.organizationId, req.params.id);
+      const aircraft = await prisma.aircraft.findUnique({ where: { id: req.params.id }, select: { registration: true } });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="Registro_Contadores_${aircraft?.registration ?? req.params.id}.pdf"`);
       res.send(pdf);
     } catch (err) { next(err); }
   };

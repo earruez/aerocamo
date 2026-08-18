@@ -14,6 +14,7 @@ import {
   Pencil, X, Loader2,
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { saveAs } from 'file-saver';
 import { AircraftStatusControl } from '../components/aircraft/AircraftStatusControl';
 import { AircraftCountersPanel } from '../components/aircraft/AircraftCountersPanel';
 import { AircraftDetailsCard } from '../components/aircraft/AircraftDetailsCard';
@@ -26,8 +27,7 @@ import {
   type AircraftUsageSource,
   type CounterReading,
 } from '@api/aircraft.api';
-import { organizationApi } from '@api/organization.api';
-import { buildCounterHistory, exportCounterHistoryPdf, formatDateOnly } from '../shared/counterHistoryReport';
+import { buildCounterHistory, formatDateOnly } from '../shared/counterHistoryReport';
 import { libraryApi, templateMatchesCategory, type AssignedPlanCategory, type AircraftAssignedPlan, type MaintenanceTemplate } from '@api/library.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { AircraftStatusReport } from '@components/reports/AircraftStatusReport';
@@ -694,19 +694,13 @@ function AircraftUsageHistoryPanel({
     staleTime: 30_000,
   });
 
-  const { data: organization } = useQuery({ queryKey: ['organization'], queryFn: organizationApi.getCurrent });
-
   const counterHistory = useMemo(() => buildCounterHistory(counterReadings), [counterReadings]);
 
   const handleExportPdf = async () => {
     setIsExportingPdf(true);
     try {
-      await exportCounterHistoryPdf({
-        registration,
-        model,
-        result: counterHistory,
-        logoDataUri: organization?.logoDataUri,
-      });
+      const blob = await aircraftApi.downloadCounterHistoryReportPdf(aircraftId);
+      saveAs(blob, `Registro_Contadores_${registration}.pdf`);
     } catch {
       toast.error('No se pudo generar el informe');
     } finally {
