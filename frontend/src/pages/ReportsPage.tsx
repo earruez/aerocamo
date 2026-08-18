@@ -2,10 +2,14 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { saveAs } from 'file-saver';
 import toast from 'react-hot-toast';
-import { aircraftApi } from '@api/aircraft.api';
+import { aircraftApi, type Aircraft } from '@api/aircraft.api';
 import { maintenancePlanApi } from '@api/maintenancePlan.api';
 import { reportsApi } from '@api/reports.api';
-import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown, Wrench } from 'lucide-react';
+import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown, FileCheck2 } from 'lucide-react';
+import {
+  CATEGORY_TABS, categoryLabel, exportDgacStatusReportPdf,
+  mandatoryRowsFor, categoryCountsFor, rowsForCategory, type CategoryFilter,
+} from '@/shared/dgacReport';
 
 function StatCard({ label, value, sub, Icon, color }: {
   label: string; value: string | number; sub?: string;
@@ -65,7 +69,100 @@ function ReportDownloadCard({ Icon, title, description, onDownload, downloading 
   );
 }
 
-type ReportId = 'fleet-summary' | 'fleet-lookahead' | 'labor-cost';
+function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
+  const [aircraftId, setAircraftId] = useState('');
+  const [category, setCategory] = useState<CategoryFilter>('PROGRAMA');
+  const [downloading, setDownloading] = useState(false);
+  const selected = aircraftList.find((a) => a.id === aircraftId);
+
+  const { data = [] } = useQuery({
+    queryKey: ['aircraft-status-report', aircraftId],
+    queryFn: () => maintenancePlanApi.getForAircraft(aircraftId),
+    enabled: !!aircraftId,
+  });
+
+  const mandatoryRows = useMemo(() => mandatoryRowsFor(data), [data]);
+  const categoryCounts = useMemo(() => categoryCountsFor(mandatoryRows), [mandatoryRows]);
+  const rows = useMemo(() => rowsForCategory(mandatoryRows, category), [mandatoryRows, category]);
+
+  const handleDownload = () => {
+    if (!selected) return;
+    setDownloading(true);
+    try {
+      exportDgacStatusReportPdf({
+        registration: selected.registration,
+        model: selected.model,
+        currentHours: Number(selected.totalFlightHours),
+        category,
+        rows,
+      });
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-card p-5 flex flex-col gap-4 md:col-span-2">
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 rounded-lg bg-brand-50 flex items-center justify-center shrink-0">
+          <FileCheck2 size={16} className="text-brand-600" />
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-slate-800">Informe DGAC por Aeronave</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Aircraft Status Report de aeronavegabilidad y cumplimiento: elige la aeronave y la categoría (General, AD, SB, MIM, Inspecciones, Componentes).
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-56">
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Aeronave</label>
+          <select
+            value={aircraftId}
+            onChange={(e) => { setAircraftId(e.target.value); setCategory('PROGRAMA'); }}
+            className="filter-input w-full mt-1"
+          >
+            <option value="">— Selecciona una aeronave —</option>
+            {aircraftList.map((a) => (
+              <option key={a.id} value={a.id}>{a.registration} — {a.model}</option>
+            ))}
+          </select>
+        </div>
+
+        {aircraftId && (
+          <div className="flex flex-wrap gap-2">
+            {CATEGORY_TABS.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setCategory(cat)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                  category === cat
+                    ? 'bg-brand-600 text-white border-brand-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {categoryLabel(cat)} ({categoryCounts[cat]})
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={handleDownload}
+        disabled={!aircraftId || downloading}
+        className="btn-secondary flex items-center justify-center gap-1.5 text-xs self-start"
+      >
+        <FileDown size={13} />
+        {downloading ? 'Generando…' : `Descargar PDF — ${categoryLabel(category)}`}
+      </button>
+    </div>
+  );
+}
+
+type ReportId = 'fleet-summary' | 'fleet-lookahead';
 
 export default function ReportsPage() {
   const [downloadingReport, setDownloadingReport] = useState<ReportId | null>(null);
@@ -133,7 +230,7 @@ export default function ReportsPage() {
       </div>
 
       {/* Informes en PDF */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <ReportDownloadCard
           Icon={FileDown}
           title="Informe Ejecutivo de Flota"
@@ -148,13 +245,7 @@ export default function ReportsPage() {
           downloading={downloadingReport === 'fleet-lookahead'}
           onDownload={() => downloadReport('fleet-lookahead', reportsApi.downloadFleetLookaheadPdf, `Vencimientos-Flota-${today}.pdf`)}
         />
-        <ReportDownloadCard
-          Icon={Wrench}
-          title="Horas-Hombre por OT"
-          description="Horas y costo ESTIMADO de las órdenes de trabajo cerradas, según el plan de mantenimiento."
-          downloading={downloadingReport === 'labor-cost'}
-          onDownload={() => downloadReport('labor-cost', () => reportsApi.downloadWorkOrderLaborCostPdf(), `Horas-Hombre-OT-${today}.pdf`)}
-        />
+        <DgacReportCard aircraftList={aircraft} />
       </div>
 
       {loading && <p className="text-slate-400 text-sm">Cargando datos…</p>}
