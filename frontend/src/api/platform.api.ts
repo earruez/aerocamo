@@ -44,17 +44,25 @@ export const platformApi = {
   listOrganizations: async (): Promise<PlatformOrganization[]> =>
     unwrap((await apiClient.get<{ status: string; data: PlatformOrganization[] }>('/platform/organizations')).data),
 
-  createOrganization: async (input: CreateOrganizationInput) =>
-    unwrap((await apiClient.post<{ status: string; data: { id: string } }>('/platform/organizations', input)).data),
+  createOrganization: async (input: CreateOrganizationInput): Promise<{ id: string; emailSent: boolean }> => {
+    const { data } = await apiClient.post<{ status: string; data: { id: string }; emailSent: boolean }>('/platform/organizations', input);
+    return { ...data.data, emailSent: data.emailSent };
+  },
 
   updateOrganization: async (id: string, input: Partial<Pick<PlatformOrganization, 'name' | 'legalName' | 'isActive' | 'subscriptionPlan' | 'subscriptionStatus'>>) =>
     unwrap((await apiClient.patch<{ status: string; data: PlatformOrganization }>(`/platform/organizations/${id}`, input)).data),
 
+  deleteOrganization: async (id: string): Promise<void> => {
+    await apiClient.delete(`/platform/organizations/${id}`);
+  },
+
   listOrganizationUsers: async (orgId: string): Promise<PlatformUser[]> =>
     unwrap((await apiClient.get<{ status: string; data: PlatformUser[] }>(`/platform/organizations/${orgId}/users`)).data),
 
-  createUser: async (orgId: string, input: CreateUserInput): Promise<PlatformUser> =>
-    unwrap((await apiClient.post<{ status: string; data: PlatformUser }>(`/platform/organizations/${orgId}/users`, input)).data),
+  createUser: async (orgId: string, input: CreateUserInput): Promise<PlatformUser & { emailSent: boolean }> => {
+    const { data } = await apiClient.post<{ status: string; data: PlatformUser; emailSent: boolean }>(`/platform/organizations/${orgId}/users`, input);
+    return { ...data.data, emailSent: data.emailSent };
+  },
 
   updateUser: async (
     userId: string,

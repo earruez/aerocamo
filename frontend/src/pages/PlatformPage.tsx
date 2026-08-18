@@ -22,6 +22,71 @@ const ROLE_LABEL: Record<PlatformUser['role'], string> = {
   ADMIN: 'Administrador', SUPERVISOR: 'Supervisor', TECHNICIAN: 'Técnico', INSPECTOR: 'Inspector', READONLY: 'Solo lectura',
 };
 
+// ─── Eliminar empresa ───────────────────────────────────────────────────────
+function DeleteOrganizationModal({ org, onClose }: { org: PlatformOrganization; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [confirmText, setConfirmText] = useState('');
+
+  const del = useMutation({
+    mutationFn: () => platformApi.deleteOrganization(org.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['platform-organizations'] });
+      toast.success(`${org.name} fue eliminada.`);
+      onClose();
+    },
+    onError: (err) => {
+      const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(detail ?? 'No se pudo eliminar la empresa');
+    },
+  });
+
+  const canDelete = confirmText.trim() === org.name;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h2 className="text-sm font-bold text-rose-700">Eliminar empresa</h2>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 hover:bg-slate-100">
+            <X size={15} className="text-slate-500" />
+          </button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <p className="text-sm text-slate-600 leading-relaxed">
+            Esto elimina <strong>{org.name}</strong> y <strong>toda su información de forma permanente</strong>: aeronaves,
+            usuarios ({org.userCount}), cumplimientos, órdenes de trabajo e historial completo. No se puede deshacer.
+          </p>
+          <p className="text-sm text-slate-600">
+            Si solo quieres bloquear el acceso, considera <strong>desactivar</strong> la empresa en vez de eliminarla.
+          </p>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">
+              Escribe <strong>{org.name}</strong> para confirmar
+            </label>
+            <input
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              className="input text-sm"
+              autoFocus
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
+          <button type="button" onClick={onClose} className="btn-secondary text-sm">Cancelar</button>
+          <button
+            type="button"
+            onClick={() => canDelete && del.mutate()}
+            disabled={!canDelete || del.isPending}
+            className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-40"
+          >
+            {del.isPending ? 'Eliminando…' : 'Eliminar definitivamente'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Nueva empresa ──────────────────────────────────────────────────────────
 function NewOrganizationModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
@@ -41,9 +106,13 @@ function NewOrganizationModal({ onClose }: { onClose: () => void }) {
     }),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['platform-organizations'] });
-      toast.success(`${form.name} creada. El administrador ya puede ingresar.`);
+      if (data.emailSent) {
+        toast.success(`${form.name} creada. Le enviamos un correo de bienvenida al administrador.`);
+      } else {
+        toast.success(`${form.name} creada.`, { duration: 6000 });
+        toast.error('No se pudo enviar el correo de bienvenida — comunícale la contraseña manualmente.', { duration: 8000 });
+      }
       onClose();
-      void data;
     },
     onError: (err) => {
       const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
@@ -297,11 +366,16 @@ function OrganizationUsers({ orgId }: { orgId: string }) {
 
   const create = useMutation({
     mutationFn: () => platformApi.createUser(orgId, { ...form, name: form.name.trim(), email: form.email.trim() }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       invalidate();
       setAdding(false);
       setForm({ name: '', email: '', password: '', role: 'TECHNICIAN' });
-      toast.success('Usuario agregado');
+      if (data.emailSent) {
+        toast.success('Usuario agregado. Le enviamos un correo de bienvenida.');
+      } else {
+        toast.success('Usuario agregado.', { duration: 6000 });
+        toast.error('No se pudo enviar el correo de bienvenida — comunícale la contraseña manualmente.', { duration: 8000 });
+      }
     },
     onError: (err) => {
       const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
@@ -376,6 +450,7 @@ export default function PlatformPage() {
   const qc = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [deletingOrg, setDeletingOrg] = useState<PlatformOrganization | null>(null);
 
   const { data: orgs = [], isLoading } = useQuery({
     queryKey: ['platform-organizations'],
@@ -416,13 +491,14 @@ export default function PlatformPage() {
                 <th className="text-left px-5 py-2.5 text-xs font-semibold">Empresa</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold">Plan</th>
                 <th className="text-left px-4 py-2.5 text-xs font-semibold">Suscripción</th>
-                <th className="text-right px-5 py-2.5 text-xs font-semibold">Activa</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold">Estado</th>
+                <th className="text-right px-5 py-2.5 text-xs font-semibold">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td className="px-5 py-4 text-slate-400 text-xs" colSpan={4}>Cargando…</td></tr>}
+              {isLoading && <tr><td className="px-5 py-4 text-slate-400 text-xs" colSpan={5}>Cargando…</td></tr>}
               {!isLoading && orgs.length === 0 && (
-                <tr><td className="px-5 py-4 text-slate-400 text-xs" colSpan={4}>Sin empresas registradas.</td></tr>
+                <tr><td className="px-5 py-4 text-slate-400 text-xs" colSpan={5}>Sin empresas registradas.</td></tr>
               )}
               {orgs.map((o) => (
                 <Fragment key={o.id}>
@@ -449,21 +525,36 @@ export default function PlatformPage() {
                         {STATUS_LABEL[o.subscriptionStatus]}
                       </span>
                     </td>
-                    <td className="px-5 py-2.5 text-right">
-                      <button
-                        onClick={() => toggleOrgActive.mutate({ id: o.id, isActive: !o.isActive })}
-                        disabled={toggleOrgActive.isPending}
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                          o.isActive ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                        }`}
-                      >
+                    <td className="px-4 py-2.5 text-right">
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                        o.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                      }`}>
                         {o.isActive ? 'Activa' : 'Inactiva'}
-                      </button>
+                      </span>
+                    </td>
+                    <td className="px-5 py-2.5 text-right">
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          onClick={() => toggleOrgActive.mutate({ id: o.id, isActive: !o.isActive })}
+                          disabled={toggleOrgActive.isPending}
+                          title={o.isActive ? 'Desactivar empresa' : 'Activar empresa'}
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                        >
+                          <ShieldCheck size={14} />
+                        </button>
+                        <button
+                          onClick={() => setDeletingOrg(o)}
+                          title="Eliminar empresa"
+                          className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-700"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {expandedId === o.id && (
                     <tr>
-                      <td colSpan={4} className="p-0">
+                      <td colSpan={5} className="p-0">
                         <OrganizationUsers orgId={o.id} />
                       </td>
                     </tr>
@@ -476,6 +567,7 @@ export default function PlatformPage() {
       </div>
 
       {showNew && <NewOrganizationModal onClose={() => setShowNew(false)} />}
+      {deletingOrg && <DeleteOrganizationModal org={deletingOrg} onClose={() => setDeletingOrg(null)} />}
     </div>
   );
 }

@@ -12,9 +12,35 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../../database/prisma.client';
 import { NotFoundError, ConflictError, ValidationError } from '../../../shared/errors/AppError';
 import { AuditLogService } from '../../../domain/services/AuditLogService';
+import { PasswordResetService } from '../../../domain/services/PasswordResetService';
+import { EmailService } from '../../../domain/services/EmailService';
+import { env } from '../../../config/env';
 
 const auditLog = new AuditLogService();
 const BCRYPT_ROUNDS = 12;
+
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: 'Administrador',
+  SUPERVISOR: 'Supervisor',
+  TECHNICIAN: 'Técnico',
+  INSPECTOR: 'Inspector',
+  READONLY: 'Solo lectura',
+};
+
+/** Emite el token de activación y dispara el correo de bienvenida. No lanza:
+ * si el correo falla, el usuario igual queda creado — el caller decide qué
+ * avisar con el `emailSent` que devuelve. */
+async function sendWelcomeEmail(user: { id: string; name: string; email: string; role: string }, organizationName: string): Promise<boolean> {
+  const token = await PasswordResetService.issueToken(user.id);
+  const setPasswordUrl = `${env.appUrl}/reset-password?token=${token}`;
+  return EmailService.sendWelcomeEmail({
+    to: user.email,
+    name: user.name,
+    organizationName,
+    roleLabel: ROLE_LABELS[user.role] ?? user.role,
+    setPasswordUrl,
+  });
+}
 
 const slugify = (value: string): string =>
   value
@@ -140,9 +166,12 @@ export class PlatformController {
         userRole: req.currentUser.role,
       });
 
+      const emailSent = await sendWelcomeEmail(adminUser, org.name);
+
       res.status(201).json({
         status: 'success',
         data: { id: org.id, name: org.name, slug: org.slug, admin: { id: adminUser.id, email: adminUser.email } },
+        emailSent,
       });
     } catch (err) { next(err); }
   };
@@ -171,6 +200,35 @@ export class PlatformController {
     } catch (err) { next(err); }
   };
 
+  /** Elimina la empresa y en cascada toda su data (aeronaves, cumplimientos,
+   * OT, historial, usuarios, etc. — ver onDelete: Cascade en schema.prisma).
+   * Irreversible; el frontend exige escribir el nombre exacto antes de llamar
+   * a este endpoint. */
+  deleteOrganization = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const existing = await prisma.organization.findUnique({
+        where: { id: req.params.id },
+        select: { id: true, name: true, slug: true, _count: { select: { users: true, aircraft: true } } },
+      });
+      if (!existing) throw new NotFoundError('Organization', req.params.id);
+
+      await prisma.organization.delete({ where: { id: existing.id } });
+
+      await auditLog.log({
+        organizationId: existing.id,
+        entityType: 'Organization',
+        entityId: existing.id,
+        action: 'DELETE',
+        previousValue: { name: existing.name, slug: existing.slug, userCount: existing._count.users, aircraftCount: existing._count.aircraft },
+        userId: req.currentUser.id,
+        userEmail: req.currentUser.email,
+        userRole: req.currentUser.role,
+      });
+
+      res.status(204).send();
+    } catch (err) { next(err); }
+  };
+
   // ── Usuarios de una organización ──────────────────────────────────────────
   listOrganizationUsers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -185,7 +243,7 @@ export class PlatformController {
 
   createUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const org = await prisma.organization.findUnique({ where: { id: req.params.id }, select: { id: true } });
+      const org = await prisma.organization.findUnique({ where: { id: req.params.id }, select: { id: true, name: true } });
       if (!org) throw new NotFoundError('Organization', req.params.id);
 
       const body = createUserSchema.parse(req.body);
@@ -212,7 +270,9 @@ export class PlatformController {
         userRole: req.currentUser.role,
       });
 
-      res.status(201).json({ status: 'success', data: user });
+      const emailSent = await sendWelcomeEmail(user, org.name);
+
+      res.status(201).json({ status: 'success', data: user, emailSent });
     } catch (err) { next(err); }
   };
 

@@ -12,6 +12,7 @@ router.use(authMiddleware, requireRoles('SUPER_ADMIN'));
 router.get('/organizations', ctrl.listOrganizations);
 router.post('/organizations', ctrl.createOrganization);
 router.patch('/organizations/:id', ctrl.updateOrganization);
+router.delete('/organizations/:id', ctrl.deleteOrganization);
 
 router.get('/organizations/:id/users', ctrl.listOrganizationUsers);
 router.post('/organizations/:id/users', ctrl.createUser);

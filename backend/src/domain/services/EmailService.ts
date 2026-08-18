@@ -384,6 +384,187 @@ ${notesBlock}
     });
   }
 
+  private static escHtml(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  /**
+   * Shell visual de marca compartido (header degradado + card + footer),
+   * la misma identidad que ya usa sendWorkRequestNotification. Los llamadores
+   * pasan el contenido del cuerpo ya escapado.
+   */
+  private static renderBrandedEmail(params: {
+    eyebrow: string;
+    title: string;
+    bodyHtml: string;
+    ctaLabel?: string;
+    ctaUrl?: string;
+  }): string {
+    const ctaBlock = params.ctaUrl && params.ctaLabel
+      ? `
+                  <tr>
+                    <td style="padding: 0 32px 12px;">
+                      <table role="presentation" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td style="border-radius: 8px; background-color: #1d4ed8;">
+                            <a href="${params.ctaUrl}" style="display: inline-block; padding: 12px 28px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: bold; color: #ffffff; text-decoration: none; border-radius: 8px;">${this.escHtml(params.ctaLabel)}</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 0 32px 24px; font-family: Arial, Helvetica, sans-serif;">
+                      <p style="margin: 0; font-size: 12px; line-height: 1.6; color: #94a3b8;">
+                        Si el botón no funciona, copia y pega este enlace en tu navegador:<br/>
+                        <a href="${params.ctaUrl}" style="color: #2563eb; word-break: break-all;">${params.ctaUrl}</a>
+                      </p>
+                    </td>
+                  </tr>`
+      : '';
+
+    return `
+      <!DOCTYPE html>
+      <html lang="es">
+        <body style="margin: 0; padding: 0; background-color: #f1f5f9;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f1f5f9; padding: 32px 16px;">
+            <tr>
+              <td align="center">
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);">
+                  <!-- Header -->
+                  <tr>
+                    <td style="background-color: #1d4ed8; background-image: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); padding: 28px 32px;">
+                      <table role="presentation" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td style="width: 40px; height: 40px; background-color: #ffffff; border-radius: 10px; text-align: center; vertical-align: middle; font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: bold; color: #1d4ed8;">
+                            A
+                          </td>
+                          <td style="padding-left: 12px; font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: bold; color: #ffffff; letter-spacing: 0.5px;">
+                            AEROCAMO
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <!-- Body -->
+                  <tr>
+                    <td style="padding: 32px 32px 8px; font-family: Arial, Helvetica, sans-serif;">
+                      <p style="margin: 0 0 4px; font-size: 13px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; color: #2563eb;">
+                        ${this.escHtml(params.eyebrow)}
+                      </p>
+                      <h1 style="margin: 0 0 16px; font-size: 21px; line-height: 1.4; color: #0f172a;">
+                        ${this.escHtml(params.title)}
+                      </h1>
+                      ${params.bodyHtml}
+                    </td>
+                  </tr>
+${ctaBlock}
+                  <!-- Footer -->
+                  <tr>
+                    <td style="padding: 20px 32px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; font-family: Arial, Helvetica, sans-serif;">
+                      <p style="margin: 0; font-size: 12px; line-height: 1.6; color: #94a3b8;">
+                        Este correo fue generado automáticamente por Aerocamo. Por favor no respondas a esta dirección.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Correo de bienvenida al crear una cuenta nueva: confirma la creación y
+   * ofrece definir una contraseña propia en vez de la que dejó el SUPER_ADMIN.
+   * Devuelve si el envío tuvo éxito — a diferencia de las notificaciones de OT,
+   * el caller necesita saberlo para avisar si hay que comunicar la clave a mano.
+   */
+  static async sendWelcomeEmail(input: {
+    to: string;
+    name: string;
+    organizationName: string;
+    roleLabel: string;
+    setPasswordUrl: string;
+  }): Promise<boolean> {
+    const bodyHtml = `
+                      <p style="margin: 0 0 20px; font-size: 14px; line-height: 1.6; color: #334155;">
+                        Hola ${this.escHtml(input.name)}, se creó tu cuenta en <strong>${this.escHtml(input.organizationName)}</strong> con el rol <strong>${this.escHtml(input.roleLabel)}</strong>. Ya puedes ingresar con la contraseña que te indicaron, o definir la tuya propia con el botón de abajo (el enlace vence en 24 horas).
+                      </p>`;
+
+    const html = this.renderBrandedEmail({
+      eyebrow: 'Cuenta creada',
+      title: `¡Bienvenido, ${input.name}!`,
+      bodyHtml,
+      ctaLabel: 'Confirmar cuenta y crear mi contraseña',
+      ctaUrl: input.setPasswordUrl,
+    });
+
+    try {
+      await this.dispatch({ to: input.to, subject: `Bienvenido a Aerocamo — tu cuenta en ${input.organizationName}`, html });
+      return true;
+    } catch (error) {
+      console.error('Error sending welcome email:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Correo de "olvidé mi contraseña". El endpoint que lo dispara responde
+   * siempre igual exista o no el usuario, así que este método solo se llama
+   * cuando sí existe — no hay lógica anti-enumeración aquí adentro.
+   */
+  static async sendPasswordResetEmail(input: { to: string; name: string; resetUrl: string }): Promise<boolean> {
+    const bodyHtml = `
+                      <p style="margin: 0 0 20px; font-size: 14px; line-height: 1.6; color: #334155;">
+                        Hola ${this.escHtml(input.name)}, recibimos una solicitud para restablecer tu contraseña de Aerocamo. Usa el botón de abajo para elegir una nueva (el enlace vence en 24 horas). Si no fuiste tú, puedes ignorar este correo — tu contraseña actual sigue funcionando.
+                      </p>`;
+
+    const html = this.renderBrandedEmail({
+      eyebrow: 'Restablecer contraseña',
+      title: 'Solicitud de restablecimiento',
+      bodyHtml,
+      ctaLabel: 'Restablecer mi contraseña',
+      ctaUrl: input.resetUrl,
+    });
+
+    try {
+      await this.dispatch({ to: input.to, subject: 'Restablece tu contraseña — Aerocamo', html });
+      return true;
+    } catch (error) {
+      console.error('Error sending password reset email:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Confirmación de que la contraseña cambió — sin link, funciona como señal
+   * de seguridad: si el usuario no lo hizo, sabe que algo pasó con su cuenta.
+   */
+  static async sendPasswordChangedConfirmation(input: { to: string; name: string }): Promise<boolean> {
+    const bodyHtml = `
+                      <p style="margin: 0 0 20px; font-size: 14px; line-height: 1.6; color: #334155;">
+                        Hola ${this.escHtml(input.name)}, tu contraseña de Aerocamo se actualizó correctamente. Si no fuiste tú quien hizo este cambio, contacta a tu administrador de inmediato.
+                      </p>`;
+
+    const html = this.renderBrandedEmail({
+      eyebrow: 'Contraseña actualizada',
+      title: 'Listo, tu contraseña cambió',
+      bodyHtml,
+    });
+
+    try {
+      await this.dispatch({ to: input.to, subject: 'Tu contraseña fue actualizada — Aerocamo', html });
+      return true;
+    } catch (error) {
+      console.error('Error sending password changed confirmation email:', error);
+      return false;
+    }
+  }
+
   /**
    * Probar conexión de correo saliente
    */

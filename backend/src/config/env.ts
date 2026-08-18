@@ -12,6 +12,10 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   /// Uno o más orígenes separados por coma (p. ej. www.aerocamo.cl,app.aerocamo.cl)
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  /// URL pública única del frontend, para armar links en correos (confirmación
+  /// de cuenta, reseteo de contraseña). A diferencia de CORS_ORIGIN, esta no
+  /// admite múltiples orígenes — es el destino real al que debe llegar el usuario.
+  APP_URL: z.string().default('http://localhost:5173'),
   
   // Email configuration
   EMAIL_PROVIDER: z.enum(['smtp', 'sendgrid']).default('smtp'),
@@ -68,6 +72,7 @@ export const env = {
   jwtExpiresIn: rawEnv.JWT_EXPIRES_IN,
   logLevel: rawEnv.LOG_LEVEL,
   corsOrigin: rawEnv.CORS_ORIGIN,
+  appUrl: rawEnv.APP_URL,
   
   // Email configuration
   email: {
