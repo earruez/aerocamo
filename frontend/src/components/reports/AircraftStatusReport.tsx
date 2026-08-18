@@ -12,7 +12,7 @@ type CategoryFilter = 'PROGRAMA' | TaskCategory;
 const CATEGORY_TABS: CategoryFilter[] = ['PROGRAMA', 'AD', 'SB', 'MIM', 'INSPECCIONES', 'COMPONENTES'];
 
 function categoryLabel(cat: CategoryFilter): string {
-  return cat === 'PROGRAMA' ? 'Programa completo' : TASK_CATEGORY_LABEL[cat];
+  return cat === 'PROGRAMA' ? 'General' : TASK_CATEGORY_LABEL[cat];
 }
 
 interface AircraftStatusReportProps {
@@ -158,7 +158,7 @@ export function AircraftStatusReport({
           </div>
           <div className="flex items-center gap-2">
             <button onClick={exportPdf} className="btn-secondary inline-flex items-center gap-1.5">
-              <FileDown size={14} /> Exportar PDF para DGAC
+              <FileDown size={14} /> Exportar PDF — {categoryLabel(category)}
             </button>
             <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-slate-100">
               <X size={16} className="text-slate-500" />
@@ -183,7 +183,10 @@ export function AircraftStatusReport({
           </div>
 
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Categoría del informe</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Tipo de informe</p>
+            <p className="text-xs text-slate-500 mb-2">
+              Elige «General» para el programa completo, o una categoría para acotar la tabla y el PDF a solo esas tareas.
+            </p>
             <div className="flex flex-wrap gap-2">
               {CATEGORY_TABS.map((cat) => (
                 <button
