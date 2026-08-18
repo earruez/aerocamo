@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { FileDown, Paperclip, X } from 'lucide-react';
-import { maintenancePlanApi } from '@api/maintenancePlan.api';
+import { FileDown, Paperclip, X, Plane, Cog } from 'lucide-react';
+import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import {
   CATEGORY_TABS, categoryLabel, exportDgacStatusReportPdf, getRowClass,
-  lastComplianceLabel, mandatoryRowsFor, categoryCountsFor, rowsForCategory,
+  lastComplianceLabel, mandatoryRowsFor, categoryCountsFor, rowsForCategory, splitByEquipment,
   nextDueLabel, remainingLabel, type CategoryFilter,
 } from '@/shared/dgacReport';
 
@@ -14,6 +14,68 @@ interface AircraftStatusReportProps {
   model: string;
   currentHours: number;
   onClose: () => void;
+}
+
+function EquipmentSection({ title, Icon, rows, isLoading, emptyLabel }: {
+  title: string; Icon: React.ElementType; rows: MaintenancePlanItem[]; isLoading: boolean; emptyLabel: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 overflow-auto max-h-[42vh]">
+      <div className="px-4 py-2.5 border-b border-slate-200 bg-slate-50 flex items-center gap-2 sticky top-0 z-20">
+        <Icon size={14} className="text-slate-500" />
+        <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">{title} ({rows.length})</h4>
+      </div>
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-50 border-b border-slate-200 sticky top-[37px] z-10">
+          <tr>
+            <th className="table-header">Codigo ATA</th>
+            <th className="table-header">Descripcion</th>
+            <th className="table-header">Ultimo Cumplimiento (Fecha/Horas)</th>
+            <th className="table-header">Proximo Vencimiento</th>
+            <th className="table-header">Remanente</th>
+            <th className="table-header">Evidencia</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {isLoading && (
+            <tr>
+              <td colSpan={6} className="table-cell py-10 text-center text-slate-400">Cargando reporte...</td>
+            </tr>
+          )}
+          {!isLoading && rows.length === 0 && (
+            <tr>
+              <td colSpan={6} className="table-cell py-8 text-center text-slate-400">{emptyLabel}</td>
+            </tr>
+          )}
+          {!isLoading && rows.map((item) => (
+            <tr key={item.taskId} className={getRowClass(item)}>
+              <td className="table-cell font-mono text-xs font-bold text-slate-800">{item.taskCode}</td>
+              <td className="table-cell">
+                <p className="text-slate-700">{item.taskTitle}</p>
+                <p className="text-[11px] text-slate-500">Origen: {item.legalSource}</p>
+              </td>
+              <td className="table-cell text-slate-700">{lastComplianceLabel(item)}</td>
+              <td className="table-cell text-slate-700">{nextDueLabel(item)}</td>
+              <td className="table-cell font-semibold text-slate-800">{remainingLabel(item)}</td>
+              <td className="table-cell">
+                {item.lastEvidenceUrl ? (
+                  <button
+                    className="inline-flex items-center gap-1 text-brand-600 hover:underline"
+                    onClick={() => window.open(item.lastEvidenceUrl as string, '_blank', 'noopener,noreferrer')}
+                    title="Ver evidencia OT"
+                  >
+                    <Paperclip size={14} /> Ver OT
+                  </button>
+                ) : (
+                  <span className="text-slate-400">Sin OT</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export function AircraftStatusReport({
@@ -34,8 +96,13 @@ export function AircraftStatusReport({
   const mandatoryRows = useMemo(() => mandatoryRowsFor(data), [data]);
   const categoryCounts = useMemo(() => categoryCountsFor(mandatoryRows), [mandatoryRows]);
   const rows = useMemo(() => rowsForCategory(mandatoryRows, category), [mandatoryRows, category]);
+  const { aircraftRows, engineRows } = useMemo(() => splitByEquipment(rows), [rows]);
 
   const exportPdf = () => exportDgacStatusReportPdf({ registration, model, currentHours, category, rows });
+
+  const emptyCategoryLabel = category === 'PROGRAMA'
+    ? 'Sin tareas para este equipo.'
+    : `Sin tareas de la categoría «${categoryLabel(category)}» para este equipo.`;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/45 p-4">
@@ -75,6 +142,7 @@ export function AircraftStatusReport({
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Tipo de informe</p>
             <p className="text-xs text-slate-500 mb-2">
               Elige «General» para el programa completo, o una categoría para acotar la tabla y el PDF a solo esas tareas.
+              El informe siempre separa las tareas de célula (Aeronave) de las de Motor.
             </p>
             <div className="flex flex-wrap gap-2">
               {CATEGORY_TABS.map((cat) => (
@@ -94,58 +162,9 @@ export function AircraftStatusReport({
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 overflow-auto max-h-[50vh]">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
-                <tr>
-                  <th className="table-header">Codigo ATA</th>
-                  <th className="table-header">Descripcion</th>
-                  <th className="table-header">Ultimo Cumplimiento (Fecha/Horas)</th>
-                  <th className="table-header">Proximo Vencimiento</th>
-                  <th className="table-header">Remanente</th>
-                  <th className="table-header">Evidencia</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {isLoading && (
-                  <tr>
-                    <td colSpan={6} className="table-cell py-10 text-center text-slate-400">Cargando reporte...</td>
-                  </tr>
-                )}
-                {!isLoading && rows.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="table-cell py-10 text-center text-slate-400">
-                      {category === 'PROGRAMA' ? 'Sin tareas para esta aeronave.' : `Sin tareas de la categoría «${categoryLabel(category)}» para esta aeronave.`}
-                    </td>
-                  </tr>
-                )}
-                {!isLoading && rows.map((item) => (
-                  <tr key={item.taskId} className={getRowClass(item)}>
-                    <td className="table-cell font-mono text-xs font-bold text-slate-800">{item.taskCode}</td>
-                    <td className="table-cell">
-                      <p className="text-slate-700">{item.taskTitle}</p>
-                      <p className="text-[11px] text-slate-500">Origen: {item.legalSource}</p>
-                    </td>
-                    <td className="table-cell text-slate-700">{lastComplianceLabel(item)}</td>
-                    <td className="table-cell text-slate-700">{nextDueLabel(item)}</td>
-                    <td className="table-cell font-semibold text-slate-800">{remainingLabel(item)}</td>
-                    <td className="table-cell">
-                      {item.lastEvidenceUrl ? (
-                        <button
-                          className="inline-flex items-center gap-1 text-brand-600 hover:underline"
-                          onClick={() => window.open(item.lastEvidenceUrl as string, '_blank', 'noopener,noreferrer')}
-                          title="Ver evidencia OT"
-                        >
-                          <Paperclip size={14} /> Ver OT
-                        </button>
-                      ) : (
-                        <span className="text-slate-400">Sin OT</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-4">
+            <EquipmentSection title="Aeronave" Icon={Plane} rows={aircraftRows} isLoading={isLoading} emptyLabel={emptyCategoryLabel} />
+            <EquipmentSection title="Motor" Icon={Cog} rows={engineRows} isLoading={isLoading} emptyLabel={emptyCategoryLabel} />
           </div>
         </div>
       </div>

@@ -28,6 +28,19 @@ export function rowsForCategory(mandatoryRows: MaintenancePlanItem[], category: 
   return category === 'PROGRAMA' ? mandatoryRows : mandatoryRows.filter((item) => classifyTaskCategory(item) === category);
 }
 
+export interface EquipmentGroups {
+  aircraftRows: MaintenancePlanItem[];
+  engineRows: MaintenancePlanItem[];
+}
+
+/** Separa las tareas de una categoría entre las que aplican a la célula y las que aplican al motor. */
+export function splitByEquipment(rows: MaintenancePlanItem[]): EquipmentGroups {
+  return {
+    aircraftRows: rows.filter((item) => item.equipmentScope === 'AIRCRAFT'),
+    engineRows: rows.filter((item) => item.equipmentScope === 'ENGINE'),
+  };
+}
+
 function formatDate(value: string | null): string {
   if (!value) return MISSING_OPERATIONAL_CONTEXT_LABEL;
   return new Date(value).toLocaleDateString('es-CL');
@@ -70,6 +83,69 @@ export function lastComplianceLabel(item: MaintenancePlanItem): string {
   return `${date} / ${hours}`;
 }
 
+const TABLE_HEAD = [[
+  'Codigo ATA',
+  'Descripcion',
+  'Ultimo Cumplimiento (Fecha/Horas)',
+  'Proximo Vencimiento',
+  'Remanente',
+  'Sustento',
+  'Evidencia',
+]];
+
+function drawEquipmentSection(doc: jsPDF, title: string, sectionRows: MaintenancePlanItem[], startY: number): number {
+  const pageHeight = doc.internal.pageSize.getHeight();
+  let y = startY;
+  if (y > pageHeight - 90) {
+    doc.addPage();
+    y = 50;
+  }
+
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`${title} (${sectionRows.length})`, 40, y);
+  doc.setFont('helvetica', 'normal');
+
+  if (sectionRows.length === 0) {
+    doc.setFontSize(9);
+    doc.text('Sin tareas para este equipo.', 40, y + 16);
+    return y + 34;
+  }
+
+  autoTable(doc, {
+    startY: y + 10,
+    head: TABLE_HEAD,
+    body: sectionRows.map((item) => [
+      item.taskCode,
+      item.taskTitle,
+      lastComplianceLabel(item),
+      nextDueLabel(item),
+      remainingLabel(item),
+      item.legalSource,
+      item.lastEvidenceUrl ?? '-',
+    ]),
+    styles: {
+      fontSize: 8,
+      cellPadding: 4,
+    },
+    headStyles: {
+      fillColor: [15, 23, 42],
+    },
+    didParseCell: (hookData) => {
+      if (hookData.section !== 'body') return;
+      const row = sectionRows[hookData.row.index];
+      const rowClass = getRowClass(row);
+      if (rowClass === 'bg-rose-50') {
+        hookData.cell.styles.fillColor = [254, 226, 226];
+      } else if (rowClass === 'bg-amber-50') {
+        hookData.cell.styles.fillColor = [254, 243, 199];
+      }
+    },
+  });
+
+  return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+}
+
 export function exportDgacStatusReportPdf(params: {
   registration: string;
   model: string;
@@ -88,44 +164,10 @@ export function exportDgacStatusReportPdf(params: {
   doc.text(`Horas actuales: ${currentHours.toFixed(1)} FH`, 40, 74);
   doc.text(`Fecha emision: ${generatedAt.toLocaleString('es-CL')}`, 40, 88);
 
-  autoTable(doc, {
-    startY: 104,
-    head: [[
-      'Codigo ATA',
-      'Descripcion',
-      'Ultimo Cumplimiento (Fecha/Horas)',
-      'Proximo Vencimiento',
-      'Remanente',
-      'Sustento',
-      'Evidencia',
-    ]],
-    body: rows.map((item) => [
-      item.taskCode,
-      item.taskTitle,
-      lastComplianceLabel(item),
-      nextDueLabel(item),
-      remainingLabel(item),
-      item.legalSource,
-      item.lastEvidenceUrl ?? '-',
-    ]),
-    styles: {
-      fontSize: 8,
-      cellPadding: 4,
-    },
-    headStyles: {
-      fillColor: [15, 23, 42],
-    },
-    didParseCell: (hookData) => {
-      if (hookData.section !== 'body') return;
-      const row = rows[hookData.row.index];
-      const rowClass = getRowClass(row);
-      if (rowClass === 'bg-rose-50') {
-        hookData.cell.styles.fillColor = [254, 226, 226];
-      } else if (rowClass === 'bg-amber-50') {
-        hookData.cell.styles.fillColor = [254, 243, 199];
-      }
-    },
-  });
+  const { aircraftRows, engineRows } = splitByEquipment(rows);
+
+  let y = drawEquipmentSection(doc, 'AERONAVE', aircraftRows, 112);
+  drawEquipmentSection(doc, 'MOTOR', engineRows, y + 28);
 
   doc.save(`DGAC_Aircraft_Status_${registration}_${category}.pdf`);
 }
