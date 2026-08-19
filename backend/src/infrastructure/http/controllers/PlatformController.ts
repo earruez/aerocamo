@@ -9,6 +9,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../database/prisma.client';
 import { NotFoundError, ConflictError, ValidationError } from '../../../shared/errors/AppError';
 import { AuditLogService } from '../../../domain/services/AuditLogService';
@@ -212,7 +213,23 @@ export class PlatformController {
       });
       if (!existing) throw new NotFoundError('Organization', req.params.id);
 
-      await prisma.organization.delete({ where: { id: existing.id } });
+      try {
+        await prisma.organization.delete({ where: { id: existing.id } });
+      } catch (err) {
+        // Postgres 23503 = foreign_key_violation, 23001 = restrict_violation (nuestro caso:
+        // compliances/discrepancies tienen ON DELETE RESTRICT hacia organizations a propósito,
+        // para no perder trazabilidad regulatoria). Prisma entrega esto como error "unknown",
+        // no como P2003, así que hay que revisar el mensaje.
+        const isRestrictViolation =
+          (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') ||
+          (err instanceof Error && /23001|23503|violates.*foreign key|violates.*RESTRICT/i.test(err.message));
+        if (isRestrictViolation) {
+          throw new ConflictError(
+            'No se puede eliminar: la empresa tiene cumplimientos, discrepancias u otro historial de mantenimiento registrado. Desactívala en vez de eliminarla para conservar la trazabilidad.',
+          );
+        }
+        throw err;
+      }
 
       await auditLog.log({
         organizationId: existing.id,
