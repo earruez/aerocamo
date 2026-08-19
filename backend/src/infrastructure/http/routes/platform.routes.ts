@@ -14,6 +14,9 @@ router.post('/organizations', ctrl.createOrganization);
 router.patch('/organizations/:id', ctrl.updateOrganization);
 router.delete('/organizations/:id', ctrl.deleteOrganization);
 
+router.get('/organizations/:id/maintenance-task-models', ctrl.listMaintenanceTaskModels);
+router.post('/organizations/:id/maintenance-tasks/copy', ctrl.copyMaintenanceTasks);
+
 router.get('/organizations/:id/users', ctrl.listOrganizationUsers);
 router.post('/organizations/:id/users', ctrl.createUser);
 router.patch('/users/:userId', ctrl.updateUser);

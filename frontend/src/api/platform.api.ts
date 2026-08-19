@@ -31,6 +31,11 @@ export interface CreateOrganizationInput {
   admin: { name: string; email: string; password: string };
 }
 
+export interface MaintenanceTaskModelGroup {
+  applicableModel: string | null;
+  taskCount: number;
+}
+
 export interface CreateUserInput {
   name: string;
   email: string;
@@ -55,6 +60,17 @@ export const platformApi = {
   deleteOrganization: async (id: string): Promise<void> => {
     await apiClient.delete(`/platform/organizations/${id}`);
   },
+
+  listMaintenanceTaskModels: async (orgId: string): Promise<MaintenanceTaskModelGroup[]> =>
+    unwrap((await apiClient.get<{ status: string; data: MaintenanceTaskModelGroup[] }>(`/platform/organizations/${orgId}/maintenance-task-models`)).data),
+
+  copyMaintenanceTasks: async (
+    targetOrgId: string,
+    input: { sourceOrganizationId: string; applicableModels: (string | null)[] },
+  ): Promise<{ copied: number; skipped: string[] }> =>
+    unwrap((await apiClient.post<{ status: string; data: { copied: number; skipped: string[] } }>(
+      `/platform/organizations/${targetOrgId}/maintenance-tasks/copy`, input,
+    )).data),
 
   listOrganizationUsers: async (orgId: string): Promise<PlatformUser[]> =>
     unwrap((await apiClient.get<{ status: string; data: PlatformUser[] }>(`/platform/organizations/${orgId}/users`)).data),

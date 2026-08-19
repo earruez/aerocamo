@@ -1,9 +1,10 @@
 import { Fragment, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Building2, ChevronDown, ChevronRight, Pencil, Plane, Plus, ShieldCheck, Trash2, Users as UsersIcon, X } from 'lucide-react';
+import { BookOpen, Building2, ChevronDown, ChevronRight, Copy, Pencil, Plane, Plus, ShieldCheck, Trash2, Users as UsersIcon, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   platformApi,
+  type MaintenanceTaskModelGroup,
   type PlatformOrganization,
   type PlatformUser,
 } from '@api/platform.api';
@@ -445,6 +446,167 @@ function OrganizationUsers({ orgId }: { orgId: string }) {
   );
 }
 
+// ─── Copiar biblioteca de mantenimiento ────────────────────────────────────────
+function CopyLibraryModal({
+  targetOrg, orgs, onClose,
+}: { targetOrg: PlatformOrganization; orgs: PlatformOrganization[]; onClose: () => void }) {
+  const qc = useQueryClient();
+  const sourceOptions = orgs.filter((o) => o.id !== targetOrg.id);
+  const [sourceOrgId, setSourceOrgId] = useState(sourceOptions[0]?.id ?? '');
+  const [selectedModels, setSelectedModels] = useState<Set<string | null>>(new Set());
+
+  const { data: modelGroups = [], isLoading } = useQuery({
+    queryKey: ['platform-org-task-models', sourceOrgId],
+    queryFn: () => platformApi.listMaintenanceTaskModels(sourceOrgId),
+    enabled: !!sourceOrgId,
+  });
+
+  const toggle = (model: string | null) => {
+    setSelectedModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(model)) next.delete(model); else next.add(model);
+      return next;
+    });
+  };
+
+  const selectedCount = modelGroups
+    .filter((g) => selectedModels.has(g.applicableModel))
+    .reduce((sum, g) => sum + g.taskCount, 0);
+
+  const copy = useMutation({
+    mutationFn: () => platformApi.copyMaintenanceTasks(targetOrg.id, {
+      sourceOrganizationId: sourceOrgId,
+      applicableModels: [...selectedModels],
+    }),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['platform-org-task-models', targetOrg.id] });
+      if (result.copied > 0) {
+        toast.success(`${result.copied} tarea(s) copiada(s) a ${targetOrg.name}.`);
+      }
+      if (result.skipped.length > 0) {
+        toast.error(`${result.skipped.length} tarea(s) ya existían en ${targetOrg.name} (mismo código) y no se copiaron.`, { duration: 8000 });
+      }
+      if (result.copied > 0) onClose();
+    },
+    onError: (err) => {
+      const detail = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(detail ?? 'No se pudo copiar la biblioteca');
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-2xl bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Copiar biblioteca a {targetOrg.name}</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Copia independiente — cada empresa puede editarla después sin afectar a la otra.</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 hover:bg-slate-100 shrink-0">
+            <X size={15} className="text-slate-500" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto px-6 py-4 space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Copiar desde</label>
+            <select
+              value={sourceOrgId}
+              onChange={(e) => { setSourceOrgId(e.target.value); setSelectedModels(new Set()); }}
+              className="input text-sm"
+            >
+              {sourceOptions.map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <p className="text-[11px] text-slate-500">
+            Elige qué modelos de aeronave copiar (según cómo están etiquetadas las tareas de origen — modelos con distinta escritura del mismo avión aparecen por separado).
+          </p>
+
+          {isLoading && <p className="text-xs text-slate-400">Cargando biblioteca…</p>}
+          {!isLoading && modelGroups.length === 0 && (
+            <p className="text-xs text-slate-400">Esa empresa no tiene tareas en su biblioteca.</p>
+          )}
+          {!isLoading && modelGroups.length > 0 && (
+            <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-64 overflow-y-auto">
+              {modelGroups.map((g) => (
+                <label key={g.applicableModel ?? '__null__'} className="flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedModels.has(g.applicableModel)}
+                    onChange={() => toggle(g.applicableModel)}
+                    className="rounded border-slate-300"
+                  />
+                  <span className="flex-1">
+                    <span className="font-medium text-slate-800">{g.applicableModel ?? 'Sin modelo específico'}</span>
+                    <span className="text-xs text-slate-400 ml-2">{g.taskCount} tareas</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
+          <button type="button" onClick={onClose} className="btn-secondary text-sm">Cancelar</button>
+          <button
+            type="button"
+            onClick={() => selectedModels.size > 0 && copy.mutate()}
+            disabled={selectedModels.size === 0 || copy.isPending}
+            className="btn-primary text-sm disabled:opacity-40"
+          >
+            {copy.isPending ? 'Copiando…' : `Copiar ${selectedCount > 0 ? `(${selectedCount} tareas)` : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrganizationLibrary({ org, orgs }: { org: PlatformOrganization; orgs: PlatformOrganization[] }) {
+  const [showCopy, setShowCopy] = useState(false);
+
+  const { data: modelGroups = [], isLoading } = useQuery<MaintenanceTaskModelGroup[]>({
+    queryKey: ['platform-org-task-models', org.id],
+    queryFn: () => platformApi.listMaintenanceTaskModels(org.id),
+  });
+
+  const totalTasks = modelGroups.reduce((sum, g) => sum + g.taskCount, 0);
+
+  return (
+    <div className="bg-slate-50/70 px-5 py-4 border-t border-slate-100">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          Biblioteca de mantenimiento {totalTasks > 0 && `(${totalTasks} tareas)`}
+        </p>
+        <button onClick={() => setShowCopy(true)} className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:underline">
+          <Copy size={11} /> Copiar desde otra empresa
+        </button>
+      </div>
+
+      {isLoading ? (
+        <p className="text-[11px] text-slate-400">Cargando…</p>
+      ) : modelGroups.length === 0 ? (
+        <p className="text-[11px] text-slate-400">Sin tareas propias en la biblioteca.</p>
+      ) : (
+        <ul className="space-y-1">
+          {modelGroups.map((g) => (
+            <li key={g.applicableModel ?? '__null__'} className="flex items-center gap-2 text-xs text-slate-600 bg-white rounded-lg px-3 py-1.5 border border-slate-100">
+              <BookOpen size={12} className="text-slate-400 shrink-0" />
+              <span className="font-medium text-slate-800">{g.applicableModel ?? 'Sin modelo específico'}</span>
+              <span className="ml-auto text-slate-400">{g.taskCount} tareas</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {showCopy && <CopyLibraryModal targetOrg={org} orgs={orgs} onClose={() => setShowCopy(false)} />}
+    </div>
+  );
+}
+
 // ─── Página ───────────────────────────────────────────────────────────────────
 export default function PlatformPage() {
   const qc = useQueryClient();
@@ -556,6 +718,7 @@ export default function PlatformPage() {
                     <tr>
                       <td colSpan={5} className="p-0">
                         <OrganizationUsers orgId={o.id} />
+                        <OrganizationLibrary org={o} orgs={orgs} />
                       </td>
                     </tr>
                   )}

@@ -86,6 +86,11 @@ const updateUserSchema = z.object({
   password: z.string().min(8).max(200).optional(),
 });
 
+const copyTasksSchema = z.object({
+  sourceOrganizationId: z.string().uuid(),
+  applicableModels: z.array(z.string().nullable()).min(1),
+});
+
 export class PlatformController {
   // ── Organizaciones ────────────────────────────────────────────────────────
   listOrganizations = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -243,6 +248,119 @@ export class PlatformController {
       });
 
       res.status(204).send();
+    } catch (err) { next(err); }
+  };
+
+  // ── Biblioteca de mantenimiento (tareas agrupadas por modelo de aeronave) ──
+  listMaintenanceTaskModels = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const org = await prisma.organization.findUnique({ where: { id: req.params.id }, select: { id: true } });
+      if (!org) throw new NotFoundError('Organization', req.params.id);
+
+      const grouped = await prisma.maintenanceTask.groupBy({
+        by: ['applicableModel'],
+        where: { organizationId: org.id },
+        _count: { _all: true },
+        orderBy: { applicableModel: 'asc' },
+      });
+
+      res.status(200).json({
+        status: 'success',
+        data: grouped.map((g) => ({ applicableModel: g.applicableModel, taskCount: g._count._all })),
+      });
+    } catch (err) { next(err); }
+  };
+
+  /** Copia tareas de la biblioteca de una empresa origen hacia esta empresa,
+   * filtradas por modelo de aeronave (applicableModel), como filas
+   * independientes — no queda ningún vínculo con el origen. Se salta las
+   * tareas cuyo `code` ya existe en destino (código único por empresa), y lo
+   * informa en `skipped`. */
+  copyMaintenanceTasks = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const targetOrg = await prisma.organization.findUnique({ where: { id: req.params.id }, select: { id: true } });
+      if (!targetOrg) throw new NotFoundError('Organization', req.params.id);
+
+      const { sourceOrganizationId, applicableModels } = copyTasksSchema.parse(req.body);
+      if (sourceOrganizationId === targetOrg.id) {
+        throw new ValidationError('La empresa origen y destino no pueden ser la misma');
+      }
+
+      const namedModels = applicableModels.filter((m): m is string => m !== null);
+      const includeNull = applicableModels.includes(null);
+
+      const sourceTasks = await prisma.maintenanceTask.findMany({
+        where: {
+          organizationId: sourceOrganizationId,
+          OR: [
+            ...(namedModels.length > 0 ? [{ applicableModel: { in: namedModels } }] : []),
+            ...(includeNull ? [{ applicableModel: null }] : []),
+          ],
+        },
+      });
+      if (sourceTasks.length === 0) throw new NotFoundError('Tareas de biblioteca');
+
+      const existingCodes = new Set(
+        (await prisma.maintenanceTask.findMany({
+          where: { organizationId: targetOrg.id },
+          select: { code: true },
+        })).map((t) => t.code),
+      );
+
+      const copied: string[] = [];
+      const skipped: string[] = [];
+
+      await prisma.$transaction(async (tx) => {
+        for (const t of sourceTasks) {
+          if (existingCodes.has(t.code)) {
+            skipped.push(t.code);
+            continue;
+          }
+          await tx.maintenanceTask.create({
+            data: {
+              organizationId: targetOrg.id,
+              code: t.code,
+              ata: t.ata,
+              equipmentScope: t.equipmentScope,
+              complianceRecurrence: t.complianceRecurrence,
+              title: t.title,
+              description: t.description,
+              intervalType: t.intervalType,
+              intervalHours: t.intervalHours,
+              intervalCycles: t.intervalCycles,
+              intervalCalendarDays: t.intervalCalendarDays,
+              intervalCalendarMonths: t.intervalCalendarMonths,
+              toleranceHours: t.toleranceHours,
+              toleranceCycles: t.toleranceCycles,
+              toleranceCalendarDays: t.toleranceCalendarDays,
+              referenceNumber: t.referenceNumber,
+              referenceType: t.referenceType,
+              isMandatory: t.isMandatory,
+              estimatedManHours: t.estimatedManHours,
+              requiresInspection: t.requiresInspection,
+              isComponentControl: t.isComponentControl,
+              applicableModel: t.applicableModel,
+              applicablePartNumber: t.applicablePartNumber,
+              isActive: t.isActive,
+            },
+          });
+          copied.push(t.code);
+          existingCodes.add(t.code);
+        }
+      });
+
+      await auditLog.log({
+        organizationId: targetOrg.id,
+        entityType: 'MaintenanceTask',
+        entityId: targetOrg.id,
+        action: 'COPY',
+        newValue: { sourceOrganizationId, applicableModels, copiedCount: copied.length, skippedCount: skipped.length },
+        userId: req.currentUser.id,
+        userEmail: req.currentUser.email,
+        userRole: req.currentUser.role,
+      });
+
+      res.status(200).json({ status: 'success', data: { copied: copied.length, skipped } });
     } catch (err) { next(err); }
   };
 
