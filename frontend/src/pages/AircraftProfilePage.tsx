@@ -28,7 +28,7 @@ import {
   type CounterReading,
 } from '@api/aircraft.api';
 import { buildCounterHistory, formatDateOnly } from '../shared/counterHistoryReport';
-import { libraryApi, templateMatchesCategory, type AssignedPlanCategory, type AircraftAssignedPlan, type MaintenanceTemplate } from '@api/library.api';
+import { libraryApi, templateNativeCategory, type AssignedPlanCategory, type AircraftAssignedPlan, type MaintenanceTemplate } from '@api/library.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { AircraftStatusReport } from '@components/reports/AircraftStatusReport';
 import { useWorkRequestStore } from '../store/workRequestStore';
@@ -1022,8 +1022,18 @@ function EditAssignedPlansModal({
 }) {
   const [selected, setSelected] = useState<string[]>(currentTemplateIds);
 
-  const toggle = (templateId: string) => {
-    setSelected((prev) => (prev.includes(templateId) ? prev.filter((id) => id !== templateId) : [...prev, templateId]));
+  const toggle = (template: MaintenanceTemplate) => {
+    const isSelected = selected.includes(template.id);
+    if (!isSelected) {
+      const nativeCategory = templateNativeCategory(template);
+      if (nativeCategory !== category) {
+        const proceed = window.confirm(
+          `Esta normativa pertenece a "${ASSIGNED_PLAN_CATEGORY_LABELS[nativeCategory]}". ¿Quieres agregarla igual a "${ASSIGNED_PLAN_CATEGORY_LABELS[category]}"?`,
+        );
+        if (!proceed) return;
+      }
+    }
+    setSelected((prev) => (prev.includes(template.id) ? prev.filter((id) => id !== template.id) : [...prev, template.id]));
   };
 
   return (
@@ -1036,25 +1046,34 @@ function EditAssignedPlansModal({
           </button>
         </div>
         <div className="p-6 space-y-3">
-          <p className="text-xs text-slate-400">Puedes marcar más de una plantilla para esta categoría.</p>
+          <p className="text-xs text-slate-400">Se muestran todas las bibliotecas — puedes marcar más de una para esta categoría.</p>
           {templates.length === 0 ? (
             <p className="text-sm text-slate-400">Sin plantillas disponibles</p>
           ) : (
             <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-72 overflow-y-auto">
-              {templates.map((template) => (
-                <label
-                  key={template.id}
-                  className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(template.id)}
-                    onChange={() => toggle(template.id)}
-                    className="rounded border-slate-300"
-                  />
-                  <span>{template.manufacturer} {template.model} - {template.description ?? template.version}</span>
-                </label>
-              ))}
+              {templates.map((template) => {
+                const nativeCategory = templateNativeCategory(template);
+                const isForeign = nativeCategory !== category;
+                return (
+                  <label
+                    key={template.id}
+                    className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(template.id)}
+                      onChange={() => toggle(template)}
+                      className="rounded border-slate-300"
+                    />
+                    <span className="flex-1">{template.manufacturer} {template.model} - {template.description ?? template.version}</span>
+                    {isForeign && (
+                      <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">
+                        {ASSIGNED_PLAN_CATEGORY_LABELS[nativeCategory]}
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
             </div>
           )}
         </div>
@@ -1461,16 +1480,10 @@ export default function AircraftProfilePage() {
 
       {editingPlanCategory && (() => {
         const currentTemplateIds = (assignedPlansByCategory.get(editingPlanCategory) ?? []).map((p) => p.templateId);
-        // Una plantilla ya asignada se sigue mostrando aunque ya no encaje en el
-        // filtro de categoría (ej. quedó mal asignada antes de este filtro), para
-        // que se pueda desmarcar desde la propia UI en vez de quedar invisible.
-        const selectableTemplates = activeLibraryTemplates.filter(
-          (t) => templateMatchesCategory(t, editingPlanCategory) || currentTemplateIds.includes(t.id),
-        );
         return (
         <EditAssignedPlansModal
           category={editingPlanCategory}
-          templates={selectableTemplates}
+          templates={activeLibraryTemplates}
           currentTemplateIds={currentTemplateIds}
           isSaving={assignPlansMutation.isPending}
           onSave={(templateIds) => assignPlansMutation.mutate({ category: editingPlanCategory, templateIds })}
