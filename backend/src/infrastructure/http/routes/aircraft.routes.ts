@@ -41,6 +41,7 @@ router.post('/', ctrl.create);
 router.patch('/:id', ctrl.update);
 router.post('/:id/usage-history', ctrl.createUsageLog);
 router.post('/:id/engines', ctrl.createEngine);
+router.post('/:id/engines/:engineId/replace', ctrl.replaceEngine);
 router.post('/:id/engines/:engineId/usage-history', ctrl.createEngineUsageLog);
 
 export { router as aircraftRoutes };

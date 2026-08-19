@@ -176,6 +176,16 @@ export const aircraftApi = {
     return data.data ?? [];
   },
 
+  /** Reemplaza un motor: el actual queda archivado (con su historial de
+   * horas/ciclos intacto) y se crea uno nuevo en la misma posición. */
+  replaceEngine: async (
+    aircraftId: string,
+    engineId: string,
+    input: { manufacturer: string; model: string; serialNumber: string; removalReason?: string | null; removalDate?: string },
+  ): Promise<void> => {
+    await apiClient.post(`/aircraft/${aircraftId}/engines/${engineId}/replace`, input);
+  },
+
   /** Edita los datos de ficha de la aeronave. */
   async update(id: string, input: {
     owner?: string | null;

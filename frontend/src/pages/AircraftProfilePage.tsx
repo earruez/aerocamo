@@ -1094,6 +1094,83 @@ function EditAssignedPlansModal({
   );
 }
 
+// ─── Reemplazar motor ───────────────────────────────────────────────────────
+function ReplaceEngineModal({
+  engine, isSaving, onSave, onClose,
+}: {
+  engine: AircraftEngine;
+  isSaving: boolean;
+  onSave: (input: { manufacturer: string; model: string; serialNumber: string; removalReason: string | null; removalDate: string }) => void;
+  onClose: () => void;
+}) {
+  const [manufacturer, setManufacturer] = useState('');
+  const [model, setModel] = useState('');
+  const [serialNumber, setSerialNumber] = useState('');
+  const [removalReason, setRemovalReason] = useState('');
+  const [removalDate, setRemovalDate] = useState(() => new Date().toISOString().slice(0, 10));
+
+  const canSubmit = manufacturer.trim() && model.trim() && serialNumber.trim();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <h2 className="text-base font-bold text-slate-900">Reemplazar Motor {engine.position}</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            El motor actual (<strong>{engine.manufacturer} {engine.model}</strong>, S/N {engine.serialNumber}) queda
+            archivado con todo su historial de horas y ciclos intacto — no se borra. El motor nuevo empieza su propio
+            historial desde cero en esta misma posición.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="form-label">Fabricante <span className="text-rose-500">*</span></label>
+              <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="filter-input w-full" autoFocus />
+            </div>
+            <div>
+              <label className="form-label">Modelo <span className="text-rose-500">*</span></label>
+              <input value={model} onChange={(e) => setModel(e.target.value)} className="filter-input w-full" />
+            </div>
+          </div>
+          <div>
+            <label className="form-label">N/S del motor nuevo <span className="text-rose-500">*</span></label>
+            <input value={serialNumber} onChange={(e) => setSerialNumber(e.target.value)} className="filter-input w-full" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="form-label">Fecha de reemplazo</label>
+              <input type="date" value={removalDate} onChange={(e) => setRemovalDate(e.target.value)} className="filter-input w-full" />
+            </div>
+            <div>
+              <label className="form-label">Motivo (opcional)</label>
+              <input value={removalReason} onChange={(e) => setRemovalReason(e.target.value)} className="filter-input w-full" placeholder="Ej. cumplió TBO" />
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-6 pb-6">
+          <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>
+          <button
+            type="button"
+            disabled={isSaving || !canSubmit}
+            onClick={() => onSave({
+              manufacturer: manufacturer.trim(), model: model.trim(), serialNumber: serialNumber.trim(),
+              removalReason: removalReason.trim() || null, removalDate,
+            })}
+            className="btn-primary flex items-center gap-1.5 disabled:opacity-40"
+          >
+            {isSaving ? <Loader2 size={14} className="animate-spin" /> : null}
+            Confirmar reemplazo
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function AircraftProfilePage() {
   const { id } = useParams<{ id: string }>();
@@ -1102,6 +1179,7 @@ export default function AircraftProfilePage() {
   const [showStatusReport, setShowStatusReport] = useState(false);
   const [showUsageHistoryPanel, setShowUsageHistoryPanel] = useState(false);
   const [editingPlanCategory, setEditingPlanCategory] = useState<AssignedPlanCategory | null>(null);
+  const [replacingEngine, setReplacingEngine] = useState<AircraftEngine | null>(null);
   const workRequests = useWorkRequestStore((s) => s.workRequests);
   const userRole = useAuthStore((s) => s.user?.role);
   const viewDensity = useWorkRequestStore((s) => s.viewDensity);
@@ -1148,6 +1226,20 @@ export default function AircraftProfilePage() {
     },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Error al actualizar los planes';
+      toast.error(msg);
+    },
+  });
+
+  const replaceEngineMutation = useMutation({
+    mutationFn: (input: { manufacturer: string; model: string; serialNumber: string; removalReason: string | null; removalDate: string }) =>
+      aircraftApi.replaceEngine(id!, replacingEngine!.id, input),
+    onSuccess: () => {
+      toast.success('Motor reemplazado');
+      qc.invalidateQueries({ queryKey: ['aircraft-engines', id] });
+      setReplacingEngine(null);
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Error al reemplazar el motor';
       toast.error(msg);
     },
   });
@@ -1492,6 +1584,15 @@ export default function AircraftProfilePage() {
         );
       })()}
 
+      {replacingEngine && (
+        <ReplaceEngineModal
+          engine={replacingEngine}
+          isSaving={replaceEngineMutation.isPending}
+          onSave={(input) => replaceEngineMutation.mutate(input)}
+          onClose={() => setReplacingEngine(null)}
+        />
+      )}
+
       <AircraftDetailsCard aircraft={aircraft} canEdit={canChangeStatus} />
 
       <AircraftCountersPanel
@@ -1512,7 +1613,19 @@ export default function AircraftProfilePage() {
             const engine = enginesByPosition.get(position);
             return (
               <div key={position} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Motor {position}</p>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Motor {position}</p>
+                  {engine && (
+                    <button
+                      type="button"
+                      onClick={() => setReplacingEngine(engine)}
+                      className="text-slate-400 hover:text-brand-600 transition-colors shrink-0"
+                      title="Reemplazar motor"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  )}
+                </div>
                 <p className="mt-1 text-sm font-semibold text-slate-900">
                   {engine ? `${engine.manufacturer} ${engine.model}` : MISSING_OPERATIONAL_CONTEXT_LABEL}
                 </p>
