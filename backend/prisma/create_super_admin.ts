@@ -28,7 +28,7 @@ const NAME = getArgValue('--name');
 const EMAIL = getArgValue('--email')?.trim().toLowerCase();
 const PASSWORD = getArgValue('--password');
 const APPLY = args.includes('--apply');
-const PLATFORM_ORG_SLUG = 'aerocamo-platform';
+const PLATFORM_ORG_SLUG = 'superadmin';
 
 async function main(): Promise<void> {
   if (!NAME || !EMAIL || !PASSWORD) {

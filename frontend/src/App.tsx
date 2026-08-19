@@ -3,6 +3,8 @@ import { useEffect } from 'react';
 import { useAuthStore } from '@store/authStore';
 import { authApi } from '@api/auth.api';
 import LoginPage from '@pages/LoginPage';
+import ForgotPasswordPage from '@pages/ForgotPasswordPage';
+import ResetPasswordPage from '@pages/ResetPasswordPage';
 import DashboardPage from '@pages/DashboardPage';
 import AircraftPage from '@pages/AircraftPage';
 import ComponentsPage from '@pages/ComponentsPage';
@@ -59,6 +61,8 @@ export default function App() {
       <SessionGuard />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route element={<PrivateRoute><AppLayout /></PrivateRoute>}>
           <Route path="/" element={<HomeRedirect />} />
           <Route path="/platform" element={<SuperAdminRoute><PlatformPage /></SuperAdminRoute>} />

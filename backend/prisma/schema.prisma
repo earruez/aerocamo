@@ -350,6 +350,13 @@ model User {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  /// Momento en que el usuario confirmó su cuenta (definió su propia contraseña
+  /// vía el link del correo de bienvenida). Null = cuenta nunca confirmada.
+  emailConfirmedAt       DateTime?
+  /// Hash sha256 del token de reseteo/activación pendiente — nunca el token crudo.
+  passwordResetTokenHash String?   @db.VarChar(64)
+  passwordResetExpiresAt DateTime?
+
   // Relations
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 

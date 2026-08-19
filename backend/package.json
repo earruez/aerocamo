@@ -65,6 +65,7 @@
     "prisma:apply:aircraft-assigned-plan-multi": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260818_aircraft_assigned_plan_multi.sql",
     "prisma:apply:aircraft-assigned-plan-multi-fix": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260818_aircraft_assigned_plan_multi_fix.sql",
     "prisma:apply:counter-reading-folio": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260818_counter_reading_folio.sql",
+    "prisma:apply:user-account-tokens": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260818_user_account_tokens.sql",
     "import:access:aeronaves": "tsx prisma/import_access_aeronaves.ts"
   },
   "dependencies": {
