@@ -47,6 +47,11 @@ const REGISTRATION = getArgValue('--registration')?.trim().toUpperCase();
 const ORG_SLUG = getArgValue('--org-slug');
 const SINCE = getArgValue('--since'); // YYYY-MM-DD, opcional
 const APPLY = args.includes('--apply');
+// Solo se usan si la aeronave no tiene ningún motor registrado todavía.
+const ENGINE_MANUFACTURER = getArgValue('--engine-manufacturer');
+const ENGINE_MODEL = getArgValue('--engine-model');
+const ENGINE_SERIAL = getArgValue('--engine-serial');
+const ENGINE_POSITION = (getArgValue('--engine-position') ?? 'N1') as 'N1' | 'N2';
 
 interface HistoryRow {
   date: Date;
@@ -143,12 +148,30 @@ async function main(): Promise<void> {
     include: { engines: true },
   });
   if (!aircraft) throw new Error(`No existe la aeronave ${REGISTRATION} en ${ORG_SLUG}`);
-  if (aircraft.engines.length !== 1) {
+  if (aircraft.engines.length > 1) {
     throw new Error(
-      `${REGISTRATION} tiene ${aircraft.engines.length} motor(es) registrados — este script asume exactamente uno (helicóptero monomotor). Ajusta el script si no es el caso.`,
+      `${REGISTRATION} tiene ${aircraft.engines.length} motores registrados — este script asume exactamente uno (helicóptero monomotor). Ajusta el script si no es el caso.`,
     );
   }
-  const engine = aircraft.engines[0];
+
+  let engine = aircraft.engines[0] ?? null;
+  if (!engine) {
+    if (!ENGINE_MANUFACTURER || !ENGINE_MODEL || !ENGINE_SERIAL) {
+      throw new Error(
+        `${REGISTRATION} no tiene ningún motor registrado. Pasa --engine-manufacturer, --engine-model y --engine-serial para crearlo` +
+        ' (--engine-position N1|N2, por defecto N1) — según la bitácora: --engine-manufacturer "ROLLS-ROYCE" --engine-model "250-C300/A1" --engine-serial "RRE-200453".',
+      );
+    }
+    console.log(`\n${REGISTRATION} no tiene motor registrado — se creará: ${ENGINE_MANUFACTURER} ${ENGINE_MODEL} S/N ${ENGINE_SERIAL} (posición ${ENGINE_POSITION}).`);
+    if (APPLY) {
+      engine = await prisma.aircraftEngine.create({
+        data: {
+          organizationId: org.id, aircraftId: aircraft.id, position: ENGINE_POSITION,
+          manufacturer: ENGINE_MANUFACTURER, model: ENGINE_MODEL, serialNumber: ENGINE_SERIAL,
+        },
+      });
+    }
+  }
 
   const [acHoursType, acCyclesType, engHoursType, engCyclesType] = await Promise.all([
     prisma.counterType.findFirst({ where: { organizationId: org.id, legacyField: 'aircraftHours' } }),
@@ -287,6 +310,7 @@ async function main(): Promise<void> {
   for (const r of acKept) {
     if (await importDailySnapshot({ aircraftId: aircraft.id }, r, acHoursType!.id, acCyclesType!.id, true)) acCreated += 1;
   }
+  if (!engine) throw new Error('No se pudo resolver el motor (esto no debería pasar bajo --apply).');
   let engCreated = 0;
   for (const r of engKept) {
     if (await importDailySnapshot({ engineId: engine.id }, r, engHoursType!.id, engCyclesType!.id, false)) engCreated += 1;
