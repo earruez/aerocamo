@@ -130,12 +130,6 @@ export class PlatformController {
         suffix += 1;
       }
 
-      const existingEmail = await prisma.user.findFirst({
-        where: { email: { equals: body.admin.email, mode: 'insensitive' } },
-        select: { id: true },
-      });
-      if (existingEmail) throw new ConflictError('Ya existe un usuario con ese correo');
-
       const passwordHash = await bcrypt.hash(body.admin.password, BCRYPT_ROUNDS);
 
       const { org, adminUser } = await prisma.$transaction(async (tx) => {
@@ -383,10 +377,10 @@ export class PlatformController {
 
       const body = createUserSchema.parse(req.body);
       const existingEmail = await prisma.user.findFirst({
-        where: { email: { equals: body.email, mode: 'insensitive' } },
+        where: { email: { equals: body.email, mode: 'insensitive' }, organizationId: org.id },
         select: { id: true },
       });
-      if (existingEmail) throw new ConflictError('Ya existe un usuario con ese correo');
+      if (existingEmail) throw new ConflictError('Ya existe un usuario con ese correo en esta empresa');
 
       const passwordHash = await bcrypt.hash(body.password, BCRYPT_ROUNDS);
       const user = await prisma.user.create({
@@ -423,10 +417,10 @@ export class PlatformController {
 
       if (body.email && body.email !== existing.email) {
         const existingEmail = await prisma.user.findFirst({
-          where: { email: { equals: body.email, mode: 'insensitive' }, id: { not: existing.id } },
+          where: { email: { equals: body.email, mode: 'insensitive' }, organizationId: existing.organizationId, id: { not: existing.id } },
           select: { id: true },
         });
-        if (existingEmail) throw new ConflictError('Ya existe un usuario con ese correo');
+        if (existingEmail) throw new ConflictError('Ya existe un usuario con ese correo en esta empresa');
       }
 
       if (body.role && body.role !== 'ADMIN' && existing.role === 'ADMIN') {
