@@ -103,6 +103,15 @@ export function templateMatchesCategory(template: MaintenanceTemplate, category:
   }
 }
 
+/** La categoría a la que en verdad pertenece la plantilla, según su fabricante. */
+export function templateNativeCategory(template: MaintenanceTemplate): AssignedPlanCategory {
+  const manufacturerUpper = template.manufacturer.toUpperCase();
+  if (manufacturerUpper === 'DGAC') return 'national_dgac';
+  if (manufacturerUpper === 'MOTOR') return 'engine_components';
+  if (manufacturerUpper === 'EASA') return 'origin_country';
+  return 'manufacturer';
+}
+
 export const libraryApi = {
   /**
    * List all maintenance templates
