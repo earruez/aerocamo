@@ -2,6 +2,8 @@ import nodemailer from 'nodemailer';
 import { readFile } from 'fs/promises';
 import { env } from '../../config/env';
 
+const FROM_NAME = 'Aerocamo';
+
 interface MailAttachment {
   filename: string;
   path: string;
@@ -54,7 +56,7 @@ export class EmailService {
       this.initialize();
     }
     await this.transporter.sendMail({
-      from: env.email.fromAddress,
+      from: `"${FROM_NAME}" <${env.email.fromAddress}>`,
       to: input.to,
       subject: input.subject,
       html: input.html,
@@ -82,7 +84,7 @@ export class EmailService {
       },
       body: JSON.stringify({
         personalizations: [{ to: [{ email: input.to }] }],
-        from: { email: env.email.fromAddress },
+        from: { email: env.email.fromAddress, name: FROM_NAME },
         subject: input.subject,
         content: [{ type: 'text/html', value: input.html }],
         ...(attachments ? { attachments } : {}),
