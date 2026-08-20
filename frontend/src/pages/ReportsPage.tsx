@@ -308,7 +308,12 @@ export default function ReportsPage() {
     queryKey: ['maintenance-plan-all-reports', aircraft.map(a => a.id).join(',')],
     queryFn: async () => {
       const results = await Promise.all(aircraft.map(a => maintenancePlanApi.getForAircraft(a.id)));
-      return results.flatMap((items, i) => items.map(it => ({ ...it, aircraftId: aircraft[i].id })));
+      // Solo el plan vigente: las tareas marcadas "no aplica" vienen en la
+      // respuesta para que la UI pueda revertirlas, pero no son tareas de la
+      // aeronave y no deben entrar en las estadísticas de flota.
+      return results.flatMap((items, i) => items
+        .filter(it => it.isApplicable)
+        .map(it => ({ ...it, aircraftId: aircraft[i].id })));
     },
     enabled: aircraft.length > 0,
   });

@@ -2310,7 +2310,12 @@ export default function MaintenancePlanPage() {
 
         {selectedAircraft && planItems.length > 0 && (
           <div className="mt-5">
-            <SummaryBar items={planItems} />
+            {/* activePlanItems, no planItems: las tarjetas deben contar el plan
+                vigente. Con la lista cruda entraban las tareas marcadas "no
+                aplica" y el resumen contradecía al cuadro de riesgo — CC-AVK
+                mostraba 235 próximas contra 9, por los 245 puntos de checklist
+                que se habían sacado del plan. */}
+            <SummaryBar items={activePlanItems} />
           </div>
         )}
       </div>
