@@ -64,11 +64,49 @@ async function main(): Promise<void> {
   const toAdd = looseTasks.filter((t) => !existingCodes.has(t.code));
   const alreadyThere = looseTasks.length - toAdd.length;
 
+  // Una plantilla describe QUÉ componente controlar (por P/N y su límite);
+  // el número de serie pertenece al componente realmente instalado en cada
+  // aeronave, no al modelo. Las tareas COMP- vienen del Access con el S/N
+  // pegado al título y al código — se limpia en la copia a plantilla. El P/N
+  // no se toca: vive en applicablePartNumber, que sí es del modelo.
+  const stripSerial = (t: { code: string; title: string }) => {
+    const title = t.title.replace(/\s*\(S\/N[^)]*\)\s*$/i, '').trim();
+    // El código trae "..._ATA 55-SLS030705003-BP18": se corta el sufijo del
+    // S/N solo cuando el título efectivamente traía uno.
+    const code = title !== t.title ? t.code.replace(/-[^-]+$/, '') : t.code;
+    return { code, title };
+  };
+
+  const prepared = toAdd.map((t) => {
+    const { code, title } = stripSerial(t);
+    return { source: t, code, title, serialStripped: code !== t.code || title !== t.title };
+  });
+
+  // Al quitar el S/N, dos tareas del mismo P/N (dos unidades instaladas)
+  // colapsan en el mismo código: se conserva la primera y se informa.
+  const seen = new Set(existingCodes);
+  const finalToAdd: typeof prepared = [];
+  const collapsed: string[] = [];
+  for (const p of prepared) {
+    if (seen.has(p.code)) { collapsed.push(`${p.source.code} → ${p.code}`); continue; }
+    seen.add(p.code);
+    finalToAdd.push(p);
+  }
+  const strippedCount = prepared.filter((p) => p.serialStripped).length;
+
   console.log(`\n=== Poblar "${MANUFACTURER} ${MODEL}" desde la biblioteca suelta ===`);
   console.log(`Encontradas ${looseTasks.length} tareas sueltas (AMM/SB, célula) para el modelo "${MODEL}".`);
-  console.log(`${alreadyThere} ya existen en la plantilla (por código) — se omiten. ${toAdd.length} son nuevas.`);
-  console.log(`\nEjemplo de las primeras 5 a agregar:`);
-  for (const t of toAdd.slice(0, 5)) console.log(`  [${t.code}] ${t.title}`);
+  console.log(`${alreadyThere} ya existen en la plantilla (por código) — se omiten.`);
+  console.log(`${strippedCount} traían un S/N en el título: se quita para la plantilla (el P/N se conserva).`);
+  if (collapsed.length) {
+    console.log(`${collapsed.length} colapsan en un código ya usado tras quitar el S/N (mismo P/N, varias unidades) — se omiten:`);
+    for (const c of collapsed.slice(0, 10)) console.log(`    ${c}`);
+    if (collapsed.length > 10) console.log(`    …y ${collapsed.length - 10} más`);
+  }
+  console.log(`\n→ ${finalToAdd.length} tareas a agregar. Ejemplo de las primeras 5:`);
+  for (const p of finalToAdd.slice(0, 5)) {
+    console.log(`  [${p.code}] ${p.title}${p.source.applicablePartNumber ? ` — P/N ${p.source.applicablePartNumber}` : ''}`);
+  }
 
   if (!APPLY) {
     console.log('\nDry-run: no se escribió nada. Ejecuta con --apply para persistir.');
@@ -76,12 +114,12 @@ async function main(): Promise<void> {
   }
 
   let created = 0;
-  for (const t of toAdd) {
+  for (const { source: t, code, title } of finalToAdd) {
     await prisma.maintenanceTemplateTask.create({
       data: {
         templateId: template.id,
-        code: t.code,
-        title: t.title,
+        code,
+        title,
         description: t.description,
         intervalType: t.intervalType,
         intervalHours: t.intervalHours,
