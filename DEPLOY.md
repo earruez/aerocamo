@@ -139,12 +139,14 @@ La propagación puede tardar de minutos a un par de horas.
 - **Render (free)** duerme el backend tras ~15 min sin tráfico. La primera
   petición después de eso tarda 30–60 s en responder mientras despierta; luego
   va normal.
-- El job diario que arma las ST automáticamente (`WorkRequestAutoJob`) solo
-  corre mientras el proceso está despierto — con el backend dormido parte del
-  día, puede saltarse corridas. Si necesitas forzarlo, hay un endpoint:
-  `POST /api/v1/work-requests/jobs/run-daily` (rol ADMIN).
+- Las solicitudes de trabajo se crean a mano desde la aplicación. Hubo un job
+  diario que las armaba solas (`WorkRequestAutoJob`) y era el motivo de peso
+  para no dejar el backend dormido: se saltaba corridas. Ese job ya no existe,
+  así que el sleep hoy solo cuesta la espera de la primera carga.
 - **Neon (free)** también se suspende por inactividad, pero despierta en
   segundos con la siguiente consulta — mucho menos molesto que Render.
 
 Si en algún momento decides pasar a producción real con más de una empresa,
-subir el plan de Render (~$7/mes) elimina el sleep sin tocar nada de esto.
+subir el plan de Render (~$7/mes) elimina el sleep sin tocar nada de esto. Sin
+el job diario, lo único que se gana es evitarle a la primera persona del día
+esos 30–60 segundos de espera.
