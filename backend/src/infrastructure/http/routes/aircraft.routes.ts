@@ -27,6 +27,7 @@ router.get('/:id/counter-readings', ctrl.listCounterReadings);
 router.post('/:id/counter-readings', ctrl.createCounterReading);
 router.delete('/:id/counter-readings/:readingId', ctrl.deleteCounterReading);
 router.get('/:id/counter-history-report.pdf', ctrl.getCounterHistoryReportPdf);
+router.get('/:id/alterations-report.pdf', ctrl.getAlterationsReportPdf);
 router.patch('/:id/status', ctrl.changeStatus);
 router.get('/:id/status-changes', ctrl.listStatusChanges);
 router.get('/:id/maintenance-plan', ctrl.getMaintenancePlan);

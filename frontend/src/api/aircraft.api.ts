@@ -254,6 +254,12 @@ export const aircraftApi = {
     await apiClient.delete(`/aircraft/${id}/counter-readings/${readingId}`);
   },
 
+  /** DGAC IV.5.1.2 — estatus de alteraciones y reparaciones mayores. */
+  async downloadAlterationsReportPdf(id: string): Promise<Blob> {
+    const { data } = await apiClient.get(`/aircraft/${id}/alterations-report.pdf`, { responseType: 'blob' });
+    return data;
+  },
+
   async downloadCounterHistoryReportPdf(id: string): Promise<Blob> {
     const { data } = await apiClient.get(`/aircraft/${id}/counter-history-report.pdf`, { responseType: 'blob' });
     return data;
