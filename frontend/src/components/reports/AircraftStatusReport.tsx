@@ -306,8 +306,9 @@ export function AircraftStatusReport({
           <div>
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Equipo</p>
             <p className="text-xs text-slate-500 mb-2">
-              La DGAC pide el estatus de célula y el de motor como documentos separados (IV.2.1 y IV.2.2).
-              Elige uno para exportar solo ese, o «Aeronave + Motor» para el informe combinado.
+              Los puntos IV.2.1 a IV.2.6 de la lista de presentación de la DGAC. Elige uno para exportar
+              solo ese documento, o «Todos» para el informe completo. Los equipos que no aplican salen
+              igual, declarados como tal.
             </p>
             <div className="flex flex-wrap gap-2">
               {EQUIPMENT_TABS.map((eq) => (
