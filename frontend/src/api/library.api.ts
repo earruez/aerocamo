@@ -82,10 +82,13 @@ export interface AircraftAssignedPlan {
   tasksCloned?: number;
 }
 
-// DGAC/MOTOR/EASA son nombres de fabricante reservados que en realidad marcan
-// la categoría (normativa nacional / componentes de motor / país de origen);
-// cualquier otro fabricante real cae en "Normativa de fabricante".
-const RESERVED_CATEGORY_MANUFACTURERS = ['DGAC', 'MOTOR', 'EASA'];
+// DGAC/MOTOR/EASA/FAA son nombres de fabricante reservados que en realidad
+// marcan la categoría (normativa nacional / componentes de motor / país de
+// origen — EASA para fabricantes europeos como Airbus/Eurocopter, FAA para
+// fabricantes de EE.UU. como Robinson/Bell); cualquier otro fabricante real
+// cae en "Normativa de fabricante".
+const RESERVED_CATEGORY_MANUFACTURERS = ['DGAC', 'MOTOR', 'EASA', 'FAA'];
+const ORIGIN_COUNTRY_MANUFACTURERS = ['EASA', 'FAA'];
 
 export function templateMatchesCategory(template: MaintenanceTemplate, category: AssignedPlanCategory): boolean {
   const manufacturerUpper = template.manufacturer.toUpperCase();
@@ -97,7 +100,7 @@ export function templateMatchesCategory(template: MaintenanceTemplate, category:
     case 'engine_components':
       return manufacturerUpper === 'MOTOR';
     case 'origin_country':
-      return manufacturerUpper === 'EASA';
+      return ORIGIN_COUNTRY_MANUFACTURERS.includes(manufacturerUpper);
     default:
       return false;
   }
@@ -108,7 +111,7 @@ export function templateNativeCategory(template: MaintenanceTemplate): AssignedP
   const manufacturerUpper = template.manufacturer.toUpperCase();
   if (manufacturerUpper === 'DGAC') return 'national_dgac';
   if (manufacturerUpper === 'MOTOR') return 'engine_components';
-  if (manufacturerUpper === 'EASA') return 'origin_country';
+  if (ORIGIN_COUNTRY_MANUFACTURERS.includes(manufacturerUpper)) return 'origin_country';
   return 'manufacturer';
 }
 

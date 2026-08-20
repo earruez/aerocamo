@@ -44,7 +44,7 @@ function NewAircraftModal({ onClose }: { onClose: () => void }) {
     manufacturer: 'Normativa de fabricante',
     national_dgac: 'Normativa nacional (DGAC)',
     engine_components: 'Componentes e inspecciones de motor',
-    origin_country: 'Normativa país de origen (EASA)',
+    origin_country: 'Normativa país de origen (EASA / FAA)',
   };
 
   const [selectedTemplatesByCategory, setSelectedTemplatesByCategory] = useState<Record<AssignedPlanCategory, string[]>>({

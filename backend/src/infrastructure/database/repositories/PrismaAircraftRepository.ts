@@ -9,6 +9,11 @@ const AVG_FLIGHT_HOURS_PER_DAY = 2;
 const MS_PER_DAY = 864e5;
 const dueService = new ComplianceDueDateService();
 
+/// Fabricantes con tipo certificado por la FAA (EE.UU.) en vez de EASA
+/// (Europa) — determina la autoridad de "país de origen" de una AD cuando
+/// la tarea no trae el nombre de la autoridad en su propio texto.
+const FAA_ORIGIN_MANUFACTURERS = ['ROBINSON', 'BELL', 'SIKORSKY', 'CESSNA', 'PIPER', 'BEECHCRAFT', 'MOONEY', 'HUGHES', 'SCHWEIZER'];
+
 export class PrismaAircraftRepository implements IAircraftRepository {
   async findById(id: string, organizationId: string): Promise<Aircraft | null> {
     const row = await prisma.aircraft.findFirst({ where: { id, organizationId } });
@@ -271,11 +276,18 @@ export class PrismaAircraftRepository implements IAircraftRepository {
         || (complianceNotes ?? '').trim().toLowerCase() === BASELINE_NOTE.toLowerCase();
       const evidenceMatch = complianceNotes?.match(/Evidencia\s([^|]+)/i);
       const referenceText = `${task.referenceType} ${task.referenceNumber ?? ''}`.toUpperCase();
-      const legalSource: 'FABRICANTE' | 'DGAC' | 'EASA' =
+      const originAuthority: 'EASA' | 'FAA' = referenceText.includes('FAA')
+        ? 'FAA'
+        : referenceText.includes('EASA')
+          ? 'EASA'
+          : FAA_ORIGIN_MANUFACTURERS.includes((aircraft?.manufacturer ?? '').toUpperCase())
+            ? 'FAA'
+            : 'EASA';
+      const legalSource: 'FABRICANTE' | 'DGAC' | 'EASA' | 'FAA' =
         referenceText.includes('DGAC') || task.referenceType === 'INTERNAL'
           ? 'DGAC'
-          : referenceText.includes('EASA') || task.referenceType === 'AD'
-            ? 'EASA'
+          : task.referenceType === 'AD'
+            ? originAuthority
             : 'FABRICANTE';
       const calendarMonths = intervalCalendarMonths ?? 0;
       const nextDueHours  = comp?.nextDueHours  != null ? Number(comp.nextDueHours)  : null;

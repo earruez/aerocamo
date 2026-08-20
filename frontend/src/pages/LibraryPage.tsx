@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import {
   libraryApi,
+  templateMatchesCategory,
+  type AssignedPlanCategory,
   type MaintenanceTemplate,
   type MaintenanceTemplateTask,
   type CreateTemplateTaskInput,
@@ -676,31 +678,25 @@ export default function LibraryPage() {
     },
   });
 
-  const tabConfig: Array<{ key: 'manufacturer' | 'dgac' | 'motor' | 'easa'; label: string }> = [
-    { key: 'manufacturer', label: 'Normativa de fabricante' },
-    { key: 'dgac', label: 'Normativa nacional (DGAC)' },
-    { key: 'motor', label: 'Componentes e inspecciones de motor' },
-    { key: 'easa', label: 'Normativa pais de origen (EASA)' },
+  const tabConfig: Array<{ key: 'manufacturer' | 'dgac' | 'motor' | 'easa'; label: string; category: AssignedPlanCategory }> = [
+    { key: 'manufacturer', label: 'Normativa de fabricante', category: 'manufacturer' },
+    { key: 'dgac', label: 'Normativa nacional (DGAC)', category: 'national_dgac' },
+    { key: 'motor', label: 'Componentes e inspecciones de motor', category: 'engine_components' },
+    { key: 'easa', label: 'Normativa país de origen (EASA / FAA)', category: 'origin_country' },
   ];
 
   const activeTabLabel = useMemo(() => {
     return tabConfig.find((tab) => tab.key === activeTab)?.label ?? '';
   }, [activeTab]);
 
-  // Las plantillas de DGAC/Motor/normativa país de origen usan esos nombres reservados
-  // como "manufacturer" para clasificarse. Cualquier otro fabricante real (EUROCOPTER,
-  // ROBINSON, BELL, etc.) cae en "Normativa de fabricante".
-  const RESERVED_CATEGORY_MANUFACTURERS = ['DGAC', 'MOTOR', 'EASA'];
-
+  // Las plantillas de DGAC/Motor/normativa país de origen usan nombres reservados
+  // como "manufacturer" para clasificarse (ver templateMatchesCategory). Cualquier
+  // otro fabricante real (EUROCOPTER, ROBINSON, BELL, etc.) cae en "Normativa de
+  // fabricante".
   const templatesByTab = useMemo(() => {
-    return templates.filter((template) => {
-      const manufacturerUpper = template.manufacturer.toUpperCase();
-      if (activeTab === 'manufacturer') return !RESERVED_CATEGORY_MANUFACTURERS.includes(manufacturerUpper);
-      if (activeTab === 'dgac') return manufacturerUpper === 'DGAC';
-      if (activeTab === 'motor') return manufacturerUpper === 'MOTOR';
-      if (activeTab === 'easa') return manufacturerUpper === 'EASA';
-      return true;
-    });
+    const category = tabConfig.find((tab) => tab.key === activeTab)?.category;
+    if (!category) return templates;
+    return templates.filter((template) => templateMatchesCategory(template, category));
   }, [templates, activeTab]);
 
   // Filter templates
