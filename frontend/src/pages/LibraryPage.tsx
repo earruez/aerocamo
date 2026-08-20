@@ -809,14 +809,19 @@ export default function LibraryPage() {
   // transversal (DGAC/motor/país de origen), no necesitan agrupación.
   const groupedByManufacturer = useMemo(() => {
     if (activeTab !== 'manufacturer') return null;
-    const groups = new Map<string, MaintenanceTemplate[]>();
+    // Se agrupa por el fabricante en mayúsculas — dos plantillas escritas como
+    // "Robinson" y "ROBINSON" son la misma marca, no deberían separarse.
+    const groups = new Map<string, { label: string; templates: MaintenanceTemplate[] }>();
     for (const t of filtered) {
-      const key = t.manufacturer.trim() || 'Sin marca';
-      const list = groups.get(key) ?? [];
-      list.push(t);
-      groups.set(key, list);
+      const label = t.manufacturer.trim() || 'Sin marca';
+      const key = label.toUpperCase();
+      const group = groups.get(key) ?? { label, templates: [] };
+      group.templates.push(t);
+      groups.set(key, group);
     }
-    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+    return [...groups.values()]
+      .map((g) => [g.label, g.templates] as const)
+      .sort(([a], [b]) => a.localeCompare(b));
   }, [filtered, activeTab]);
 
   return (
