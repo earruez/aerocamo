@@ -41,8 +41,28 @@ const FILE = getArgValue('--file');
 const ORG_SLUG = getArgValue('--org-slug') ?? 'tecnicopters';
 const REGISTRATION = getArgValue('--registration')?.trim().toUpperCase() ?? 'CC-AKY';
 const PERFORMED_BY = getArgValue('--performed-by') ?? 'Griselle';
-const SHEET = getArgValue('--sheet') ?? 'Plan. Reemp. AC Air Limit';
+const SCOPE = (getArgValue('--scope') ?? 'aircraft') as 'aircraft' | 'engine';
 const APPLY = args.includes('--apply');
+
+/** Las dos hojas de reemplazo tienen columnas distintas: la del motor agrega
+ *  límite por ciclos y separa las horas de motor de las de célula. */
+const LAYOUTS = {
+  aircraft: {
+    sheet: 'Plan. Reemp. AC Air Limit',
+    componente: 1, partNumber: 3, serialNumber: 4,
+    limiteHoras: 5, limiteMeses: 6, limiteCiclos: null as number | null,
+    fecha: 10, horasAlInstalar: 9, observaciones: 16,
+  },
+  engine: {
+    sheet: 'Plan.Reemp.Eng.',
+    componente: 1, partNumber: 2, serialNumber: 3,
+    limiteHoras: 4, limiteMeses: 5, limiteCiclos: 6 as number | null,
+    fecha: 9, horasAlInstalar: 10, observaciones: 17,
+  },
+} as const;
+
+const LAYOUT = LAYOUTS[SCOPE];
+const SHEET = getArgValue('--sheet') ?? LAYOUT.sheet;
 
 function cellValue(v: ExcelJS.CellValue): string | number | Date | null {
   if (v === null || v === undefined) return null;
@@ -82,6 +102,7 @@ interface ComponentRow {
   serialNumber: string;
   limiteHoras: number | null;
   limiteMeses: number | null;
+  limiteCiclos: number | null;
   horasAeronaveAlInstalar: number | null;
   fechaUltimoCumplimiento: Date | null;
   observaciones: string;
@@ -100,13 +121,14 @@ function parseSheet(ws: ExcelJS.Worksheet): { instalados: ComponentRow[]; omitid
     const item: ComponentRow = {
       fila: n,
       componente,
-      partNumber: asText(row.getCell(3).value),
-      serialNumber: asText(row.getCell(4).value),
-      limiteHoras: asNumber(row.getCell(5).value),
-      limiteMeses: asNumber(row.getCell(6).value),
-      horasAeronaveAlInstalar: asNumber(row.getCell(9).value),
-      fechaUltimoCumplimiento: asDate(row.getCell(10).value),
-      observaciones: asText(row.getCell(16).value),
+      partNumber: asText(row.getCell(LAYOUT.partNumber).value),
+      serialNumber: asText(row.getCell(LAYOUT.serialNumber).value),
+      limiteHoras: asNumber(row.getCell(LAYOUT.limiteHoras).value),
+      limiteMeses: asNumber(row.getCell(LAYOUT.limiteMeses).value),
+      limiteCiclos: LAYOUT.limiteCiclos != null ? asNumber(row.getCell(LAYOUT.limiteCiclos).value) : null,
+      horasAeronaveAlInstalar: asNumber(row.getCell(LAYOUT.horasAlInstalar).value),
+      fechaUltimoCumplimiento: asDate(row.getCell(LAYOUT.fecha).value),
+      observaciones: asText(row.getCell(LAYOUT.observaciones).value),
     };
 
     // Sin fecha de instalación no hay desde cuándo contar la vida de la pieza.
@@ -178,6 +200,7 @@ async function main(): Promise<void> {
   for (const p of plan.slice(0, 12)) {
     const lim = [
       p.item.limiteHoras != null ? `${p.item.limiteHoras}h` : null,
+      p.item.limiteCiclos != null ? `${p.item.limiteCiclos}cy` : null,
       p.item.limiteMeses != null ? `${p.item.limiteMeses}m` : null,
     ].filter(Boolean).join(' / ') || 'sin límite';
     console.log(`  [${p.code}]`);
@@ -217,12 +240,18 @@ async function main(): Promise<void> {
             + ` Importado de la bitácora electrónica de ${REGISTRATION}.`,
           intervalType: item.limiteHoras != null && item.limiteMeses != null
             ? 'FLIGHT_HOURS_OR_CALENDAR'
-            : item.limiteHoras != null ? 'FLIGHT_HOURS' : 'CALENDAR_DAYS',
+            : item.limiteHoras != null ? 'FLIGHT_HOURS'
+              : item.limiteCiclos != null ? 'CYCLES' : 'CALENDAR_DAYS',
           intervalHours: item.limiteHoras,
+          intervalCycles: item.limiteCiclos,
           intervalCalendarMonths: item.limiteMeses,
           referenceType: 'AMM',
           isComponentControl: true,
           isMandatory: true,
+          // El control de un componente de motor se mide contra las horas del
+          // motor, no las de la célula: el scope se lo dice al motor de
+          // vencimientos para que use el contador correcto.
+          equipmentScope: SCOPE === 'engine' ? 'ENGINE' : 'AIRCRAFT',
           applicableModel: 'R66',
           applicablePartNumber: item.partNumber || null,
         },
