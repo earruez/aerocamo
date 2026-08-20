@@ -3,12 +3,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'react-hot-toast';
 import {
   BookOpen, Plus, Search, ChevronDown, Trash2, Edit3, Loader2,
-  X, AlertCircle, Server, Code, Clock, ListChecks, Check
+  X, AlertCircle, Server, Code, Clock, ListChecks, Check, Settings2
 } from 'lucide-react';
 import {
   libraryApi,
   templateMatchesCategory,
   type AssignedPlanCategory,
+  type CreateTemplateInput,
   type MaintenanceTemplate,
   type MaintenanceTemplateTask,
   type CreateTemplateTaskInput,
@@ -298,17 +299,85 @@ function TaskFormModal({
   );
 }
 
+// ─── Editar fabricante / modelo de plantilla ────────────────────────────────────
+
+function EditTemplateMetaModal({
+  template, isSaving, onSave, onClose,
+}: {
+  template: MaintenanceTemplate;
+  isSaving: boolean;
+  onSave: (input: Partial<CreateTemplateInput>) => void;
+  onClose: () => void;
+}) {
+  const [manufacturer, setManufacturer] = useState(template.manufacturer);
+  const [model, setModel] = useState(template.model);
+  const [description, setDescription] = useState(template.description ?? '');
+  const [version, setVersion] = useState(template.version);
+
+  const canSubmit = manufacturer.trim() && model.trim();
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl my-8">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <h2 className="text-base font-bold text-slate-900">Editar plantilla</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Cambiar el fabricante puede mover esta plantilla a otra categoría (ej. de "Normativa de fabricante" a
+            "Normativa país de origen" si escribes "EASA" o "FAA"). Las tareas de la plantilla no se ven afectadas.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="form-label">Fabricante <span className="text-rose-500">*</span></label>
+              <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="filter-input w-full" autoFocus />
+            </div>
+            <div>
+              <label className="form-label">Modelo <span className="text-rose-500">*</span></label>
+              <input value={model} onChange={(e) => setModel(e.target.value)} className="filter-input w-full" />
+            </div>
+          </div>
+          <div>
+            <label className="form-label">Descripción</label>
+            <input value={description} onChange={(e) => setDescription(e.target.value)} className="filter-input w-full" />
+          </div>
+          <div>
+            <label className="form-label">Versión</label>
+            <input value={version} onChange={(e) => setVersion(e.target.value)} className="filter-input w-full" />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-6 pb-6">
+          <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>
+          <button
+            type="button"
+            disabled={isSaving || !canSubmit}
+            onClick={() => onSave({ manufacturer: manufacturer.trim(), model: model.trim(), description: description.trim(), version: version.trim() })}
+            className="btn-primary flex items-center gap-1.5 disabled:opacity-40"
+          >
+            {isSaving ? <Loader2 size={14} className="animate-spin" /> : null}
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Template Card Component ────────────────────────────────────────────────────
 
 interface TemplateCardProps {
   template: MaintenanceTemplate;
   categoryLabel: string;
   onEdit: (template: MaintenanceTemplate) => void;
+  onEditMeta: (template: MaintenanceTemplate) => void;
   onDelete: (templateId: string) => void;
   isDeleting: boolean;
 }
 
-function TemplateCard({ template, categoryLabel, onEdit, onDelete, isDeleting }: TemplateCardProps) {
+function TemplateCard({ template, categoryLabel, onEdit, onEditMeta, onDelete, isDeleting }: TemplateCardProps) {
   const taskCount = template.tasks?.length ?? 0;
   
   return (
@@ -327,6 +396,13 @@ function TemplateCard({ template, categoryLabel, onEdit, onDelete, isDeleting }:
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => onEditMeta(template)}
+            className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors"
+            title="Editar fabricante / modelo"
+          >
+            <Settings2 size={16} />
+          </button>
           <button
             onClick={() => onEdit(template)}
             className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors"
@@ -652,6 +728,7 @@ export default function LibraryPage() {
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'manufacturer' | 'dgac' | 'motor' | 'easa'>('manufacturer');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [editingMetaTemplateId, setEditingMetaTemplateId] = useState<string | null>(null);
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['library-templates'],
@@ -665,6 +742,23 @@ export default function LibraryPage() {
     () => templates.find((t) => t.id === selectedTemplateId) ?? null,
     [templates, selectedTemplateId],
   );
+  const editingMetaTemplate = useMemo(
+    () => templates.find((t) => t.id === editingMetaTemplateId) ?? null,
+    [templates, editingMetaTemplateId],
+  );
+
+  const updateTemplateMutation = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Partial<CreateTemplateInput> }) => libraryApi.update(id, input),
+    onSuccess: () => {
+      toast.success('Plantilla actualizada');
+      qc.invalidateQueries({ queryKey: ['library-templates'] });
+      setEditingMetaTemplateId(null);
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Error al actualizar';
+      toast.error(msg);
+    },
+  });
 
   const deleteTemplateMutation = useMutation({
     mutationFn: (id: string) => libraryApi.deleteTemplate(id),
@@ -794,6 +888,7 @@ export default function LibraryPage() {
               template={template}
               categoryLabel={activeTabLabel}
               onEdit={(t) => setSelectedTemplateId(t.id)}
+              onEditMeta={(t) => setEditingMetaTemplateId(t.id)}
               onDelete={id => deleteTemplateMutation.mutate(id)}
               isDeleting={deleteTemplateMutation.isPending}
             />
@@ -806,6 +901,15 @@ export default function LibraryPage() {
         <TaskDetailsModal
           template={selectedTemplate}
           onClose={() => setSelectedTemplateId(null)}
+        />
+      )}
+
+      {editingMetaTemplate && (
+        <EditTemplateMetaModal
+          template={editingMetaTemplate}
+          isSaving={updateTemplateMutation.isPending}
+          onSave={(input) => updateTemplateMutation.mutate({ id: editingMetaTemplate.id, input })}
+          onClose={() => setEditingMetaTemplateId(null)}
         />
       )}
     </div>
