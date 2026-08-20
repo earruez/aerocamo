@@ -9,6 +9,7 @@ const ctrl = new TaskController();
 router.use(authMiddleware, tenantMiddleware);
 router.get('/', ctrl.listAll);
 router.post('/', ctrl.create);
+router.get('/:id/fleet-siblings', ctrl.fleetSiblings);
 router.patch('/:id', ctrl.update);
 
 // Aircraft plan management
