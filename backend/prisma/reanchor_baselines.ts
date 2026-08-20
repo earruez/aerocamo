@@ -54,7 +54,7 @@ async function main(): Promise<void> {
   const horas = Number(aircraft.totalFlightHours);
   const ciclos = aircraft.totalCycles;
 
-  const baselines = await prisma.compliance.findMany({
+  const todas = await prisma.compliance.findMany({
     where: {
       aircraftId: aircraft.id,
       OR: [{ applicationType: 'baseline' }, { notes: BASELINE_NOTE }],
@@ -67,12 +67,24 @@ async function main(): Promise<void> {
     },
   });
 
+  // Vida límite (CMR / control de componente) NO se re-ancla: su límite es
+  // absoluto desde la instalación de la pieza, no un control que "empieza
+  // ahora". El Tailcone del R66 se instaló con la aeronave en 0 h y vence a
+  // las 2000 h — re-anclarlo le regalaría 1051 h de vida que no tiene.
+  const esVidaLimite = (t: { referenceType: string; isComponentControl: boolean }) =>
+    t.referenceType === 'CMR' || t.isComponentControl;
+
+  const vidaLimite = todas.filter((b) => esVidaLimite(b.task));
+  const baselines = todas.filter((b) => !esVidaLimite(b.task));
+
   const desfasadas = baselines.filter((b) => Number(b.aircraftHoursAtCompliance) !== horas
     || b.aircraftCyclesAtCompliance !== ciclos);
 
   console.log(`\n=== Re-anclar líneas base de ${REGISTRATION} ===`);
   console.log(`Estado actual de la aeronave: ${horas} h · ${ciclos} ciclos\n`);
-  console.log(`Líneas base encontradas: ${baselines.length}`);
+  console.log(`Líneas base encontradas: ${todas.length}`);
+  console.log(`  de vida límite (CMR / componente) — NO se tocan: ${vidaLimite.length}`);
+  console.log(`  re-anclables (inspecciones recurrentes):         ${baselines.length}`);
   console.log(`Con ancla distinta a la actual: ${desfasadas.length}`);
 
   const vencidasAntes = baselines.filter((b) => b.nextDueHours != null && Number(b.nextDueHours) < horas).length;
