@@ -478,6 +478,12 @@ model AircraftEngine {
   manufacturer   String                @db.VarChar(150)
   model          String                @db.VarChar(150)
   serialNumber   String                @db.VarChar(100)
+  /// false = motor retirado (reemplazado por otro). Su historial de horas/
+  /// ciclos y lecturas se conserva intacto, solo deja de ser el motor
+  /// "actual" de esa posición.
+  isActive       Boolean               @default(true)
+  removedAt      DateTime?
+  removalReason  String?
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
 
@@ -487,7 +493,9 @@ model AircraftEngine {
   counterReadings CounterReading[]
   counterSlots    EquipmentCounterSlot[]
 
-  @@unique([aircraftId, position])
+  // Nota: la unicidad real es "un solo motor ACTIVO por posición", impuesta
+  // con un índice único parcial (WHERE "isActive" = true) en la migración
+  // manual — Prisma no modela índices parciales, así que no hay @@unique aquí.
   @@index([organizationId, aircraftId])
   @@index([organizationId, serialNumber])
   @@map("aircraft_engines")

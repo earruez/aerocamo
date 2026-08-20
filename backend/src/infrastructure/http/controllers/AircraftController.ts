@@ -72,6 +72,14 @@ const createEngineSchema = z.object({
   serialNumber: z.string().min(1).max(100),
 });
 
+const replaceEngineSchema = z.object({
+  manufacturer: z.string().min(1).max(150),
+  model: z.string().min(1).max(150),
+  serialNumber: z.string().min(1).max(100),
+  removalReason: z.string().max(1000).nullable().optional(),
+  removalDate: z.coerce.date().optional(),
+});
+
 const createEngineUsageLogSchema = z.object({
   hours: z.coerce.number().nonnegative(),
   cycles: z.coerce.number().int().nonnegative(),
@@ -497,6 +505,7 @@ export class AircraftController {
         where: {
           organizationId: req.organizationId,
           aircraftId: aircraft.id,
+          isActive: true,
         },
         include: {
           usageLogs: {
@@ -545,6 +554,51 @@ export class AircraftController {
       });
 
       res.status(201).json({ status: 'success', data: created });
+    } catch (err) { next(err); }
+  };
+
+  /** Reemplaza un motor: el motor actual queda archivado (isActive=false)
+   * con todo su historial de horas/ciclos intacto, y se crea uno nuevo en la
+   * misma posición. Los slots de contador (EquipmentCounterSlot) que
+   * apuntaban al motor viejo pasan a apuntar al nuevo, para no perder esa
+   * configuración. */
+  replaceEngine = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const aircraft = await this.getUseCase.findById(req.params.id, req.organizationId);
+      const oldEngine = await prisma.aircraftEngine.findFirst({
+        where: { id: req.params.engineId, aircraftId: aircraft.id, organizationId: req.organizationId },
+      });
+      if (!oldEngine) throw new NotFoundError('AircraftEngine', req.params.engineId);
+      if (!oldEngine.isActive) throw new ValidationError('Este motor ya fue reemplazado antes');
+
+      const body = replaceEngineSchema.parse(req.body);
+
+      const { retired, replacement } = await prisma.$transaction(async (tx) => {
+        const retired = await tx.aircraftEngine.update({
+          where: { id: oldEngine.id },
+          data: { isActive: false, removedAt: body.removalDate ?? new Date(), removalReason: body.removalReason ?? null },
+        });
+
+        const replacement = await tx.aircraftEngine.create({
+          data: {
+            organizationId: req.organizationId,
+            aircraftId: aircraft.id,
+            position: oldEngine.position,
+            manufacturer: body.manufacturer,
+            model: body.model,
+            serialNumber: body.serialNumber,
+          },
+        });
+
+        await tx.equipmentCounterSlot.updateMany({
+          where: { engineId: oldEngine.id },
+          data: { engineId: replacement.id },
+        });
+
+        return { retired, replacement };
+      });
+
+      res.status(200).json({ status: 'success', data: { retired, replacement } });
     } catch (err) { next(err); }
   };
 
