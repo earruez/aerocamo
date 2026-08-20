@@ -45,6 +45,16 @@ const applicabilitySchema = z.object({
   notes: z.string().max(2000).optional().nullable(),
 });
 
+/**
+ * La misma directiva viene escrita de varias formas en los datos importados
+ * del Access: "2006-0251 R2" / "2006-0251R2", "2016-0009" / "AD 2016-0009",
+ * "f-1982-077R4" / "F-1982-077R4". Son 58 AD en la flota Airbus. Comparar el
+ * texto crudo dejaría a esos registros sin vincularse entre sí, que es
+ * justamente lo que la propagación a la flota tiene que evitar.
+ */
+const normalizeReference = (ref: string): string =>
+  ref.trim().toUpperCase().replace(/^AD\s+/, '').replace(/\s+/g, '');
+
 export class TaskController {
   // ── List all tasks in org ──────────────────────────────────────────────────
   listAll = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -92,14 +102,25 @@ export class TaskController {
         return;
       }
 
-      const siblings = await prisma.maintenanceTask.findMany({
+      // Dos pasadas: primero solo id+referencia (barato sobre ~1200 AD) para
+      // quedarse con las que normalizan igual, y recién ahí el detalle.
+      const candidates = await prisma.maintenanceTask.findMany({
         where: {
           organizationId: req.organizationId,
           id: { not: task.id },
           referenceType: task.referenceType,
-          referenceNumber: task.referenceNumber,
+          referenceNumber: { not: null },
           isActive: true,
         },
+        select: { id: true, referenceNumber: true },
+      });
+      const key = normalizeReference(task.referenceNumber);
+      const siblingIds = candidates
+        .filter((c) => normalizeReference(c.referenceNumber!) === key)
+        .map((c) => c.id);
+
+      const siblings = siblingIds.length === 0 ? [] : await prisma.maintenanceTask.findMany({
+        where: { id: { in: siblingIds } },
         include: {
           aircraftLinks: {
             where: { isActive: true },
