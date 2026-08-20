@@ -784,7 +784,13 @@ export default function DashboardPage() {
       const results = await Promise.all(
         aircraft.map(a => maintenancePlanApi.getForAircraft(a.id).catch(() => [] as MaintenancePlanItem[]))
       );
-      return Object.fromEntries(aircraft.map((a, i) => [a.id, results[i]])) as Record<string, MaintenancePlanItem[]>;
+      // El plan incluye las tareas marcadas "no aplica" (isApplicable=false) para
+      // que la UI pueda mostrarlas y revertirlas. Nada de lo que cuelga de aquí
+      // —semáforo, vencimientos, KPI de vencidas— debe contarlas: no están en el
+      // plan vigente de la aeronave. Se filtra una sola vez, en el origen.
+      return Object.fromEntries(
+        aircraft.map((a, i) => [a.id, results[i].filter(item => item.isApplicable)]),
+      ) as Record<string, MaintenancePlanItem[]>;
     },
     enabled: aircraft.length > 0,
     staleTime: 5 * 60 * 1000,
