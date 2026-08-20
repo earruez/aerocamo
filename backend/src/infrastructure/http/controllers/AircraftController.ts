@@ -374,7 +374,16 @@ export class AircraftController {
         return reading;
       });
 
-      res.status(201).json({ status: 'success', data: created });
+      // Cargar el historial de horas de una aeronave a la que ya se le había
+      // asignado un plan deja las líneas base ancladas en un valor anterior a
+      // la realidad, y todo el plan aparece vencido. Se corrige acá, después
+      // de que la lectura ya actualizó los totales.
+      const reanchored = await BaselineComplianceService.reanchorStaleBaselines(
+        aircraft.id,
+        req.organizationId,
+      );
+
+      res.status(201).json({ status: 'success', data: created, reanchoredBaselines: reanchored });
     } catch (err) { next(err); }
   };
 
