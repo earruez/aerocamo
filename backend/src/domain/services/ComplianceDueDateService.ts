@@ -53,18 +53,19 @@ export class ComplianceDueDateService {
       calendarDueDate.setDate(calendarDueDate.getDate() + task.intervalCalendarDays);
     }
 
-    const hoursDueDate =
-      task.intervalHours != null
-        ? new Date(performedAt.getTime() + (task.intervalHours / AVG_FLIGHT_HOURS_PER_DAY) * MS_PER_DAY)
-        : null;
-
-    // Dual-limit tasks expire at the earliest criterion.
-    let nextDueDate: Date | null = null;
-    if (hoursDueDate && calendarDueDate) {
-      nextDueDate = hoursDueDate <= calendarDueDate ? hoursDueDate : calendarDueDate;
-    } else {
-      nextDueDate = calendarDueDate ?? hoursDueDate;
-    }
+    // nextDueDate es el límite de CALENDARIO que declara el manual, nada más.
+    //
+    // Antes se convertía además el límite de horas en una fecha suponiendo 2 h
+    // de vuelo al día, y se tomaba la más temprana de las dos. Eso daba
+    // vencimientos inventados: la inspección de 100 h / 12 meses de CC-AKY,
+    // cumplida el 2025-02-06, "vencía" el 2025-03-28 (= 50 días) en vez del
+    // 2026-02-06 que dice su bitácora.
+    //
+    // El criterio "lo que ocurra primero" no se pierde: isOverdue compara por
+    // separado las horas contra nextDueHours, los ciclos contra nextDueCycles
+    // y la fecha contra nextDueDate. Cada límite se mide en su propia unidad,
+    // que es como lo declara el fabricante.
+    const nextDueDate = calendarDueDate;
 
     return { nextDueHours, nextDueCycles, nextDueDate };
   }
