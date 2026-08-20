@@ -53,7 +53,7 @@ export interface MaintenancePlanItem {
   status: PlanItemStatus;
   inWorkRequestNumber: string | null;
   inWorkRequestId: string | null;
-  legalSource: 'FABRICANTE' | 'DGAC' | 'EASA';
+  legalSource: 'FABRICANTE' | 'DGAC' | 'EASA' | 'FAA';
   lastEvidenceUrl: string | null;
 }
 

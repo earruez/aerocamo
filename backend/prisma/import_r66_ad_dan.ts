@@ -217,18 +217,22 @@ async function main(): Promise<void> {
     return;
   }
 
-  await prisma.$transaction(async (tx) => {
-    if (!dgacR66) {
-      dgacR66 = await tx.maintenanceTemplate.create({
-        data: { organizationId: org.id, manufacturer: 'DGAC', model: 'R66', description: 'Normativa nacional (DGAC) para R66', version: '1.0' },
-      });
-      console.log(`Plantilla DGAC R66 creada (id ${dgacR66.id}).`);
-    }
+  if (!dgacR66) {
+    dgacR66 = await prisma.maintenanceTemplate.create({
+      data: { organizationId: org.id, manufacturer: 'DGAC', model: 'R66', description: 'Normativa nacional (DGAC) para R66', version: '1.0' },
+    });
+    console.log(`Plantilla DGAC R66 creada (id ${dgacR66.id}).`);
+  }
 
-    for (const { item, templateId: tId } of plan) {
-      const templateId = tId ?? dgacR66!.id;
-      const referenceType: ReferenceType = item.code.startsWith('DAN-') ? 'INTERNAL' : 'AD';
+  // Una transacción chica por tarea, en vez de una gigante para las 18 —
+  // contra una base remota, una transacción interactiva larga puede superar
+  // el timeout por defecto de Prisma. Además, como todo es upsert, si se
+  // corta a mitad de camino, volver a correr con --apply retoma sin duplicar.
+  for (const { item, templateId: tId } of plan) {
+    const templateId = tId ?? dgacR66!.id;
+    const referenceType: ReferenceType = item.code.startsWith('DAN-') ? 'INTERNAL' : 'AD';
 
+    await prisma.$transaction(async (tx) => {
       // 1) MaintenanceTemplateTask (biblioteca reutilizable)
       await tx.maintenanceTemplateTask.upsert({
         where: { templateId_code: { templateId, code: item.code } },
@@ -280,8 +284,9 @@ async function main(): Promise<void> {
           });
         }
       }
-    }
-  });
+    }, { timeout: 15000 });
+    console.log(`  ✓ ${item.code}`);
+  }
 
   console.log('\n✅ Importado.');
 }
