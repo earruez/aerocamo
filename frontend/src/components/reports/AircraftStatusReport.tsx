@@ -1,12 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileDown, Paperclip, X, Plane, Cog } from 'lucide-react';
+import { aircraftApi } from '@api/aircraft.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
 import { organizationApi } from '@api/organization.api';
 import {
   CATEGORY_TABS, categoryLabel, exportDgacStatusReportPdf, getRowClass,
-  lastComplianceLabel, mandatoryRowsFor, categoryCountsFor, rowsForCategory, splitByEquipment,
+  lastComplianceLabel, mandatoryRowsFor, categoryCountsFor, rowsForCategory,
   nextDueLabel, remainingLabel, type CategoryFilter,
+  EQUIPMENT_TABS, equipmentLabel, equipmentCountsFor, buildEquipmentSlots,
+  type EquipmentFilter, type EquipmentSlot,
 } from '@/shared/dgacReport';
 
 interface AircraftStatusReportProps {
@@ -17,14 +20,46 @@ interface AircraftStatusReportProps {
   onClose: () => void;
 }
 
-function EquipmentSection({ title, Icon, rows, isLoading, emptyLabel }: {
-  title: string; Icon: React.ElementType; rows: MaintenancePlanItem[]; isLoading: boolean; emptyLabel: string;
+/** Ícono por equipo: la célula lleva avión, todo lo motriz engranaje. */
+function iconFor(equipment: EquipmentSlot['equipment']): React.ElementType {
+  return equipment === 'AERONAVE' ? Plane : Cog;
+}
+
+function EquipmentSection({ slot, isLoading, emptyLabel }: {
+  slot: EquipmentSlot; isLoading: boolean; emptyLabel: string;
 }) {
+  const Icon = iconFor(slot.equipment);
+  const rows = slot.rows;
+
+  // Un equipo que no aplica se muestra igual, declarado: omitirlo no deja
+  // constancia de que el punto se evaluó.
+  if (!slot.applies) {
+    return (
+      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Icon size={14} className="text-slate-400" />
+          <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+            {slot.point} · {slot.label}
+          </h4>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 bg-slate-200 rounded px-1.5 py-0.5">
+            No aplica
+          </span>
+        </div>
+        {slot.note && <p className="text-xs text-slate-500 mt-1.5">{slot.note}</p>}
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-xl border border-slate-200 overflow-auto max-h-[42vh]">
-      <div className="px-4 py-2.5 border-b border-slate-200 bg-slate-50 flex items-center gap-2 sticky top-0 z-20">
-        <Icon size={14} className="text-slate-500" />
-        <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">{title} ({rows.length})</h4>
+      <div className="px-4 py-2.5 border-b border-slate-200 bg-slate-50 sticky top-0 z-20">
+        <div className="flex items-center gap-2">
+          <Icon size={14} className="text-slate-500" />
+          <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">
+            {slot.point} · {slot.label} ({rows.length})
+          </h4>
+        </div>
+        {slot.note && <p className="text-[11px] text-amber-700 mt-1">{slot.note}</p>}
       </div>
       <table className="min-w-full text-sm">
         <thead className="bg-slate-50 border-b border-slate-200 sticky top-[37px] z-10">
@@ -94,18 +129,30 @@ export function AircraftStatusReport({
 
   const { data: organization } = useQuery({ queryKey: ['organization'], queryFn: organizationApi.getCurrent });
 
+  // Qué motores aplican se deriva de las posiciones registradas, no del tipo de aeronave.
+  const { data: engines = [] } = useQuery({
+    queryKey: ['aircraft-engines', aircraftId],
+    queryFn: () => aircraftApi.listEngines(aircraftId),
+    enabled: !!aircraftId,
+  });
+
   const [category, setCategory] = useState<CategoryFilter>('PROGRAMA');
+  const [equipment, setEquipment] = useState<EquipmentFilter>('ALL');
   const [exporting, setExporting] = useState(false);
 
   const mandatoryRows = useMemo(() => mandatoryRowsFor(data), [data]);
   const categoryCounts = useMemo(() => categoryCountsFor(mandatoryRows), [mandatoryRows]);
   const rows = useMemo(() => rowsForCategory(mandatoryRows, category), [mandatoryRows, category]);
-  const { aircraftRows, engineRows } = useMemo(() => splitByEquipment(rows), [rows]);
+  // El endpoint ya devuelve solo los motores activos de cada posición.
+  const enginePositions = useMemo(() => engines.map((e) => e.position), [engines]);
+  const slots = useMemo(() => buildEquipmentSlots(rows, enginePositions), [rows, enginePositions]);
+  const equipmentCounts = useMemo(() => equipmentCountsFor(slots), [slots]);
+  const visibleSlots = equipment === 'ALL' ? slots : slots.filter((s) => s.equipment === equipment);
 
   const exportPdf = async () => {
     setExporting(true);
     try {
-      await exportDgacStatusReportPdf({ registration, model, currentHours, category, rows, logoDataUri: organization?.logoDataUri });
+      await exportDgacStatusReportPdf({ registration, model, currentHours, category, slots, equipment, logoDataUri: organization?.logoDataUri });
     } finally {
       setExporting(false);
     }
@@ -125,7 +172,9 @@ export function AircraftStatusReport({
           </div>
           <div className="flex items-center gap-2">
             <button onClick={exportPdf} disabled={exporting} className="btn-secondary inline-flex items-center gap-1.5">
-              <FileDown size={14} /> {exporting ? 'Generando…' : `Exportar PDF — ${categoryLabel(category)}`}
+              <FileDown size={14} /> {exporting
+                ? 'Generando…'
+                : `Exportar PDF — ${categoryLabel(category)}${equipment === 'ALL' ? '' : ` · ${equipmentLabel(equipment)}`}`}
             </button>
             <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-slate-100">
               <X size={16} className="text-slate-500" />
@@ -153,7 +202,6 @@ export function AircraftStatusReport({
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Tipo de informe</p>
             <p className="text-xs text-slate-500 mb-2">
               Elige «General» para el programa completo, o una categoría para acotar la tabla y el PDF a solo esas tareas.
-              El informe siempre separa las tareas de célula (Aeronave) de las de Motor.
             </p>
             <div className="flex flex-wrap gap-2">
               {CATEGORY_TABS.map((cat) => (
@@ -173,9 +221,39 @@ export function AircraftStatusReport({
             </div>
           </div>
 
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Equipo</p>
+            <p className="text-xs text-slate-500 mb-2">
+              La DGAC pide el estatus de célula y el de motor como documentos separados (IV.2.1 y IV.2.2).
+              Elige uno para exportar solo ese, o «Aeronave + Motor» para el informe combinado.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {EQUIPMENT_TABS.map((eq) => (
+                <button
+                  key={eq}
+                  type="button"
+                  onClick={() => setEquipment(eq)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                    equipment === eq
+                      ? 'bg-brand-600 text-white border-brand-600'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {equipmentLabel(eq)} ({equipmentCounts[eq]})
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="space-y-4">
-            <EquipmentSection title="Aeronave" Icon={Plane} rows={aircraftRows} isLoading={isLoading} emptyLabel={emptyCategoryLabel} />
-            <EquipmentSection title="Motor" Icon={Cog} rows={engineRows} isLoading={isLoading} emptyLabel={emptyCategoryLabel} />
+            {visibleSlots.map((slot) => (
+              <EquipmentSection
+                key={slot.equipment}
+                slot={slot}
+                isLoading={isLoading}
+                emptyLabel={emptyCategoryLabel}
+              />
+            ))}
           </div>
         </div>
       </div>

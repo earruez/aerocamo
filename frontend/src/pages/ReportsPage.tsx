@@ -10,6 +10,7 @@ import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown, Fil
 import {
   CATEGORY_TABS, categoryLabel, exportDgacStatusReportPdf,
   mandatoryRowsFor, categoryCountsFor, rowsForCategory, type CategoryFilter,
+  EQUIPMENT_TABS, equipmentLabel, equipmentCountsFor, buildEquipmentSlots, type EquipmentFilter,
 } from '@/shared/dgacReport';
 
 function StatCard({ label, value, sub, Icon, color }: {
@@ -73,6 +74,7 @@ function ReportDownloadCard({ Icon, title, description, onDownload, downloading 
 function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
   const [aircraftId, setAircraftId] = useState('');
   const [category, setCategory] = useState<CategoryFilter>('PROGRAMA');
+  const [equipment, setEquipment] = useState<EquipmentFilter>('ALL');
   const [downloading, setDownloading] = useState(false);
   const selected = aircraftList.find((a) => a.id === aircraftId);
 
@@ -84,9 +86,20 @@ function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
 
   const { data: organization } = useQuery({ queryKey: ['organization'], queryFn: organizationApi.getCurrent });
 
+  // Las posiciones registradas deciden qué motores aplican: no se asume por tipo.
+  const { data: engines = [] } = useQuery({
+    queryKey: ['aircraft-engines', aircraftId],
+    queryFn: () => aircraftApi.listEngines(aircraftId),
+    enabled: !!aircraftId,
+  });
+
   const mandatoryRows = useMemo(() => mandatoryRowsFor(data), [data]);
   const categoryCounts = useMemo(() => categoryCountsFor(mandatoryRows), [mandatoryRows]);
   const rows = useMemo(() => rowsForCategory(mandatoryRows, category), [mandatoryRows, category]);
+  // El endpoint ya devuelve solo los motores activos de cada posición.
+  const enginePositions = useMemo(() => engines.map((e) => e.position), [engines]);
+  const slots = useMemo(() => buildEquipmentSlots(rows, enginePositions), [rows, enginePositions]);
+  const equipmentCounts = useMemo(() => equipmentCountsFor(slots), [slots]);
 
   const handleDownload = async () => {
     if (!selected) return;
@@ -97,7 +110,8 @@ function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
         model: selected.model,
         currentHours: Number(selected.totalFlightHours),
         category,
-        rows,
+        slots,
+        equipment,
         logoDataUri: organization?.logoDataUri,
       });
     } finally {
@@ -124,7 +138,7 @@ function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
           <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Aeronave</label>
           <select
             value={aircraftId}
-            onChange={(e) => { setAircraftId(e.target.value); setCategory('PROGRAMA'); }}
+            onChange={(e) => { setAircraftId(e.target.value); setCategory('PROGRAMA'); setEquipment('ALL'); }}
             className="filter-input w-full mt-1"
           >
             <option value="">— Selecciona una aeronave —</option>
@@ -154,13 +168,42 @@ function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
         )}
       </div>
 
+      {aircraftId && (
+        <div>
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Equipo</label>
+          <p className="text-xs text-slate-500 mt-0.5 mb-2">
+            Los puntos IV.2.1 a IV.2.6 de la lista de presentación de la DGAC. Elige uno para generar
+            solo ese documento, o «Todos» para el informe completo. Los equipos que no aplican salen
+            igual, declarados como tal.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {EQUIPMENT_TABS.map((eq) => (
+              <button
+                key={eq}
+                type="button"
+                onClick={() => setEquipment(eq)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                  equipment === eq
+                    ? 'bg-brand-600 text-white border-brand-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {equipmentLabel(eq)} ({equipmentCounts[eq]})
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <button
         onClick={handleDownload}
         disabled={!aircraftId || downloading}
         className="btn-secondary flex items-center justify-center gap-1.5 text-xs self-start"
       >
         <FileDown size={13} />
-        {downloading ? 'Generando…' : `Descargar PDF — ${categoryLabel(category)}`}
+        {downloading
+          ? 'Generando…'
+          : `Descargar PDF — ${categoryLabel(category)}${equipment === 'ALL' ? '' : ` · ${equipmentLabel(equipment)}`}`}
       </button>
     </div>
   );
