@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plane, Repeat, Plus, Pencil, Trash2, X, Search, FileText, BookOpen, Wrench } from 'lucide-react';
+import { Plane, Repeat, Plus, Pencil, Trash2, X, Search, FileText, BookOpen, Wrench, FileDown } from 'lucide-react';
+import { saveAs } from 'file-saver';
 import toast from 'react-hot-toast';
 import { aircraftApi } from '@api/aircraft.api';
 import {
@@ -189,6 +190,22 @@ export default function AircraftAlterationsPage() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['aircraft-alterations', aircraftId] });
 
+  const [descargando, setDescargando] = useState(false);
+
+  /** DGAC IV.5.1.2 — estatus de alteraciones y reparaciones mayores con FMS/ICA. */
+  const descargarInforme = async () => {
+    if (!selectedAircraft) return;
+    setDescargando(true);
+    try {
+      const blob = await aircraftApi.downloadAlterationsReportPdf(aircraftId);
+      saveAs(blob, `Alteraciones_${selectedAircraft.registration}.pdf`);
+    } catch {
+      toast.error('No se pudo generar el informe');
+    } finally {
+      setDescargando(false);
+    }
+  };
+
   const createMutation = useMutation({
     mutationFn: (input: AircraftAlterationInput) => aircraftAlterationsApi.create(aircraftId, input),
     onSuccess: () => { invalidate(); setFormOpen(false); toast.success('Alteración registrada'); },
@@ -251,11 +268,22 @@ export default function AircraftAlterationsPage() {
             </p>
           </div>
         </div>
-        {aircraftId && canEdit && (
-          <button onClick={() => setFormOpen(true)} className="btn-primary flex items-center gap-1.5">
-            <Plus size={15} /> Nueva alteración
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {aircraftId && (
+            <button
+              onClick={descargarInforme}
+              disabled={descargando}
+              className="btn-secondary flex items-center gap-1.5"
+            >
+              <FileDown size={15} /> {descargando ? 'Generando…' : 'Informe DGAC'}
+            </button>
+          )}
+          {aircraftId && canEdit && (
+            <button onClick={() => setFormOpen(true)} className="btn-primary flex items-center gap-1.5">
+              <Plus size={15} /> Nueva alteración
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-5">

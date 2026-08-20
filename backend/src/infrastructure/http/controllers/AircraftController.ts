@@ -13,6 +13,7 @@ import { TemplateCloneService } from '../../../domain/services/TemplateCloneServ
 import { dueEngineService } from '../../../domain/services/DueEngineService';
 import { RemanentesDocumentService } from '../../../domain/services/RemanentesDocumentService';
 import { CounterHistoryDocumentService } from '../../../domain/services/CounterHistoryDocumentService';
+import { AlterationsDocumentService } from '../../../domain/services/AlterationsDocumentService';
 import { prisma } from '../../database/prisma.client';
 import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
 
@@ -754,6 +755,19 @@ export class AircraftController {
       const pdf = await RemanentesDocumentService.renderPdf(req.organizationId, report);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="Remanentes-${report.aircraft.registration}.pdf"`);
+      res.send(pdf);
+    } catch (err) { next(err); }
+  };
+
+  /** DGAC IV.5.1.2 — estatus de alteraciones y reparaciones mayores con FMS/ICA. */
+  getAlterationsReportPdf = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const pdf = await AlterationsDocumentService.generateReport(req.organizationId, req.params.id);
+      const aircraft = await prisma.aircraft.findUnique({
+        where: { id: req.params.id }, select: { registration: true },
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="Alteraciones_${aircraft?.registration ?? req.params.id}.pdf"`);
       res.send(pdf);
     } catch (err) { next(err); }
   };
