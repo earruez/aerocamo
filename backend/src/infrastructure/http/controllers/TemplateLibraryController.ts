@@ -144,6 +144,46 @@ templateLibraryRouter.post(
   }
 );
 
+// ─── PUT /templates/:id ─ Editar fabricante/modelo/descripción/versión ──────────
+
+templateLibraryRouter.put(
+  '/templates/:id',
+  authMiddleware,
+  requireRoles('ADMIN', 'SUPERVISOR'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const orgId = req.organizationId;
+      const { id } = req.params;
+      const { manufacturer, model, description, version } = req.body as Partial<CreateTemplateInput>;
+
+      const existing = await prisma.maintenanceTemplate.findUnique({ where: { id } });
+      if (!existing) {
+        return res.status(404).json({ message: 'Template not found' });
+      }
+      if (existing.organizationId !== orgId) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+
+      const updated = await prisma.maintenanceTemplate.update({
+        where: { id },
+        data: {
+          manufacturer: manufacturer || undefined,
+          model: model || undefined,
+          description: description !== undefined ? (description || null) : undefined,
+          version: version || undefined,
+        },
+      });
+
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return res.status(409).json({ message: 'Ya existe una plantilla para ese fabricante/modelo' });
+      }
+      next(err);
+    }
+  }
+);
+
 // ─── POST /templates/:id/tasks ─ Agregar tarea a template ────────────────────────
 
 templateLibraryRouter.post(

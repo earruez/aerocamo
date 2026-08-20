@@ -141,6 +141,14 @@ export const libraryApi = {
   },
 
   /**
+   * Edit a template's manufacturer/model/description/version.
+   */
+  async update(id: string, input: Partial<CreateTemplateInput>): Promise<MaintenanceTemplate> {
+    const { data } = await axios.put(`/library/templates/${id}`, input);
+    return data;
+  },
+
+  /**
    * Search for a template by manufacturer and model
    */
   async search(
