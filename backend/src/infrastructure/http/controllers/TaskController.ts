@@ -29,7 +29,12 @@ const createSchema = z.object({
   applicablePartNumber:  z.string().max(100).optional().nullable(),
 });
 
-const updateSchema = createSchema.partial().omit({ code: true });
+const updateSchema = createSchema.partial().omit({ code: true }).extend({
+  /** Otras tareas de la flota (misma AD/SB) a las que aplicar el mismo cambio.
+   * El frontend las obtiene de GET /tasks/:id/fleet-siblings y el operador
+   * elige cuáles marcar — nunca se propaga sin que las mande explícitas. */
+  propagateToTaskIds: z.array(z.string().uuid()).optional(),
+});
 
 const assignSchema = z.object({
   taskId: z.string().uuid(),
@@ -67,19 +72,91 @@ export class TaskController {
     } catch (err) { next(err); }
   };
 
+  /**
+   * Otras tareas de la organización que representan la MISMA normativa que
+   * ésta (mismo referenceType + referenceNumber) pero son registros
+   * separados, típicamente uno por aeronave. Una enmienda a una AD debería
+   * aplicar a toda la flota, y sin esto habría que editarla una por una.
+   */
+  fleetSiblings = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const task = await prisma.maintenanceTask.findFirst({
+        where: { id: req.params.id, organizationId: req.organizationId },
+      });
+      if (!task) throw new NotFoundError('MaintenanceTask', req.params.id);
+
+      // Solo tiene sentido para normativa identificable por su número; una
+      // tarea de manual sin referencia no tiene "la misma" en otro avión.
+      if (!task.referenceNumber || !['AD', 'SB', 'CMR'].includes(task.referenceType)) {
+        res.json({ status: 'success', data: [] });
+        return;
+      }
+
+      const siblings = await prisma.maintenanceTask.findMany({
+        where: {
+          organizationId: req.organizationId,
+          id: { not: task.id },
+          referenceType: task.referenceType,
+          referenceNumber: task.referenceNumber,
+          isActive: true,
+        },
+        include: {
+          aircraftLinks: {
+            where: { isActive: true },
+            select: { aircraft: { select: { id: true, registration: true } } },
+          },
+        },
+        orderBy: { code: 'asc' },
+      });
+
+      res.json({
+        status: 'success',
+        data: siblings.map((s) => ({
+          id: s.id,
+          code: s.code,
+          title: s.title,
+          intervalHours: s.intervalHours != null ? Number(s.intervalHours) : null,
+          intervalCycles: s.intervalCycles,
+          intervalCalendarDays: s.intervalCalendarDays,
+          intervalCalendarMonths: s.intervalCalendarMonths,
+          aircraft: s.aircraftLinks.map((l) => l.aircraft.registration),
+        })),
+      });
+    } catch (err) { next(err); }
+  };
+
   // ── Update a task ──────────────────────────────────────────────────────────
   update = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const body = updateSchema.parse(req.body);
+      const { propagateToTaskIds, ...body } = updateSchema.parse(req.body);
       const existing = await prisma.maintenanceTask.findFirst({
         where: { id: req.params.id, organizationId: req.organizationId },
       });
       if (!existing) throw new NotFoundError('MaintenanceTask', req.params.id);
-      const task = await prisma.maintenanceTask.update({
-        where: { id: req.params.id },
-        data: body,
-      });
-      res.json({ status: 'success', data: task });
+
+      // Las hermanas se validan contra la organización antes de tocarlas: un
+      // id de otra empresa no debe poder colarse por el body.
+      const siblingIds = propagateToTaskIds?.length
+        ? (await prisma.maintenanceTask.findMany({
+            where: { id: { in: propagateToTaskIds }, organizationId: req.organizationId },
+            select: { id: true },
+          })).map((t) => t.id)
+        : [];
+
+      const [task] = await prisma.$transaction([
+        prisma.maintenanceTask.update({ where: { id: existing.id }, data: body }),
+        ...(siblingIds.length
+          // El código y el título identifican a la tarea en cada aeronave
+          // (traen su S/N o su origen); la enmienda cambia intervalos y
+          // referencia, no la identidad de cada registro.
+          ? [prisma.maintenanceTask.updateMany({
+              where: { id: { in: siblingIds } },
+              data: { ...body, code: undefined, title: undefined },
+            })]
+          : []),
+      ]);
+
+      res.json({ status: 'success', data: task, propagatedTo: siblingIds.length });
     } catch (err) { next(err); }
   };
 

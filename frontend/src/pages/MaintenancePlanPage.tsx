@@ -580,11 +580,24 @@ function CreateEditTaskModal({
   task: TaskDefinition | null;
   onClose: () => void;
   onCreate: (input: CreateTaskInput) => void;
-  onUpdate: (id: string, input: Partial<CreateTaskInput>) => void;
+  onUpdate: (id: string, input: Partial<CreateTaskInput> & { propagateToTaskIds?: string[] }) => void;
   isPending: boolean;
 }) {
   const isEdit = task !== null;
   const [form, setForm] = useState<TaskFormState>(() => isEdit ? taskToForm(task!) : blankForm());
+
+  // La misma AD suele existir como un registro por aeronave. Al editarla se
+  // ofrece aplicar la enmienda a toda la flota — si a alguna no le
+  // corresponde, se marca "no aplica" en su plan, que deja rastro explícito.
+  const { data: siblings = [] } = useQuery({
+    queryKey: ['task-fleet-siblings', task?.id],
+    queryFn: () => tasksApi.fleetSiblings(task!.id),
+    enabled: isEdit,
+    staleTime: 60_000,
+  });
+  const [pendingInput, setPendingInput] = useState<Partial<CreateTaskInput> | null>(null);
+  const [selectedSiblingIds, setSelectedSiblingIds] = useState<string[]>([]);
+  useEffect(() => { setSelectedSiblingIds(siblings.map(s => s.id)); }, [siblings]);
 
   const set = (k: keyof TaskFormState, v: string | boolean) =>
     setForm(prev => ({ ...prev, [k]: v }));
@@ -599,11 +612,63 @@ function CreateEditTaskModal({
     const input = formToInput(form);
     if (isEdit) {
       const { code: _code, ...rest } = input;
+      if (siblings.length > 0) { setPendingInput(rest); return; }
       onUpdate(task!.id, rest);
     } else {
       onCreate(input);
     }
   };
+
+  if (pendingInput) {
+    const affected = siblings.filter(s => selectedSiblingIds.includes(s.id));
+    const totalAircraft = new Set(affected.flatMap(s => s.aircraft)).size;
+    return (
+      <Modal title="Aplicar a la flota" onClose={onClose}>
+        <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1">
+          <p className="text-sm text-slate-600 leading-relaxed">
+            Esta normativa (<strong>{task!.referenceNumber ?? task!.code}</strong>) también existe en otras aeronaves
+            como registros separados. Marca a cuáles aplicar el mismo cambio.
+          </p>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Si a alguna aeronave no le corresponde, lo correcto es dejarla marcada aquí y luego usar
+            <strong> “No aplica”</strong> en su plan — así queda registrada la excepción, en vez de un intervalo
+            desactualizado.
+          </p>
+          <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-64 overflow-y-auto">
+            {siblings.map(s => (
+              <label key={s.id} className="flex items-start gap-2.5 px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selectedSiblingIds.includes(s.id)}
+                  onChange={() => setSelectedSiblingIds(prev =>
+                    prev.includes(s.id) ? prev.filter(x => x !== s.id) : [...prev, s.id])}
+                  className="mt-0.5 rounded border-slate-300"
+                />
+                <span className="flex-1">
+                  <span className="font-medium text-slate-800">{s.aircraft.join(', ') || 'Sin aeronave asignada'}</span>
+                  <span className="block text-[11px] text-slate-400 font-mono">{s.code}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500">
+            Se aplicará a esta tarea y a {affected.length} registro(s) más{totalAircraft > 0 ? `, en ${totalAircraft} aeronave(s)` : ''}.
+          </p>
+        </div>
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-200">
+          <button type="button" onClick={() => setPendingInput(null)} className="btn-secondary">Volver</button>
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() => onUpdate(task!.id, { ...pendingInput, propagateToTaskIds: selectedSiblingIds })}
+            className="btn-primary"
+          >
+            {isPending ? 'Guardando…' : 'Aplicar cambio'}
+          </button>
+        </div>
+      </Modal>
+    );
+  }
 
   const F = ({ label, children, required }: { label: string; children: React.ReactNode; required?: boolean }) => (
     <div>
@@ -1528,10 +1593,15 @@ export default function MaintenancePlanPage() {
   });
 
   const updateTaskMutation = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: Partial<CreateTaskInput> }) => tasksApi.update(id, input),
-    onSuccess: () => {
-      toast.success('Tarea actualizada');
+    mutationFn: ({ id, input }: { id: string; input: Partial<CreateTaskInput> & { propagateToTaskIds?: string[] } }) =>
+      tasksApi.update(id, input),
+    onSuccess: (_data, { input }) => {
+      const propagated = input.propagateToTaskIds?.length ?? 0;
+      toast.success(propagated > 0
+        ? `Tarea actualizada y aplicada a ${propagated} registro(s) más de la flota`
+        : 'Tarea actualizada');
       qc.invalidateQueries({ queryKey: ['tasks'] });
+      qc.invalidateQueries({ queryKey: ['task-fleet-siblings'] });
       invalidatePlan();
       setModal(null);
     },
