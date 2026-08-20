@@ -67,7 +67,8 @@
     "prisma:apply:counter-reading-folio": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260818_counter_reading_folio.sql",
     "prisma:apply:user-account-tokens": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260818_user_account_tokens.sql",
     "prisma:apply:aircraft-engine-replace": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260819_aircraft_engine_replace.sql",
-    "import:access:aeronaves": "tsx prisma/import_access_aeronaves.ts"
+    "import:access:aeronaves": "tsx prisma/import_access_aeronaves.ts",
+    "prisma:apply:aircraft-equipment-applicability": "prisma db execute --schema prisma/schema.prisma --file prisma/manual_migrations/20260820_aircraft_equipment_applicability.sql"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",

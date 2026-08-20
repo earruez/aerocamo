@@ -36,6 +36,8 @@ router.get('/:id/due-report-data', ctrl.getDueReportData);
 router.get('/:id/due-report.pdf', ctrl.getDueReportPdf);
 router.get('/:id/usage-history', ctrl.getUsageHistory);
 router.get('/:id/engines', ctrl.listEngines);
+router.get('/:id/equipment-applicability', ctrl.listEquipmentApplicability);
+router.put('/:id/equipment-applicability/:equipment', ctrl.setEquipmentApplicability);
 router.get('/:id', ctrl.findById);
 router.post('/', ctrl.create);
 router.patch('/:id', ctrl.update);

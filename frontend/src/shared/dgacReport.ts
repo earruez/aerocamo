@@ -73,6 +73,15 @@ export function dgacPoint(category: CategoryFilter, eq: DgacEquipment): string |
   return DGAC_POINTS[category]?.[eq] ?? null;
 }
 
+/** Lo que la aeronave tiene declarado, de aircraftApi.listEquipmentApplicability(). */
+export interface EquipmentApplicabilityInput {
+  equipment: DgacEquipment;
+  applies: boolean;
+  notes: string | null;
+  changedAt: string;
+  changedBy: { id: string; name: string } | null;
+}
+
 export interface EquipmentSlot {
   equipment: DgacEquipment;
   /** 'IV.2.2', o null si la combinación no está numerada en la lista. */
@@ -83,6 +92,8 @@ export interface EquipmentSlot {
   /** Motivo del "No aplica", o advertencia cuando la atribución es imprecisa. */
   note: string | null;
   rows: MaintenancePlanItem[];
+  /** "G. Pasmiño, 20-08-2026" si es una declaración; null si lo derivó el sistema. */
+  declaredBy: string | null;
 }
 
 /**
@@ -102,6 +113,8 @@ export function buildEquipmentSlots(
   rows: MaintenancePlanItem[],
   enginePositions: readonly ('N1' | 'N2')[],
   category: CategoryFilter,
+  /** Declaraciones de Griselle, que priman sobre lo que deriva el sistema. */
+  declared: readonly EquipmentApplicabilityInput[] = [],
 ): EquipmentSlot[] {
   const { aircraftRows, engineRows } = splitByEquipment(rows);
   const tieneN1 = enginePositions.includes('N1');
@@ -114,15 +127,37 @@ export function buildEquipmentSlots(
     ? `El plan no atribuye las tareas de motor a una posición: las ${engineRows.length} tareas de motor se listan sin separar entre Motor 1 y Motor 2.`
     : null;
 
+  const declarados = new Map(declared.map((d) => [d.equipment, d]));
+
+  /**
+   * Una declaración explícita prima sobre lo derivado, y su motivo reemplaza al
+   * genérico: "Aeronave de ala rotatoria, sin hélice — G. Pasmiño, 20-08-2026"
+   * respalda mucho mejor que "la plataforma no registra este equipo".
+   */
   const slot = (
     equipment: DgacEquipment,
     applies: boolean,
     note: string | null,
     slotRows: MaintenancePlanItem[],
-  ): EquipmentSlot => ({
-    equipment, point: dgacPoint(category, equipment), label: EQUIPMENT_LABEL[equipment],
-    applies, note, rows: applies ? slotRows : [],
-  });
+  ): EquipmentSlot => {
+    const d = declarados.get(equipment);
+    if (!d) {
+      return {
+        equipment, point: dgacPoint(category, equipment), label: EQUIPMENT_LABEL[equipment],
+        applies, note, rows: applies ? slotRows : [], declaredBy: null,
+      };
+    }
+    const firma = d.changedBy
+      ? `${d.changedBy.name}, ${new Date(d.changedAt).toLocaleDateString('es-CL')}`
+      : new Date(d.changedAt).toLocaleDateString('es-CL');
+    return {
+      equipment, point: dgacPoint(category, equipment), label: EQUIPMENT_LABEL[equipment],
+      applies: d.applies,
+      note: d.notes ? `${d.notes} — ${firma}` : note,
+      rows: d.applies ? slotRows : [],
+      declaredBy: firma,
+    };
+  };
 
   return [
     slot('AERONAVE', true, null, aircraftRows),
