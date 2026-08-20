@@ -98,7 +98,7 @@ function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
   const rows = useMemo(() => rowsForCategory(mandatoryRows, category), [mandatoryRows, category]);
   // El endpoint ya devuelve solo los motores activos de cada posición.
   const enginePositions = useMemo(() => engines.map((e) => e.position), [engines]);
-  const slots = useMemo(() => buildEquipmentSlots(rows, enginePositions), [rows, enginePositions]);
+  const slots = useMemo(() => buildEquipmentSlots(rows, enginePositions, category), [rows, enginePositions, category]);
   const equipmentCounts = useMemo(() => equipmentCountsFor(slots), [slots]);
 
   const handleDownload = async () => {
