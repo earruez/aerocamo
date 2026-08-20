@@ -93,12 +93,19 @@ function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
     enabled: !!aircraftId,
   });
 
+  // Declaraciones de aplicabilidad por equipo: priman sobre lo derivado.
+  const { data: declared = [] } = useQuery({
+    queryKey: ['aircraft-equipment-applicability', aircraftId],
+    queryFn: () => aircraftApi.listEquipmentApplicability(aircraftId),
+    enabled: !!aircraftId,
+  });
+
   const mandatoryRows = useMemo(() => mandatoryRowsFor(data), [data]);
   const categoryCounts = useMemo(() => categoryCountsFor(mandatoryRows), [mandatoryRows]);
   const rows = useMemo(() => rowsForCategory(mandatoryRows, category), [mandatoryRows, category]);
   // El endpoint ya devuelve solo los motores activos de cada posición.
   const enginePositions = useMemo(() => engines.map((e) => e.position), [engines]);
-  const slots = useMemo(() => buildEquipmentSlots(rows, enginePositions, category), [rows, enginePositions, category]);
+  const slots = useMemo(() => buildEquipmentSlots(rows, enginePositions, category, declared), [rows, enginePositions, category, declared]);
   const equipmentCounts = useMemo(() => equipmentCountsFor(slots), [slots]);
 
   const handleDownload = async () => {

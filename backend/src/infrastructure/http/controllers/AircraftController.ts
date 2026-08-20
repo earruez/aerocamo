@@ -72,6 +72,18 @@ const createEngineSchema = z.object({
   serialNumber: z.string().min(1).max(100),
 });
 
+const DGAC_EQUIPMENT = ['AERONAVE', 'MOTOR_1', 'MOTOR_2', 'HELICE_1', 'HELICE_2', 'APU'] as const;
+
+const setEquipmentApplicabilitySchema = z.object({
+  applies: z.boolean(),
+  // El motivo es obligatorio al declarar "no aplica": sin él la declaración no
+  // sirve como respaldo ante la DGAC, que es justamente para lo que existe.
+  notes: z.string().trim().max(500).optional(),
+}).refine((v) => v.applies || (v.notes != null && v.notes.length > 0), {
+  message: 'Declarar que un equipo no aplica requiere indicar el motivo',
+  path: ['notes'],
+});
+
 const replaceEngineSchema = z.object({
   manufacturer: z.string().min(1).max(150),
   model: z.string().min(1).max(150),
@@ -542,6 +554,69 @@ export class AircraftController {
               }
             : null,
         })),
+      });
+    } catch (err) { next(err); }
+  };
+
+  listEquipmentApplicability = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const aircraft = await this.getUseCase.findById(req.params.id, req.organizationId);
+      const rows = await prisma.aircraftEquipmentApplicability.findMany({
+        where: { organizationId: req.organizationId, aircraftId: aircraft.id },
+        include: { changedBy: { select: { id: true, name: true } } },
+        orderBy: { equipment: 'asc' },
+      });
+
+      res.status(200).json({
+        status: 'success',
+        data: rows.map((row) => ({
+          equipment: row.equipment,
+          applies: row.applies,
+          notes: row.notes,
+          changedAt: row.changedAt,
+          changedBy: row.changedBy ? { id: row.changedBy.id, name: row.changedBy.name } : null,
+        })),
+      });
+    } catch (err) { next(err); }
+  };
+
+  setEquipmentApplicability = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const aircraft = await this.getUseCase.findById(req.params.id, req.organizationId);
+      const equipment = req.params.equipment as (typeof DGAC_EQUIPMENT)[number];
+      if (!DGAC_EQUIPMENT.includes(equipment)) {
+        throw new ValidationError(`Equipo desconocido: ${req.params.equipment}`);
+      }
+      const body = setEquipmentApplicabilitySchema.parse(req.body);
+
+      const saved = await prisma.aircraftEquipmentApplicability.upsert({
+        where: { aircraftId_equipment: { aircraftId: aircraft.id, equipment } },
+        create: {
+          organizationId: req.organizationId,
+          aircraftId: aircraft.id,
+          equipment,
+          applies: body.applies,
+          notes: body.notes ?? null,
+          changedById: req.currentUser?.id ?? null,
+        },
+        update: {
+          applies: body.applies,
+          notes: body.notes ?? null,
+          changedAt: new Date(),
+          changedById: req.currentUser?.id ?? null,
+        },
+        include: { changedBy: { select: { id: true, name: true } } },
+      });
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          equipment: saved.equipment,
+          applies: saved.applies,
+          notes: saved.notes,
+          changedAt: saved.changedAt,
+          changedBy: saved.changedBy ? { id: saved.changedBy.id, name: saved.changedBy.name } : null,
+        },
       });
     } catch (err) { next(err); }
   };

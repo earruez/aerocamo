@@ -125,6 +125,21 @@ enum EquipmentScope {
   @@map("equipment_scope")
 }
 
+/// Equipos que la DGAC numera en su lista de presentación (puntos IV.2.x,
+/// IV.3.x y IV.4.x). No es lo mismo que EquipmentScope: aquel clasifica la
+/// tarea (célula o motor), este identifica el equipo del que se presenta un
+/// estatus por separado.
+enum DgacEquipment {
+  AERONAVE
+  MOTOR_1
+  MOTOR_2
+  HELICE_1
+  HELICE_2
+  APU
+
+  @@map("dgac_equipment")
+}
+
 enum ComplianceApplicationType {
   baseline
   application
@@ -319,6 +334,7 @@ model Organization {
   aircraftUsageLogs  AircraftUsageLog[]
   aircraftEngines    AircraftEngine[]
   aircraftEngineUsageLogs AircraftEngineUsageLog[]
+  equipmentApplicability  AircraftEquipmentApplicability[]
   componentDefinitions ComponentDefinition[]
   componentInstances   ComponentInstance[]
   componentApplications ComponentApplication[]
@@ -379,6 +395,7 @@ model User {
   componentMovements       ComponentHistory[] @relation("ComponentMovedBy")
   componentTrackingMovements ComponentMovement[] @relation("ComponentTrackingMovedBy")
   aircraftTaskApplicabilityChanges AircraftTask[] @relation("AircraftTaskApplicability")
+  equipmentApplicabilityChanges    AircraftEquipmentApplicability[]
   createdAlterations               AircraftAlteration[]
   createdTaskNotes                 AircraftTaskNote[]
   aircraftStatusChanges            AircraftStatusChange[]
@@ -461,6 +478,7 @@ model Aircraft {
   componentApplications ComponentApplication[]
   componentMovements ComponentMovement[]
   assignedPlans      AircraftAssignedPlan[]
+  equipmentApplicability AircraftEquipmentApplicability[]
 
   // Indexes for common lookups
   @@unique([registration, organizationId])
@@ -515,6 +533,41 @@ model AircraftEngineUsageLog {
 
   @@index([organizationId, engineId, date])
   @@map("aircraft_engine_usage_logs")
+}
+
+/// Declaración de que un equipo de la lista DGAC aplica o no a una aeronave.
+///
+/// El informe deriva por sí solo los motores desde las posiciones N1/N2
+/// registradas, y eso es preferible a una declaración porque no se puede quedar
+/// desactualizado. Esta tabla es para lo que la plataforma NO modela —hélice y
+/// APU—, donde el informe solo puede decir "no lo tengo registrado", que no es
+/// lo mismo que "no corresponde".
+///
+/// Mismo patrón que la aplicabilidad de tareas en AircraftTask: decisión,
+/// motivo, fecha y responsable, para que quede auditable quién lo determinó.
+model AircraftEquipmentApplicability {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  aircraftId     String        @db.Uuid
+  equipment      DgacEquipment
+
+  applies        Boolean
+
+  /// Justificación, p. ej. "Aeronave de ala rotatoria, sin hélice"
+  notes          String?
+  changedAt      DateTime      @default(now())
+  changedById    String?       @db.Uuid
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aircraft       Aircraft      @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  changedBy      User?         @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@unique([aircraftId, equipment])
+  @@index([organizationId, aircraftId])
+  @@map("aircraft_equipment_applicability")
 }
 
   /// Alteración aprobada a la configuración de la aeronave (STC / Formulario DGAC 337)

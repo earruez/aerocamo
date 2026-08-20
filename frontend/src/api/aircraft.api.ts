@@ -112,6 +112,17 @@ export interface AircraftEngine {
   } | null;
 }
 
+export type DgacEquipment = 'AERONAVE' | 'MOTOR_1' | 'MOTOR_2' | 'HELICE_1' | 'HELICE_2' | 'APU';
+
+/** Declaración de que un equipo de la lista DGAC aplica o no a la aeronave. */
+export interface EquipmentApplicability {
+  equipment: DgacEquipment;
+  applies: boolean;
+  notes: string | null;
+  changedAt: string;
+  changedBy: { id: string; name: string } | null;
+}
+
 export interface CreateAircraftUsageLogInput {
   date: string;
   totalHours: number;
@@ -169,6 +180,25 @@ export const aircraftApi = {
     );
     return data.data;
   },
+  listEquipmentApplicability: async (id: string): Promise<EquipmentApplicability[]> => {
+    const { data } = await apiClient.get<{ status: string; data: EquipmentApplicability[] }>(
+      `/aircraft/${id}/equipment-applicability`,
+    );
+    return data.data;
+  },
+
+  setEquipmentApplicability: async (
+    id: string,
+    equipment: DgacEquipment,
+    input: { applies: boolean; notes?: string },
+  ): Promise<EquipmentApplicability> => {
+    const { data } = await apiClient.put<{ status: string; data: EquipmentApplicability }>(
+      `/aircraft/${id}/equipment-applicability/${equipment}`,
+      input,
+    );
+    return data.data;
+  },
+
   listEngines: async (id: string): Promise<AircraftEngine[]> => {
     const { data } = await apiClient.get<{ status: string; data: AircraftEngine[] }>(
       `/aircraft/${id}/engines`,

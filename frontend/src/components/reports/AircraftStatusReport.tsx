@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FileDown, Paperclip, X, Plane, Cog } from 'lucide-react';
 import { aircraftApi } from '@api/aircraft.api';
 import { maintenancePlanApi, type MaintenancePlanItem } from '@api/maintenancePlan.api';
@@ -25,8 +25,64 @@ function iconFor(equipment: EquipmentSlot['equipment']): React.ElementType {
   return equipment === 'AERONAVE' ? Plane : Cog;
 }
 
-function EquipmentSection({ slot, isLoading, emptyLabel }: {
+/**
+ * Permite dejar por escrito por qué un equipo no aplica. Sin esto el informe
+ * solo puede decir "la plataforma no registra este equipo", que se lee como si
+ * faltaran datos por cargar en vez de como una determinación técnica.
+ */
+function DeclararNoAplica({ slot, onSave, saving }: {
+  slot: EquipmentSlot;
+  onSave: (notes: string) => void;
+  saving: boolean;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const [motivo, setMotivo] = useState('');
+
+  if (!abierto) {
+    return (
+      <button
+        type="button"
+        onClick={() => setAbierto(true)}
+        className="text-xs text-brand-600 hover:text-brand-700 font-medium mt-1.5"
+      >
+        {slot.declaredBy ? 'Editar la declaración' : 'Declarar el motivo'}
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <input
+        autoFocus
+        value={motivo}
+        onChange={(e) => setMotivo(e.target.value)}
+        placeholder={`Por qué no aplica ${slot.label} a esta aeronave`}
+        maxLength={500}
+        className="filter-input text-xs flex-1 min-w-64"
+      />
+      <button
+        type="button"
+        disabled={!motivo.trim() || saving}
+        onClick={() => onSave(motivo.trim())}
+        className="btn-primary text-xs px-3 py-1.5"
+      >
+        {saving ? 'Guardando…' : 'Guardar'}
+      </button>
+      <button
+        type="button"
+        onClick={() => { setAbierto(false); setMotivo(''); }}
+        className="text-xs text-slate-500 hover:text-slate-700"
+      >
+        Cancelar
+      </button>
+    </div>
+  );
+}
+
+function EquipmentSection({ slot, isLoading, emptyLabel, onDeclare, saving }: {
   slot: EquipmentSlot; isLoading: boolean; emptyLabel: string;
+  onDeclare: (equipment: EquipmentSlot['equipment'], notes: string) => void;
+  saving: boolean;
 }) {
   const Icon = iconFor(slot.equipment);
   const rows = slot.rows;
@@ -44,8 +100,18 @@ function EquipmentSection({ slot, isLoading, emptyLabel }: {
           <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 bg-slate-200 rounded px-1.5 py-0.5">
             No aplica
           </span>
+          {!slot.declaredBy && (
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">
+              Sin declarar
+            </span>
+          )}
         </div>
         {slot.note && <p className="text-xs text-slate-500 mt-1.5">{slot.note}</p>}
+        <DeclararNoAplica
+          slot={slot}
+          saving={saving}
+          onSave={(notes) => onDeclare(slot.equipment, notes)}
+        />
       </div>
     );
   }
@@ -136,6 +202,13 @@ export function AircraftStatusReport({
     enabled: !!aircraftId,
   });
 
+  // Declaraciones de aplicabilidad por equipo: priman sobre lo derivado.
+  const { data: declared = [] } = useQuery({
+    queryKey: ['aircraft-equipment-applicability', aircraftId],
+    queryFn: () => aircraftApi.listEquipmentApplicability(aircraftId),
+    enabled: !!aircraftId,
+  });
+
   const [category, setCategory] = useState<CategoryFilter>('PROGRAMA');
   const [equipment, setEquipment] = useState<EquipmentFilter>('ALL');
   const [exporting, setExporting] = useState(false);
@@ -145,9 +218,18 @@ export function AircraftStatusReport({
   const rows = useMemo(() => rowsForCategory(mandatoryRows, category), [mandatoryRows, category]);
   // El endpoint ya devuelve solo los motores activos de cada posición.
   const enginePositions = useMemo(() => engines.map((e) => e.position), [engines]);
-  const slots = useMemo(() => buildEquipmentSlots(rows, enginePositions, category), [rows, enginePositions, category]);
+  const slots = useMemo(() => buildEquipmentSlots(rows, enginePositions, category, declared), [rows, enginePositions, category, declared]);
   const equipmentCounts = useMemo(() => equipmentCountsFor(slots), [slots]);
   const visibleSlots = equipment === 'ALL' ? slots : slots.filter((s) => s.equipment === equipment);
+
+  const queryClient = useQueryClient();
+  const declarar = useMutation({
+    mutationFn: ({ equipo, notes }: { equipo: EquipmentSlot['equipment']; notes: string }) =>
+      aircraftApi.setEquipmentApplicability(aircraftId, equipo, { applies: false, notes }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['aircraft-equipment-applicability', aircraftId] });
+    },
+  });
 
   const exportPdf = async () => {
     setExporting(true);
@@ -252,6 +334,8 @@ export function AircraftStatusReport({
                 slot={slot}
                 isLoading={isLoading}
                 emptyLabel={emptyCategoryLabel}
+                saving={declarar.isPending}
+                onDeclare={(equipo, notes) => declarar.mutate({ equipo, notes })}
               />
             ))}
           </div>
