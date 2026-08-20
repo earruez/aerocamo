@@ -75,6 +75,24 @@ async function main(): Promise<void> {
     select: { manufacturer: true, model: true, isActive: true },
   });
   for (const t of all) console.log(`  ${t.manufacturer} ${t.model}${t.isActive ? '' : ' (inactiva)'}`);
+
+  // Detalle de tareas de las plantillas R66 + DGAC GENERIC (para comparar
+  // contra las AD/DAN del Excel a mano).
+  const detailNames = ['ROBINSON R66', 'MOTOR R66', 'EASA R66', 'DGAC GENERIC', 'DGAC R66'];
+  for (const name of detailNames) {
+    const [manufacturer, ...modelParts] = name.split(' ');
+    const model = modelParts.join(' ');
+    const tpl = await prisma.maintenanceTemplate.findFirst({
+      where: { organizationId: org.id, manufacturer, model },
+      include: { tasks: { orderBy: [{ chapter: 'asc' }, { code: 'asc' }] } },
+    });
+    console.log(`\n-- Tareas de "${name}" --`);
+    if (!tpl) { console.log('  (no existe esta plantilla)'); continue; }
+    if (tpl.tasks.length === 0) { console.log('  (sin tareas)'); continue; }
+    for (const t of tpl.tasks) {
+      console.log(`  [${t.code}] ${t.title} — ref: ${t.referenceType} ${t.referenceNumber ?? ''} — cap: ${t.chapter ?? ''}`);
+    }
+  }
 }
 
 main()
