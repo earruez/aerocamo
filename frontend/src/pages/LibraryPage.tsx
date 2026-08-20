@@ -803,6 +803,22 @@ export default function LibraryPage() {
     );
   }, [templatesByTab, search]);
 
+  // En "Normativa de fabricante" las tarjetas son de marcas reales distintas
+  // (BELL, EUROCOPTER, ROBINSON, ...) — se agrupan por marca para que no
+  // queden todas mezcladas. Las demás pestañas ya son una sola categoría
+  // transversal (DGAC/motor/país de origen), no necesitan agrupación.
+  const groupedByManufacturer = useMemo(() => {
+    if (activeTab !== 'manufacturer') return null;
+    const groups = new Map<string, MaintenanceTemplate[]>();
+    for (const t of filtered) {
+      const key = t.manufacturer.trim() || 'Sin marca';
+      const list = groups.get(key) ?? [];
+      list.push(t);
+      groups.set(key, list);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [filtered, activeTab]);
+
   return (
     <div className="p-8 space-y-6">
       {/* Header */}
@@ -879,6 +895,30 @@ export default function LibraryPage() {
               ? 'Intenta con otro término de búsqueda'
               : 'No hay plantillas cargadas en esta pestana'}
           </p>
+        </div>
+      ) : groupedByManufacturer ? (
+        <div className="space-y-8">
+          {groupedByManufacturer.map(([manufacturer, group]) => (
+            <div key={manufacturer}>
+              <div className="flex items-center gap-2 mb-3">
+                <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">{manufacturer}</h2>
+                <span className="text-xs text-slate-400">{group.length} plantilla{group.length !== 1 ? 's' : ''}</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {group.map(template => (
+                  <TemplateCard
+                    key={template.id}
+                    template={template}
+                    categoryLabel={activeTabLabel}
+                    onEdit={(t) => setSelectedTemplateId(t.id)}
+                    onEditMeta={(t) => setEditingMetaTemplateId(t.id)}
+                    onDelete={id => deleteTemplateMutation.mutate(id)}
+                    isDeleting={deleteTemplateMutation.isPending}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
