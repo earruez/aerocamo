@@ -336,6 +336,12 @@ export class BaselineComplianceService {
 
     let reanchored = 0;
     for (const baseline of baselines) {
+      // La vida límite de un componente es absoluta desde su instalación, no
+      // un control que "empieza ahora": el Tailcone del R66 se instaló con la
+      // aeronave en 0 h y vence a las 2000 h. Re-anclarlo le regalaría vida
+      // que la pieza no tiene, en un ítem estructural.
+      if (baseline.task.referenceType === 'CMR' || baseline.task.isComponentControl) continue;
+
       const anchoredHours = Number(baseline.aircraftHoursAtCompliance);
       if (anchoredHours >= currentHours) continue;
 
