@@ -40,6 +40,23 @@ async function main(): Promise<void> {
     console.log(`  ${t.manufacturer} ${t.model} — ${t._count.tasks} tareas — ${t.isActive ? 'activa' : 'inactiva'} (id ${t.id})`);
   }
 
+  // ¿Las tareas sueltas están realmente en uso? Una MaintenanceTask se usa
+  // cuando está enlazada a una aeronave vía AircraftTask — eso es lo que
+  // aparece en el plan de mantenimiento y contra lo que se registran los
+  // cumplimientos. Las que no tienen enlace son catálogo sin aplicar.
+  const totalLoose = await prisma.maintenanceTask.count({ where: { organizationId: org.id } });
+  const linkedLoose = await prisma.maintenanceTask.count({
+    where: { organizationId: org.id, aircraftLinks: { some: {} } },
+  });
+  const withCompliance = await prisma.maintenanceTask.count({
+    where: { organizationId: org.id, compliances: { some: {} } },
+  });
+  console.log(`\n=== Uso real de las tareas sueltas ===`);
+  console.log(`  Total en la biblioteca suelta: ${totalLoose}`);
+  console.log(`  Enlazadas a alguna aeronave (AircraftTask): ${linkedLoose}  ← estas son las que el avión realmente ejecuta`);
+  console.log(`  Con al menos un cumplimiento registrado: ${withCompliance}`);
+  console.log(`  Sin enlazar a ninguna aeronave: ${totalLoose - linkedLoose}`);
+
   console.log(`\n=== Tareas sueltas (MaintenanceTask) agrupadas por applicableModel ===`);
   const grouped = await prisma.maintenanceTask.groupBy({
     by: ['applicableModel'],
