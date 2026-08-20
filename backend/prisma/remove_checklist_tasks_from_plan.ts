@@ -55,11 +55,26 @@ async function main(): Promise<void> {
     },
     select: {
       taskId: true,
-      task: { select: { code: true, title: true, _count: { select: { compliances: true } } } },
+      task: { select: { code: true, title: true } },
     },
   });
 
   const totalActivo = await prisma.aircraftTask.count({ where: { aircraftId: aircraft.id, isActive: true } });
+
+  // Cumplimientos de ESTA aeronave sobre esas tareas. Contarlos a nivel de tarea
+  // (task._count.compliances) mezcla los de toda la flota: una tarea compartida
+  // por dos aeronaves aparecía con "2 cumpl." aunque ninguno fuera de esta.
+  //
+  // Y de los propios, solo importan los reales: la línea base es un ancla de
+  // cálculo que crea el motor cuando una tarea entra al plan sin cumplimiento
+  // previo, no trabajo hecho. Avisar por ellas es gritar sin motivo, y un aviso
+  // que siempre salta termina ignorándose el día que importa.
+  const comps = await prisma.compliance.findMany({
+    where: { aircraftId: aircraft.id, taskId: { in: links.map((l) => l.taskId) } },
+    select: { taskId: true, applicationType: true, isInitial: true, performedAt: true, workOrderNumber: true },
+  });
+  const reales = comps.filter((c) => !(c.applicationType === 'baseline' && c.isInitial));
+  const baselines = comps.length - reales.length;
 
   console.log(`\n=== Sacar del plan de ${REGISTRATION} los puntos de checklist ===`);
   console.log(`Prefijos: ${PREFIXES.join(', ')}`);
@@ -67,11 +82,24 @@ async function main(): Promise<void> {
   console.log(`${links.length} coinciden con esos prefijos y se desactivarían.`);
   console.log(`→ quedarían ${totalActivo - links.length} tareas activas en el plan.\n`);
 
-  const conCumplimiento = links.filter((l) => l.task._count.compliances > 0);
-  if (conCumplimiento.length) {
-    console.log(`⚠️  ${conCumplimiento.length} de ellas tienen cumplimientos registrados (no se borran, solo se sacan del plan):`);
-    for (const l of conCumplimiento.slice(0, 10)) {
-      console.log(`     [${l.task.code}] ${l.task.title.slice(0, 55)} — ${l.task._count.compliances} cumpl.`);
+  console.log(`Cumplimientos de ${REGISTRATION} sobre ellas: ${comps.length}`);
+  console.log(`  · líneas base (ancla de cálculo, no es trabajo hecho): ${baselines}`);
+  console.log(`  · cumplimientos reales:                               ${reales.length}\n`);
+
+  if (reales.length === 0) {
+    console.log('✅ Ninguna tiene trabajo firmado: sacarlas del plan no pierde historial.\n');
+  } else {
+    const porTarea = new Map<string, typeof reales>();
+    for (const c of reales) porTarea.set(c.taskId, [...(porTarea.get(c.taskId) ?? []), c]);
+    console.log(`⚠️  ${porTarea.size} tienen trabajo REALMENTE firmado. Revísalas una por una antes`);
+    console.log('    de sacarlas: el cumplimiento no se borra, pero deja de verse en el plan.\n');
+    for (const [taskId, cs] of porTarea) {
+      const t = links.find((l) => l.taskId === taskId)?.task;
+      console.log(`     [${t?.code ?? taskId}] ${t?.title.slice(0, 55) ?? ''}`);
+      for (const c of cs) {
+        console.log(`         ${c.performedAt.toISOString().slice(0, 10)}`
+          + `${c.workOrderNumber ? ` — OT ${c.workOrderNumber}` : ' — sin OT'}`);
+      }
     }
     console.log('');
   }
