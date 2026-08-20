@@ -295,4 +295,77 @@ export class BaselineComplianceService {
 
     return true;
   }
+
+  /**
+   * Re-ancla las líneas base que quedaron con un valor de horas anterior a la
+   * realidad de la aeronave.
+   *
+   * Pasa cuando se asigna una plantilla a un avión recién creado (línea base
+   * anclada en 0) y recién después se carga su historial de horas: las tareas
+   * quedan venciendo contra un origen que nunca existió y el plan entero
+   * aparece vencido.
+   *
+   * La condición es estricta a propósito: solo se re-ancla si, EN LA PROPIA
+   * FECHA de la línea base, la aeronave ya acumulaba más horas de las que se
+   * registraron. Eso únicamente ocurre con historial cargado hacia atrás. Un
+   * vuelo normal registrado después de la línea base no la toca — si lo
+   * hiciera, las tareas no vencerían nunca.
+   */
+  static async reanchorStaleBaselines(
+    aircraftId: string,
+    organizationId: string,
+  ): Promise<number> {
+    const aircraft = await prisma.aircraft.findFirst({
+      where: { id: aircraftId, organizationId },
+      select: { totalFlightHours: true, totalCycles: true },
+    });
+    if (!aircraft) return 0;
+
+    const currentHours = Number(aircraft.totalFlightHours);
+    const currentCycles = aircraft.totalCycles;
+
+    const baselines = await prisma.compliance.findMany({
+      where: {
+        organizationId,
+        aircraftId,
+        OR: [{ applicationType: 'baseline' }, { notes: BASELINE_NOTE }],
+      },
+      include: { task: true },
+    });
+    if (baselines.length === 0) return 0;
+
+    let reanchored = 0;
+    for (const baseline of baselines) {
+      const anchoredHours = Number(baseline.aircraftHoursAtCompliance);
+      if (anchoredHours >= currentHours) continue;
+
+      // Horas reales que la aeronave acumulaba en la fecha de la línea base.
+      const atBaselineDate = await prisma.aircraftUsageLog.findFirst({
+        where: { aircraftId, date: { lte: baseline.performedAt } },
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        select: { totalHours: true, totalCycles: true },
+      });
+      if (!atBaselineDate) continue;
+
+      const realHoursThen = Number(atBaselineDate.totalHours);
+      if (realHoursThen <= anchoredHours) continue; // ancla coherente, no se toca
+
+      const t = baseline.task;
+      const due = this.due.calculate(mapTask(t), currentHours, currentCycles, baseline.performedAt);
+
+      await prisma.compliance.update({
+        where: { id: baseline.id },
+        data: {
+          aircraftHoursAtCompliance: currentHours,
+          aircraftCyclesAtCompliance: currentCycles,
+          nextDueHours: due.nextDueHours,
+          nextDueCycles: due.nextDueCycles,
+          nextDueDate: due.nextDueDate,
+        },
+      });
+      reanchored += 1;
+    }
+
+    return reanchored;
+  }
 }
