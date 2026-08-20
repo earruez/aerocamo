@@ -12,6 +12,120 @@ export function categoryLabel(cat: CategoryFilter): string {
   return cat === 'PROGRAMA' ? 'General' : TASK_CATEGORY_LABEL[cat];
 }
 
+/**
+ * Los equipos que la DGAC numera en su lista de presentación (IV.2.x). El
+ * informe los recorre todos, incluso los que no aplican: un punto declarado
+ * "No aplica" deja constancia de que se evaluó, mientras que uno omitido no
+ * dice nada. Es el mismo criterio con que marcamos las AD que no aplican a
+ * una matrícula en vez de sacarlas del plan.
+ */
+export type DgacEquipment = 'AERONAVE' | 'MOTOR_1' | 'MOTOR_2' | 'HELICE_1' | 'HELICE_2' | 'APU';
+
+export type EquipmentFilter = 'ALL' | DgacEquipment;
+
+export const EQUIPMENT_TABS: EquipmentFilter[] = [
+  'ALL', 'AERONAVE', 'MOTOR_1', 'MOTOR_2', 'HELICE_1', 'HELICE_2', 'APU',
+];
+
+const EQUIPMENT_LABEL: Record<EquipmentFilter, string> = {
+  ALL: 'Todos',
+  AERONAVE: 'Aeronave',
+  MOTOR_1: 'Motor 1',
+  MOTOR_2: 'Motor 2',
+  HELICE_1: 'Hélice 1',
+  HELICE_2: 'Hélice 2',
+  APU: 'APU',
+};
+
+/** Punto de la lista de presentación de la DGAC al que corresponde cada equipo. */
+const DGAC_POINT: Record<DgacEquipment, string> = {
+  AERONAVE: 'IV.2.1',
+  MOTOR_1: 'IV.2.2',
+  MOTOR_2: 'IV.2.3',
+  HELICE_1: 'IV.2.4',
+  HELICE_2: 'IV.2.5',
+  APU: 'IV.2.6',
+};
+
+export function equipmentLabel(eq: EquipmentFilter): string {
+  return EQUIPMENT_LABEL[eq];
+}
+
+export function dgacPoint(eq: DgacEquipment): string {
+  return DGAC_POINT[eq];
+}
+
+export interface EquipmentSlot {
+  equipment: DgacEquipment;
+  /** 'IV.2.2' */
+  point: string;
+  /** 'Motor 1' */
+  label: string;
+  applies: boolean;
+  /** Motivo del "No aplica", o advertencia cuando la atribución es imprecisa. */
+  note: string | null;
+  rows: MaintenancePlanItem[];
+}
+
+/**
+ * Arma los seis puntos del informe a partir del plan y de los motores que la
+ * aeronave tiene registrados.
+ *
+ * Qué aplica NO se asume por tipo de aeronave: los motores salen de las
+ * posiciones registradas (N1/N2). Hélice y APU no están modelados en la
+ * plataforma, así que se declaran "No aplica" diciendo exactamente eso.
+ *
+ * Ojo con la atribución por motor: MaintenanceTask.equipmentScope distingue
+ * célula de motor, pero no en qué posición va la tarea. Con un solo motor
+ * registrado la atribución es inequívoca; con dos no se puede repartir, y en
+ * ese caso el slot lo advierte en vez de inventar un reparto.
+ */
+export function buildEquipmentSlots(
+  rows: MaintenancePlanItem[],
+  enginePositions: readonly ('N1' | 'N2')[],
+): EquipmentSlot[] {
+  const { aircraftRows, engineRows } = splitByEquipment(rows);
+  const tieneN1 = enginePositions.includes('N1');
+  const tieneN2 = enginePositions.includes('N2');
+  const bimotor = tieneN1 && tieneN2;
+
+  const sinModelar = 'La plataforma no registra este equipo para esta aeronave.';
+  const sinMotor = 'La aeronave no tiene un motor registrado en esta posición.';
+  const sinRepartir = bimotor
+    ? `El plan no atribuye las tareas de motor a una posición: las ${engineRows.length} tareas de motor se listan sin separar entre Motor 1 y Motor 2.`
+    : null;
+
+  const slot = (
+    equipment: DgacEquipment,
+    applies: boolean,
+    note: string | null,
+    slotRows: MaintenancePlanItem[],
+  ): EquipmentSlot => ({
+    equipment, point: DGAC_POINT[equipment], label: EQUIPMENT_LABEL[equipment],
+    applies, note, rows: applies ? slotRows : [],
+  });
+
+  return [
+    slot('AERONAVE', true, null, aircraftRows),
+    slot('MOTOR_1', tieneN1, tieneN1 ? sinRepartir : sinMotor, engineRows),
+    slot('MOTOR_2', tieneN2, tieneN2 ? sinRepartir : sinMotor, bimotor ? engineRows : []),
+    slot('HELICE_1', false, sinModelar, []),
+    slot('HELICE_2', false, sinModelar, []),
+    slot('APU', false, sinModelar, []),
+  ];
+}
+
+export function equipmentCountsFor(slots: EquipmentSlot[]): Record<EquipmentFilter, number> {
+  const counts = { ALL: 0 } as Record<EquipmentFilter, number>;
+  let total = 0;
+  for (const s of slots) {
+    counts[s.equipment] = s.rows.length;
+    total += s.rows.length;
+  }
+  counts.ALL = total;
+  return counts;
+}
+
 export function mandatoryRowsFor(data: MaintenancePlanItem[]): MaintenancePlanItem[] {
   return data.filter((item) => item.isMandatory);
 }
@@ -127,8 +241,14 @@ const TABLE_HEAD = [[
   'Evidencia',
 ]];
 
-function drawEquipmentSection(doc: jsPDF, title: string, sectionRows: MaintenancePlanItem[], startY: number): number {
+/**
+ * Dibuja un punto de la lista DGAC. Un equipo que no aplica NO se omite: se
+ * imprime igual, encabezado y motivo, para que el documento deje constancia
+ * de que el punto se evaluó.
+ */
+function drawEquipmentSection(doc: jsPDF, slot: EquipmentSlot, startY: number): number {
   const pageHeight = doc.internal.pageSize.getHeight();
+  const sectionRows = slot.rows;
   let y = startY;
   if (y > pageHeight - 90) {
     doc.addPage();
@@ -137,8 +257,23 @@ function drawEquipmentSection(doc: jsPDF, title: string, sectionRows: Maintenanc
 
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text(`${title} (${sectionRows.length})`, 40, y);
+  const heading = slot.applies
+    ? `${slot.point}  ${slot.label.toUpperCase()} (${sectionRows.length})`
+    : `${slot.point}  ${slot.label.toUpperCase()} — NO APLICA`;
+  doc.text(heading, 40, y);
   doc.setFont('helvetica', 'normal');
+
+  if (!slot.applies) {
+    doc.setFontSize(9);
+    doc.text(slot.note ?? 'No aplica a esta aeronave.', 40, y + 16, { maxWidth: 500 });
+    return y + 34;
+  }
+
+  if (slot.note) {
+    doc.setFontSize(8);
+    doc.text(slot.note, 40, y + 14, { maxWidth: 500 });
+    y += 12;
+  }
 
   if (sectionRows.length === 0) {
     doc.setFontSize(9);
@@ -185,26 +320,41 @@ export async function exportDgacStatusReportPdf(params: {
   model: string;
   currentHours: number;
   category: CategoryFilter;
-  rows: MaintenancePlanItem[];
+  /** Los seis puntos de la lista DGAC, de buildEquipmentSlots(). */
+  slots: EquipmentSlot[];
+  /** Acota el documento a un equipo. Por defecto, todos los puntos. */
+  equipment?: EquipmentFilter;
   logoDataUri?: string | null;
 }): Promise<void> {
-  const { registration, model, currentHours, category, rows, logoDataUri } = params;
+  const { registration, model, currentHours, category, slots, logoDataUri } = params;
+  const equipment = params.equipment ?? 'ALL';
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const generatedAt = new Date();
 
   await drawOrganizationLogo(doc, logoDataUri, 40);
 
+  const scope = equipment === 'ALL'
+    ? categoryLabel(category)
+    : `${categoryLabel(category)} — ${equipmentLabel(equipment)}`;
+
   doc.setFontSize(14);
-  doc.text(`Aircraft Status Report - DGAC (${categoryLabel(category)})`, 40, 42);
+  doc.text(`Aircraft Status Report - DGAC (${scope})`, 40, 42);
   doc.setFontSize(10);
   doc.text(`Aeronave: ${registration} (${model})`, 40, 60);
+  // Siempre horas de célula: es el contador contra el que el plan calcula los
+  // remanentes de la tabla, también los de las tareas de motor.
   doc.text(`Horas actuales: ${currentHours.toFixed(1)} FH`, 40, 74);
   doc.text(`Fecha emision: ${generatedAt.toLocaleString('es-CL')}`, 40, 88);
 
-  const { aircraftRows, engineRows } = splitByEquipment(rows);
+  const seleccionados = equipment === 'ALL'
+    ? slots
+    : slots.filter((s) => s.equipment === equipment);
 
-  let y = drawEquipmentSection(doc, 'AERONAVE', aircraftRows, 112);
-  drawEquipmentSection(doc, 'MOTOR', engineRows, y + 28);
+  let y = 112;
+  for (const slot of seleccionados) {
+    y = drawEquipmentSection(doc, slot, y) + 28;
+  }
 
-  doc.save(`DGAC_Aircraft_Status_${registration}_${category}.pdf`);
+  const suffix = equipment === 'ALL' ? '' : `_${equipment}`;
+  doc.save(`DGAC_Aircraft_Status_${registration}_${category}${suffix}.pdf`);
 }
