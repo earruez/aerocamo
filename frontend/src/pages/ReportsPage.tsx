@@ -6,7 +6,7 @@ import { aircraftApi, type Aircraft } from '@api/aircraft.api';
 import { maintenancePlanApi } from '@api/maintenancePlan.api';
 import { organizationApi } from '@api/organization.api';
 import { reportsApi } from '@api/reports.api';
-import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown, FileCheck2 } from 'lucide-react';
+import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown, FileCheck2, Wrench } from 'lucide-react';
 import {
   CATEGORY_TABS, categoryLabel, exportDgacStatusReportPdf,
   mandatoryRowsFor, categoryCountsFor, rowsForCategory, type CategoryFilter,
@@ -216,6 +216,74 @@ function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
   );
 }
 
+/**
+ * DGAC IV.5.1.2 — estatus de alteraciones y reparaciones mayores.
+ *
+ * El mismo informe se descarga desde Alteraciones por Aeronave. Está en los dos
+ * lugares a propósito: ahí se llega desde la alteración que se acaba de cargar,
+ * y acá desde la vista de "qué le entrego a la DGAC".
+ */
+function AlterationsReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
+  const [aircraftId, setAircraftId] = useState('');
+  const [downloading, setDownloading] = useState(false);
+  const selected = aircraftList.find((a) => a.id === aircraftId);
+
+  const handleDownload = async () => {
+    if (!selected) return;
+    setDownloading(true);
+    try {
+      const blob = await aircraftApi.downloadAlterationsReportPdf(selected.id);
+      saveAs(blob, `Alteraciones_${selected.registration}.pdf`);
+    } catch {
+      toast.error('No se pudo generar el informe');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-card p-5 flex flex-col gap-4 md:col-span-2">
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 rounded-lg bg-brand-50 flex items-center justify-center shrink-0">
+          <Wrench size={16} className="text-brand-600" />
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-slate-800">Alteraciones y Reparaciones Mayores</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Punto IV.5.1.2 de la lista de la DGAC: STC y Formularios 337 con sus suplementos del
+            manual de vuelo (FMS) e instrucciones de aeronavegabilidad continuada (ICA).
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-56">
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Aeronave</label>
+          <select
+            value={aircraftId}
+            onChange={(e) => setAircraftId(e.target.value)}
+            className="filter-input w-full mt-1"
+          >
+            <option value="">— Selecciona una aeronave —</option>
+            {aircraftList.map((a) => (
+              <option key={a.id} value={a.id}>{a.registration} — {a.model}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <button
+        onClick={handleDownload}
+        disabled={!aircraftId || downloading}
+        className="btn-secondary flex items-center justify-center gap-1.5 text-xs self-start"
+      >
+        <FileDown size={13} />
+        {downloading ? 'Generando…' : 'Descargar PDF'}
+      </button>
+    </div>
+  );
+}
+
 type ReportId = 'fleet-summary' | 'fleet-lookahead';
 
 export default function ReportsPage() {
@@ -300,6 +368,7 @@ export default function ReportsPage() {
           onDownload={() => downloadReport('fleet-lookahead', reportsApi.downloadFleetLookaheadPdf, `Vencimientos-Flota-${today}.pdf`)}
         />
         <DgacReportCard aircraftList={aircraft} />
+        <AlterationsReportCard aircraftList={aircraft} />
       </div>
 
       {loading && <p className="text-slate-400 text-sm">Cargando datos…</p>}
