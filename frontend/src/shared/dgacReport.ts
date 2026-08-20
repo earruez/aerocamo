@@ -37,28 +37,46 @@ const EQUIPMENT_LABEL: Record<EquipmentFilter, string> = {
   APU: 'APU',
 };
 
-/** Punto de la lista de presentación de la DGAC al que corresponde cada equipo. */
-const DGAC_POINT: Record<DgacEquipment, string> = {
-  AERONAVE: 'IV.2.1',
-  MOTOR_1: 'IV.2.2',
-  MOTOR_2: 'IV.2.3',
-  HELICE_1: 'IV.2.4',
-  HELICE_2: 'IV.2.5',
-  APU: 'IV.2.6',
+/**
+ * Punto de la lista de presentación de la DGAC, que depende del equipo Y de la
+ * categoría: el estatus del programa de inspecciones del motor es IV.2.2, pero
+ * el de sus AD es IV.4.2 y el de su plan de reemplazos es IV.3.2. Numerar por
+ * equipo solamente etiquetaría mal el documento.
+ *
+ * Devuelve null cuando la combinación no corresponde a un punto de la lista
+ * (SB no está numerado; "General" mezcla categorías; las AD no tienen punto de
+ * APU). En ese caso el informe imprime el equipo sin número, que es preferible
+ * a inventar uno.
+ */
+const DGAC_POINTS: Partial<Record<CategoryFilter, Partial<Record<DgacEquipment, string>>>> = {
+  INSPECCIONES: {
+    AERONAVE: 'IV.2.1', MOTOR_1: 'IV.2.2', MOTOR_2: 'IV.2.3',
+    HELICE_1: 'IV.2.4', HELICE_2: 'IV.2.5', APU: 'IV.2.6',
+  },
+  COMPONENTES: {
+    AERONAVE: 'IV.3.1', MOTOR_1: 'IV.3.2', MOTOR_2: 'IV.3.3',
+    HELICE_1: 'IV.3.4', HELICE_2: 'IV.3.5', APU: 'IV.3.6',
+  },
+  AD: {
+    AERONAVE: 'IV.4.1', MOTOR_1: 'IV.4.2', MOTOR_2: 'IV.4.3',
+    HELICE_1: 'IV.4.4', HELICE_2: 'IV.4.5',
+  },
+  // DA-DAN-DAC repetitivos: la lista solo numera el de aeronave.
+  MIM: { AERONAVE: 'IV.4.1.2' },
 };
 
 export function equipmentLabel(eq: EquipmentFilter): string {
   return EQUIPMENT_LABEL[eq];
 }
 
-export function dgacPoint(eq: DgacEquipment): string {
-  return DGAC_POINT[eq];
+export function dgacPoint(category: CategoryFilter, eq: DgacEquipment): string | null {
+  return DGAC_POINTS[category]?.[eq] ?? null;
 }
 
 export interface EquipmentSlot {
   equipment: DgacEquipment;
-  /** 'IV.2.2' */
-  point: string;
+  /** 'IV.2.2', o null si la combinación no está numerada en la lista. */
+  point: string | null;
   /** 'Motor 1' */
   label: string;
   applies: boolean;
@@ -83,6 +101,7 @@ export interface EquipmentSlot {
 export function buildEquipmentSlots(
   rows: MaintenancePlanItem[],
   enginePositions: readonly ('N1' | 'N2')[],
+  category: CategoryFilter,
 ): EquipmentSlot[] {
   const { aircraftRows, engineRows } = splitByEquipment(rows);
   const tieneN1 = enginePositions.includes('N1');
@@ -101,7 +120,7 @@ export function buildEquipmentSlots(
     note: string | null,
     slotRows: MaintenancePlanItem[],
   ): EquipmentSlot => ({
-    equipment, point: DGAC_POINT[equipment], label: EQUIPMENT_LABEL[equipment],
+    equipment, point: dgacPoint(category, equipment), label: EQUIPMENT_LABEL[equipment],
     applies, note, rows: applies ? slotRows : [],
   });
 
@@ -257,9 +276,10 @@ function drawEquipmentSection(doc: jsPDF, slot: EquipmentSlot, startY: number): 
 
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
+  const prefijo = slot.point ? `${slot.point}  ` : '';
   const heading = slot.applies
-    ? `${slot.point}  ${slot.label.toUpperCase()} (${sectionRows.length})`
-    : `${slot.point}  ${slot.label.toUpperCase()} — NO APLICA`;
+    ? `${prefijo}${slot.label.toUpperCase()} (${sectionRows.length})`
+    : `${prefijo}${slot.label.toUpperCase()} — NO APLICA`;
   doc.text(heading, 40, y);
   doc.setFont('helvetica', 'normal');
 

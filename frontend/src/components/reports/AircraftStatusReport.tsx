@@ -39,7 +39,7 @@ function EquipmentSection({ slot, isLoading, emptyLabel }: {
         <div className="flex items-center gap-2">
           <Icon size={14} className="text-slate-400" />
           <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-            {slot.point} · {slot.label}
+            {slot.point ? `${slot.point} · ` : ''}{slot.label}
           </h4>
           <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 bg-slate-200 rounded px-1.5 py-0.5">
             No aplica
@@ -56,7 +56,7 @@ function EquipmentSection({ slot, isLoading, emptyLabel }: {
         <div className="flex items-center gap-2">
           <Icon size={14} className="text-slate-500" />
           <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">
-            {slot.point} · {slot.label} ({rows.length})
+            {slot.point ? `${slot.point} · ` : ''}{slot.label} ({rows.length})
           </h4>
         </div>
         {slot.note && <p className="text-[11px] text-amber-700 mt-1">{slot.note}</p>}
@@ -145,7 +145,7 @@ export function AircraftStatusReport({
   const rows = useMemo(() => rowsForCategory(mandatoryRows, category), [mandatoryRows, category]);
   // El endpoint ya devuelve solo los motores activos de cada posición.
   const enginePositions = useMemo(() => engines.map((e) => e.position), [engines]);
-  const slots = useMemo(() => buildEquipmentSlots(rows, enginePositions), [rows, enginePositions]);
+  const slots = useMemo(() => buildEquipmentSlots(rows, enginePositions, category), [rows, enginePositions, category]);
   const equipmentCounts = useMemo(() => equipmentCountsFor(slots), [slots]);
   const visibleSlots = equipment === 'ALL' ? slots : slots.filter((s) => s.equipment === equipment);
 
