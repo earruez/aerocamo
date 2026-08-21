@@ -41,6 +41,9 @@ function getArgValue(name: string): string | undefined {
 
 const ORG_SLUG = getArgValue('--org-slug') ?? 'tecnicopters';
 const OT_CSV = path.resolve(getArgValue('--ot-csv') ?? path.join(__dirname, '..', 'data', 'ot_normalizado.csv'));
+// Junto a los scripts y no en data/: data/ está en .gitignore porque guarda la
+// fuente de Access, y esto es investigación que debe quedar versionada.
+const HALLAZGOS = path.resolve(getArgValue('--hallazgos') ?? path.join(__dirname, 'ad-hallazgos-directiva.json'));
 const SALIDA = getArgValue('--csv');
 
 /**
@@ -66,6 +69,12 @@ const norm = (s: string): string => (s ?? '').toUpperCase().replace(/[^A-Z0-9]/g
 
 interface OtFila { mat: string; ad: string | null; fecha: string; ot: string; }
 
+/** Lo ya investigado en el texto de cada directiva; ver el _leeme del JSON. */
+interface Hallazgo {
+  estado: string; intervalo?: string; confianza: string; fuente: string;
+  supersede_a?: string; superseditada_por?: string; nota?: string;
+}
+
 function leerOt(ruta: string): Promise<OtFila[]> {
   return new Promise((resolve, reject) => {
     const filas: OtFila[] = [];
@@ -87,6 +96,12 @@ function leerOt(ruta: string): Promise<OtFila[]> {
 async function main(): Promise<void> {
   const org = await prisma.organization.findUnique({ where: { slug: ORG_SLUG } });
   if (!org) throw new Error(`No existe una organización con slug "${ORG_SLUG}"`);
+
+  const hallazgos: Record<string, Hallazgo> = fs.existsSync(HALLAZGOS)
+    ? JSON.parse(fs.readFileSync(HALLAZGOS, 'utf8')).hallazgos
+    : {};
+  const hallazgoDe = (ad: string): Hallazgo | null => hallazgos[norm(ad)]
+    ?? Object.entries(hallazgos).find(([k]) => norm(k) === norm(ad))?.[1] ?? null;
 
   const otFilas = fs.existsSync(OT_CSV) ? await leerOt(OT_CSV) : [];
   if (otFilas.length === 0) console.log(`⚠️  No se pudo leer ${OT_CSV}; solo se contará la plataforma.\n`);
@@ -129,6 +144,7 @@ async function main(): Promise<void> {
   interface Resultado {
     code: string; title: string; mats: string; ad: string; recurrencia: string;
     access: number; plataforma: number; veredicto: string; ultima: string;
+    estado: string; intervalo: string; supersedida: string; confianza: string; fuente: string; nota: string;
   }
   const resultados: Resultado[] = [];
 
@@ -159,10 +175,14 @@ async function main(): Promise<void> {
         ? 'REPETITIVA (evidencia)'
         : (access + plataforma === 1 ? 'un solo cumplimiento' : 'sin evidencia');
 
+    const h = hallazgoDe(ad);
     resultados.push({
       code: t.code, title: t.title, ad, recurrencia: t.complianceRecurrence,
       mats: t.aircraftLinks.map((l) => l.aircraft.registration).join(' '),
       access, plataforma, veredicto, ultima: fechas.at(-1) ?? '—',
+      estado: h?.estado ?? '', intervalo: h?.intervalo ?? '',
+      supersedida: h?.superseditada_por ?? '', confianza: h?.confianza ?? '',
+      fuente: h?.fuente ?? '', nota: h?.nota ?? '',
     });
   }
 
@@ -186,18 +206,27 @@ async function main(): Promise<void> {
     for (const r of repetitivas) {
       console.log(`    ${r.code.padEnd(26)} ${String(r.access).padStart(6)} ${String(r.plataforma).padStart(8)}  ${r.ultima.padEnd(12)} ${r.mats}`);
       console.log(`      ${r.title.slice(0, 68)}`);
+      if (r.estado) {
+        const detalle = r.estado === 'vigente'
+          ? `intervalo ${r.intervalo || '(sin dato)'}`
+          : `${r.estado}${r.supersedida ? ` por ${r.supersedida}` : ''}`;
+        console.log(`      → ${detalle}   [${r.confianza}]`);
+      }
     }
   }
 
   if (SALIDA) {
     const esc = (v: string) => `"${(v ?? '').replace(/"/g, '""')}"`;
     const lineas = [
-      'code,ad,title,aeronaves,recurrencia,veces_access,veces_plataforma,ultimo_cumplimiento,veredicto,intervalo_propuesto',
+      'code,ad,title,aeronaves,recurrencia,veces_access,veces_plataforma,ultimo_cumplimiento,veredicto,'
+      + 'estado_directiva,intervalo_directiva,superseditada_por,confianza,fuente,nota,intervalo_confirmado',
       ...resultados
         .sort((a, b) => (b.access + b.plataforma) - (a.access + a.plataforma))
         .map((r) => [
           esc(r.code), esc(r.ad), esc(r.title), esc(r.mats), esc(r.recurrencia),
-          r.access, r.plataforma, esc(r.ultima), esc(r.veredicto), '',
+          r.access, r.plataforma, esc(r.ultima), esc(r.veredicto),
+          esc(r.estado), esc(r.intervalo), esc(r.supersedida), esc(r.confianza),
+          esc(r.fuente), esc(r.nota), '',
         ].join(',')),
     ];
     // Se crea el directorio si falta: el análisis ya corrió y sería absurdo
@@ -206,8 +235,10 @@ async function main(): Promise<void> {
     fs.mkdirSync(path.dirname(destino), { recursive: true });
     fs.writeFileSync(destino, `${lineas.join('\n')}\n`, 'utf8');
     console.log(`\n📄 CSV para revisar con Griselle: ${destino}`);
-    console.log('    La última columna, intervalo_propuesto, queda vacía a propósito:');
-    console.log('    es la que ella completa con el intervalo del texto de cada directiva.');
+    const conHallazgo = resultados.filter((r) => r.estado).length;
+    console.log(`    ${conHallazgo} vienen con el intervalo y el estado ya investigados en la directiva.`);
+    console.log('    La última columna, intervalo_confirmado, queda vacía a propósito: es la');
+    console.log('    que Griselle firma. Lo investigado es insumo, no decisión.');
   }
 
   console.log('\nSolo lectura: no se modificó ninguna tarea.\n');
