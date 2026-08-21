@@ -6,11 +6,12 @@ import { aircraftApi, type Aircraft } from '@api/aircraft.api';
 import { maintenancePlanApi } from '@api/maintenancePlan.api';
 import { organizationApi } from '@api/organization.api';
 import { reportsApi } from '@api/reports.api';
-import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown, FileCheck2, Wrench } from 'lucide-react';
+import { BarChart2, Plane, AlertTriangle, CheckCircle, TrendingUp, FileDown, FileCheck2, Wrench, Ban } from 'lucide-react';
 import {
   CATEGORY_TABS, categoryLabel, exportDgacStatusReportPdf,
   mandatoryRowsFor, categoryCountsFor, rowsForCategory, type CategoryFilter,
   EQUIPMENT_TABS, equipmentLabel, equipmentCountsFor, buildEquipmentSlots, type EquipmentFilter,
+  exportNotApplicableReportPdf, notApplicableRowsFor, type NotApplicableCategory,
 } from '@/shared/dgacReport';
 
 function StatCard({ label, value, sub, Icon, color }: {
@@ -223,6 +224,126 @@ function DgacReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
  * lugares a propósito: ahí se llega desde la alteración que se acaba de cargar,
  * y acá desde la vista de "qué le entrego a la DGAC".
  */
+/**
+ * Constancia de qué normativa se determinó que NO aplica a una aeronave.
+ *
+ * AD e Inspecciones van en documentos separados y no en uno solo con secciones:
+ * son dos determinaciones distintas, se revisan por separado y así se pidieron.
+ */
+function NotApplicableReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
+  const [aircraftId, setAircraftId] = useState('');
+  const [category, setCategory] = useState<NotApplicableCategory>('AD');
+  const [downloading, setDownloading] = useState(false);
+  const selected = aircraftList.find((a) => a.id === aircraftId);
+
+  const { data = [] } = useQuery({
+    queryKey: ['aircraft-status-report', aircraftId],
+    queryFn: () => maintenancePlanApi.getForAircraft(aircraftId),
+    enabled: !!aircraftId,
+  });
+  const { data: organization } = useQuery({ queryKey: ['organization'], queryFn: organizationApi.getCurrent });
+
+  const counts = useMemo(() => ({
+    AD: notApplicableRowsFor(data, 'AD').length,
+    INSPECCIONES: notApplicableRowsFor(data, 'INSPECCIONES').length,
+  }), [data]);
+
+  const rows = useMemo(() => notApplicableRowsFor(data, category), [data, category]);
+  const sinMotivo = useMemo(() => rows.filter((r) => !r.applicabilityNotes?.trim()).length, [rows]);
+
+  const handleDownload = async () => {
+    if (!selected) return;
+    setDownloading(true);
+    try {
+      await exportNotApplicableReportPdf({
+        registration: selected.registration,
+        model: selected.model,
+        currentHours: Number(selected.totalFlightHours),
+        category,
+        rows,
+        logoDataUri: organization?.logoDataUri,
+      });
+    } catch {
+      toast.error('No se pudo generar el informe');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const etiqueta: Record<NotApplicableCategory, string> = {
+    AD: 'Directivas de Aeronavegabilidad',
+    INSPECCIONES: 'Inspecciones',
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-card p-5 flex flex-col gap-4 md:col-span-2">
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 rounded-lg bg-brand-50 flex items-center justify-center shrink-0">
+          <Ban size={16} className="text-brand-600" />
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-slate-800">No Aplicables por Aeronave</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Constancia de qué normativa se determinó que no aplica a la aeronave, con su motivo y
+            la fecha de la decisión. AD e Inspecciones se emiten como documentos separados.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-56">
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Aeronave</label>
+          <select
+            value={aircraftId}
+            onChange={(e) => setAircraftId(e.target.value)}
+            className="filter-input w-full mt-1"
+          >
+            <option value="">— Selecciona una aeronave —</option>
+            {aircraftList.map((a) => (
+              <option key={a.id} value={a.id}>{a.registration} — {a.model}</option>
+            ))}
+          </select>
+        </div>
+
+        {aircraftId && (
+          <div className="flex flex-wrap gap-2">
+            {(['AD', 'INSPECCIONES'] as NotApplicableCategory[]).map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setCategory(cat)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                  category === cat
+                    ? 'bg-brand-600 text-white border-brand-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {etiqueta[cat]} ({counts[cat]})
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {aircraftId && sinMotivo > 0 && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          {sinMotivo} de {rows.length} no tienen motivo registrado. Van a salir marcadas en el PDF:
+          una declaración sin justificación no sirve como respaldo.
+        </p>
+      )}
+
+      <button
+        onClick={handleDownload}
+        disabled={!aircraftId || downloading}
+        className="btn-secondary flex items-center justify-center gap-1.5 text-xs self-start"
+      >
+        <FileDown size={13} />
+        {downloading ? 'Generando…' : `Descargar PDF — ${etiqueta[category]}`}
+      </button>
+    </div>
+  );
+}
+
 function AlterationsReportCard({ aircraftList }: { aircraftList: Aircraft[] }) {
   const [aircraftId, setAircraftId] = useState('');
   const [downloading, setDownloading] = useState(false);
@@ -374,6 +495,7 @@ export default function ReportsPage() {
         />
         <DgacReportCard aircraftList={aircraft} />
         <AlterationsReportCard aircraftList={aircraft} />
+        <NotApplicableReportCard aircraftList={aircraft} />
       </div>
 
       {loading && <p className="text-slate-400 text-sm">Cargando datos…</p>}
