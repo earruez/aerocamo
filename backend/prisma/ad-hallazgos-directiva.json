@@ -10,7 +10,9 @@
     "              a cualquier aeronave del tipo; la APLICABILIDAD no, porque es un",
     "              juicio sobre esa matrícula en particular.",
     "",
-    "La clave es el número de AD sin la enmienda: 2014-0076 cubre R1, R2 y R3."
+    "La clave es el número de AD sin la enmienda: 2014-0076 cubre R1, R2 y R3.",
+    "",
+    "estado 'revisar' = hallazgo contradicho por la evidencia; no actuar sin verificar."
   ],
   "hallazgos": {
     "2011-0164": {
@@ -58,10 +60,19 @@
       "fuente": "AD AERONAVE.xlsx fila 132 — 'Tail rotor drive - Tail rotor drive shaft. Sleeve 110 FH', OBSERVACIONES 'SUPERSEDED BY EASA AD 2021-0194R1'"
     },
     "2012-0257": {
-      "estado": "cancelada",
+      "estado": "revisar",
+      "intervalo": "10 FH (según el propio título de la tarea)",
       "confianza": "registro",
-      "fuente": "AD AERONAVE.xlsx fila 86 — IDINSP '2012-0257-CN', título 'CANCELLED: Tail Rotor – Laminated Half-Bearings – Inspection / Replacement'",
-      "nota": "Contradice el historial: CC-ABU la registra cumplida en NUEVE OT entre 2023 y 2024. O la cancelación no aplica a la variante -E, o esas OT cumplían en realidad la directiva que la reemplazó. Confirmar antes de tocar el plan."
+      "fuente": "El título en la plataforma dice 'Tail Rotor - Laminated Half-Bearings - Inspection / Replacement (10F…)'; Access registra 13 cumplimientos en CC-ABU hasta 2024-09-05.",
+      "nota": "RETRACTADO: antes figuraba como cancelada, tomado de la fila '2012-0257-CN' del registro de CC-AHO. Trece cumplimientos contradicen esa lectura: la fila -CN debe referirse a otra variante. Verificar el texto de la AD 2012-0257-E antes de decidir."
+    },
+    "2022-0128": {
+      "estado": "cumplimiento único",
+      "intervalo": "ninguno: no es repetitiva",
+      "confianza": "directiva",
+      "supersede_a": "2018-0152",
+      "fuente": "EASA AD 2022-0128 de 30-06-2022, ATA 53 — Tabla 1 da un plazo único ('Before exceeding 1 200 FH' / 'Within 165 FH or 12 months … after 01 August 2018'), sin intervalo repetitivo.",
+      "nota": "El párrafo (4) hace que modificar según el SB cancele el requisito: es acción terminante. El triaje la marcó repetitiva por tener 2+ cumplimientos, pero la directiva dice cumplimiento único — falso positivo de la heurística. Lo que corresponde es fijarle complianceRecurrence=ONE_TIME, no un intervalo."
     }
   }
 }
