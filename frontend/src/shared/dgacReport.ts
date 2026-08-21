@@ -370,6 +370,101 @@ function drawEquipmentSection(doc: jsPDF, slot: EquipmentSlot, startY: number): 
   return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
 }
 
+/** Categorías que tiene sentido presentar por separado como "no aplicables". */
+export type NotApplicableCategory = 'AD' | 'INSPECCIONES';
+
+export function notApplicableRowsFor(
+  data: MaintenancePlanItem[],
+  category: NotApplicableCategory,
+): MaintenancePlanItem[] {
+  // Se filtra por isMandatory igual que el resto del informe DGAC. Sin eso, la
+  // lista de inspecciones no aplicables se llena con los puntos de checklist
+  // del manual que se sacaron del plan —245 en CC-AVK— y el documento deja de
+  // servir para lo que se pide: dejar constancia de qué normativa no aplica.
+  return data
+    .filter((item) => !item.isApplicable && item.isMandatory)
+    .filter((item) => classifyTaskCategory(item) === category)
+    .sort((a, b) => a.taskCode.localeCompare(b.taskCode));
+}
+
+const NOT_APPLICABLE_TITLE: Record<NotApplicableCategory, string> = {
+  AD: 'DIRECTIVAS DE AERONAVEGABILIDAD NO APLICABLES',
+  INSPECCIONES: 'INSPECCIONES NO APLICABLES',
+};
+
+/**
+ * Deja constancia de qué normativa se determinó que NO aplica a una aeronave,
+ * con su motivo y la fecha de la decisión.
+ *
+ * Un punto omitido no dice nada; uno declarado "no aplica" con su justificación
+ * demuestra que se evaluó. Es el mismo criterio con que el informe DGAC imprime
+ * los equipos que no corresponden en vez de saltárselos.
+ */
+export async function exportNotApplicableReportPdf(params: {
+  registration: string;
+  model: string;
+  currentHours: number;
+  category: NotApplicableCategory;
+  rows: MaintenancePlanItem[];
+  logoDataUri?: string | null;
+}): Promise<void> {
+  const { registration, model, currentHours, category, rows, logoDataUri } = params;
+  const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'landscape' });
+  const generatedAt = new Date();
+
+  await drawOrganizationLogo(doc, logoDataUri, 40);
+
+  doc.setFontSize(14);
+  doc.text(NOT_APPLICABLE_TITLE[category], 40, 42);
+  doc.setFontSize(10);
+  doc.text(`Aeronave: ${registration} (${model})`, 40, 60);
+  doc.text(`Horas actuales: ${currentHours.toFixed(1)} FH`, 40, 74);
+  doc.text(`Fecha emision: ${generatedAt.toLocaleString('es-CL')}`, 40, 88);
+
+  doc.setFontSize(9);
+  doc.text(`Total declaradas no aplicables: ${rows.length}`, 40, 104);
+
+  if (rows.length === 0) {
+    doc.setFontSize(10);
+    doc.text(
+      'No hay tareas de esta categoria declaradas como no aplicables para esta aeronave.',
+      40, 130,
+    );
+    doc.save(`No_Aplicables_${category}_${registration}.pdf`);
+    return;
+  }
+
+  autoTable(doc, {
+    startY: 118,
+    head: [['Codigo', 'ATA', 'Descripcion', 'Motivo de la no aplicabilidad', 'Fecha de la decision']],
+    body: rows.map((item) => [
+      item.taskCode,
+      item.referenceNumber ?? '-',
+      item.taskTitle,
+      // Sin motivo escrito la declaración no sirve como respaldo: se marca.
+      item.applicabilityNotes?.trim() || 'SIN MOTIVO REGISTRADO',
+      item.applicabilityChangedAt
+        ? new Date(item.applicabilityChangedAt).toLocaleDateString('es-CL')
+        : '-',
+    ]),
+    styles: { fontSize: 8, cellPadding: 4, overflow: 'linebreak' },
+    headStyles: { fillColor: [15, 23, 42] },
+    columnStyles: {
+      0: { cellWidth: 110 }, 1: { cellWidth: 60 },
+      2: { cellWidth: 250 }, 3: { cellWidth: 250 }, 4: { cellWidth: 80 },
+    },
+    didParseCell: (hookData) => {
+      if (hookData.section !== 'body' || hookData.column.index !== 3) return;
+      if (String(hookData.cell.raw) === 'SIN MOTIVO REGISTRADO') {
+        hookData.cell.styles.fillColor = [254, 243, 199];
+        hookData.cell.styles.textColor = [146, 64, 14];
+      }
+    },
+  });
+
+  doc.save(`No_Aplicables_${category}_${registration}.pdf`);
+}
+
 export async function exportDgacStatusReportPdf(params: {
   registration: string;
   model: string;
