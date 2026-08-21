@@ -1,0 +1,67 @@
+{
+  "_leeme": [
+    "Intervalos y estado de las AD que la plataforma tiene sin intervalo configurado.",
+    "Se consume desde triage_unspecified_ad_recurrence.ts para enriquecer el CSV de revisión.",
+    "",
+    "confianza:",
+    "  directiva = leído del texto oficial de la AD publicado por EASA. Autoritativo.",
+    "  registro  = tomado del estatus de AD de CC-AHO (data/AD AERONAVE.xlsx). El",
+    "              INTERVALO de una directiva es propiedad de la directiva y se traslada",
+    "              a cualquier aeronave del tipo; la APLICABILIDAD no, porque es un",
+    "              juicio sobre esa matrícula en particular.",
+    "",
+    "La clave es el número de AD sin la enmienda: 2014-0076 cubre R1, R2 y R3."
+  ],
+  "hallazgos": {
+    "2011-0164": {
+      "estado": "vigente",
+      "intervalo": "165 FH",
+      "confianza": "registro",
+      "fuente": "AD AERONAVE.xlsx fila 41 — título 'Rotors Flight Control Stop Screws- Inspection CADA 165 FH AD 2011-0164R3', CYPROX=REP, intervalo=165"
+    },
+    "2021-0099": {
+      "estado": "vigente",
+      "intervalo": "660 FH  y  10 FH",
+      "confianza": "directiva",
+      "supersede_a": "2020-0186",
+      "fuente": "EASA AD 2021-0099 de 09-04-2021, ATA 55 — párrafo (2) 'at intervals not to exceed 660 FH' (limpieza e inspección detallada) y párrafo (3) 'at intervals not to exceed 10 FH' (inspección visual del lado derecho del larguero)",
+      "nota": "DOS intervalos repetitivos distintos: no caben en una sola tarea del modelo actual. Aplicabilidad: excluye AS350 B3 con MOD 073148 embarcada EN PRODUCCIÓN, pero INCLUYE como Grupo 2 a las que lo tengan incorporado EN SERVICIO vía SB 55.00.14."
+    },
+    "2022-0051": {
+      "estado": "vigente",
+      "intervalo": "10 FH",
+      "confianza": "directiva",
+      "supersede_a": "2014-0076R3",
+      "fuente": "EASA AD 2022-0051 de 22-03-2022, ATA 53 — párrafo (1) 'at intervals not to exceed 10 flight hours (FH)'",
+      "nota": "Aplica solo si tiene instalada la pieza afectada. Excluye las que tengan MOD 073232 embarcada en producción, o el SB AS350 53.00.58 incorporado en servicio."
+    },
+    "2014-0076": {
+      "estado": "superseditada",
+      "superseditada_por": "2022-0051",
+      "confianza": "directiva",
+      "fuente": "EASA AD 2022-0051, línea Supersedure: 'This AD supersedes EASA AD 2014-0076R3 dated 30 November 2021'",
+      "nota": "La cadena es 2014-0076-E → R1 → R2 → R3 → 2022-0051. No corresponde cargarle intervalo: hay que sacarla del plan y controlar la 2022-0051."
+    },
+    "2021-0048": {
+      "estado": "superseditada",
+      "superseditada_por": "2023-0064",
+      "intervalo": "10 FH",
+      "confianza": "registro",
+      "fuente": "AD AERONAVE.xlsx fila 37 — CYPROX=REP, intervalo=10, OBSERVACIONES 'O/T AHO 03/2023 SUPERSEDIDO POR AD 2023-0064'",
+      "nota": "La 2023-0064 ya está en el plan de CC-DET: es la misma exigencia en su versión vigente."
+    },
+    "F-2005-158": {
+      "estado": "superseditada",
+      "superseditada_por": "EASA AD 2021-0194R1",
+      "intervalo": "110 FH",
+      "confianza": "registro",
+      "fuente": "AD AERONAVE.xlsx fila 132 — 'Tail rotor drive - Tail rotor drive shaft. Sleeve 110 FH', OBSERVACIONES 'SUPERSEDED BY EASA AD 2021-0194R1'"
+    },
+    "2012-0257": {
+      "estado": "cancelada",
+      "confianza": "registro",
+      "fuente": "AD AERONAVE.xlsx fila 86 — IDINSP '2012-0257-CN', título 'CANCELLED: Tail Rotor – Laminated Half-Bearings – Inspection / Replacement'",
+      "nota": "Contradice el historial: CC-ABU la registra cumplida en NUEVE OT entre 2023 y 2024. O la cancelación no aplica a la variante -E, o esas OT cumplían en realidad la directiva que la reemplazó. Confirmar antes de tocar el plan."
+    }
+  }
+}
