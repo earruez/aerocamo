@@ -236,9 +236,12 @@ function NotApplicableReportCard({ aircraftList }: { aircraftList: Aircraft[] })
   const [downloading, setDownloading] = useState(false);
   const selected = aircraftList.find((a) => a.id === aircraftId);
 
+  // El endpoint excluye las no aplicables salvo que se le pidan, y esta tarjeta
+  // vive justamente de ellas. La clave de caché tiene que ser distinta de la del
+  // informe DGAC: consulta el mismo recurso pero con otro contenido.
   const { data = [] } = useQuery({
-    queryKey: ['aircraft-status-report', aircraftId],
-    queryFn: () => maintenancePlanApi.getForAircraft(aircraftId),
+    queryKey: ['aircraft-plan-including-not-applicable', aircraftId],
+    queryFn: () => maintenancePlanApi.getForAircraft(aircraftId, { includeNotApplicable: true }),
     enabled: !!aircraftId,
   });
   const { data: organization } = useQuery({ queryKey: ['organization'], queryFn: organizationApi.getCurrent });
