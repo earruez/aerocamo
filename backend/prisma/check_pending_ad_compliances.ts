@@ -48,8 +48,23 @@ const DETALLE = args.includes('--detalle');
  * emergencia) y la FAA ("2022-10-06"). El sufijo es parte del número y no se
  * descarta; lo que no se toma es la enmienda.
  */
+/**
+ * Número de AD, en los formatos que conviven en esta flota:
+ *   EASA        2012-0257-E   el sufijo -E (Emergency) es parte de la identidad
+ *   FAA         2022-10-06    año-quincena-ítem, tres grupos
+ *   Francesa    F-2005-158    prefijo de país
+ *
+ * Lo que NO se toma es la enmienda: AD-2014-0076-R2 y AD-2011-0164R3 son
+ * revisiones de 2014-0076 y 2011-0164, no directivas distintas. Tratarlas como
+ * distintas duplica la normativa.
+ *
+ * El lookahead evita comerse el modelo: en AD-2021-0099-AS350B3 el "-AS" no es
+ * sufijo de la AD sino el comienzo de AS350B3.
+ */
 function extraerAd(texto: string): string | null {
-  const m = texto.match(/\bAD\s*[- ]?\s*(\d{4}[-–]\d{2,4}(?:[-–][A-Z]{1,2})?)/i);
+  const m = (texto ?? '').match(
+    /\bAD\s*[- ]?\s*((?:[A-Z]-)?\d{4}[-–]\d{2,4}(?:[-–]\d{2})?(?:[-–][A-Z]{1,2}(?![A-Z0-9]))?)/i,
+  );
   return m ? m[1].replace(/–/g, '-').toUpperCase() : null;
 }
 
